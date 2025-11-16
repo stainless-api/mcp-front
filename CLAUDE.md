@@ -117,7 +117,7 @@ LOG_FORMAT="text"           # json or text
 
 #### Updating OAuth scopes
 
-1. Check `internal/oauth/auth.go` for current scopes
+1. Check `internal/googleauth/google.go` for current scopes
 2. Use standard OpenID Connect scopes (not Google-specific URLs)
 3. Update tests to verify new scopes work
 
@@ -131,14 +131,24 @@ LOG_FORMAT="text"           # json or text
 
 ```
 internal/
-├── config/      # Configuration parsing and validation
-├── oauth/       # OAuth 2.1 implementation with fosite
-├── server/      # HTTP server and middleware
-├── client/      # MCP client management
-└── logging.go   # Structured logging setup
+├── config/         # Configuration parsing and validation
+├── oauth/          # OAuth 2.1 provider, JWT, middleware
+├── googleauth/     # Google OAuth integration (pure functions)
+├── adminauth/      # Admin authorization logic
+├── browserauth/    # Browser session types (SessionCookie, AuthorizationState)
+├── oauthsession/   # OAuth session types for fosite
+├── servicecontext/ # Service authentication context utilities
+├── server/         # HTTP server, handlers, and middleware
+├── client/         # MCP client management and session handling
+├── auth/           # Service OAuth client for upstream authentication
+├── crypto/         # Encryption, HMAC, token signing utilities
+├── storage/        # Storage abstraction (memory, Firestore)
+├── inline/         # Inline MCP server implementation
+├── mcpfront.go     # Main application orchestration (imperative shell)
+└── [utility packages: cookie, email, envutil, json, jsonrpc, log, sse, testutil]
 
-integration/     # Integration tests (OAuth, security, scenarios)
-cmd/mcp-front/   # Main application entry point
+integration/        # Integration tests (OAuth, security, scenarios)
+cmd/mcp-front/      # Main application entry point
 ```
 
 ### Testing Guidance

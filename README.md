@@ -33,7 +33,7 @@ mcp-front is an authentication proxy that sits between Claude.ai and your MCP se
 
 - **Single sign-on** via Google OAuth for all MCP tools
 - **Domain validation** to restrict access to your organization
-- **Per-user tokens** for services like Notion
+- **Per-user authentication** for services like Notion and Stainless (via OAuth or manual tokens)
 - **Session isolation** so multiple users can share infrastructure
 
 ## Why use mcp-front?
@@ -52,7 +52,7 @@ With mcp-front:
 
 1. Claude.ai connects to `https://your-domain.com/<service>/sse`
 2. mcp-front validates the user's OAuth token
-3. If the server needs a user token, prompts via `/my/tokens`
+3. If a service requires user authentication, `mcp-front` will guide the user through a one-time setup (via an OAuth consent screen or a manual token entry page).
 4. Proxies requests to the configured MCP server
 5. For stdio servers, each user gets an isolated process
 
@@ -150,10 +150,17 @@ docker run -d -p 8080:8080 \
 
 mcp-front uses explicit JSON syntax `{"$env": "VAR_NAME"}` for environment variables throughout its configuration. This deliberate choice eliminates the ambiguity and risks inherent in shell-style variable substitution. When configs pass through multiple layers of tooling and scripts, traditional `$VAR` syntax can expand unexpectedly, causing security issues and debugging nightmares. The JSON format ensures your configuration remains exactly as written until mcp-front processes it, providing predictable behavior across all deployment environments. For per-user authentication, `{"$userToken": "{{token}}"}` follows the same principle, keeping user credentials cleanly separated from system configuration.
 
-### Per-user tokens
+## Service Authentication (Per-User Tokens)
 
-Some MCP servers are better to use with each users having their own integration token (e.g., Notion). Configure with:
+Some MCP servers, like Notion or Stainless, require each user to provide their own individual API key or grant access via OAuth. `mcp-front` automates this process.
 
+When a service is configured with `requiresUserToken: true`, `mcp-front` will guide the user through a one-time setup for that service after their initial Google login. This is handled in one of two ways, depending on the service's configuration.
+
+### Manual Token Entry
+
+For services that require a manually generated API key, you can configure `mcp-front` to prompt the user for it on a secure web page.
+
+**Configuration:**
 ```json
 {
   "notion": {
@@ -175,9 +182,33 @@ Some MCP servers are better to use with each users having their own integration 
   }
 }
 ```
+After authenticating, the user will be directed to the `/my/tokens` page to enter their token.
 
-After the initial OAuth authentication, when users try to use Claude.ai with the integration they will be prompted to
-provide a token via the `/my/tokens` web UI.
+### Service OAuth Flow
+
+For services that support OAuth, `mcp-front` can handle the entire flow automatically. After the user logs in with Google, they will be shown an interstitial page where they can connect to each service.
+
+**Configuration:**
+```json
+{
+  "stainless": {
+    "transportType": "stdio",
+    "command": "stainless",
+    "args": ["mcp"],
+    "requiresUserToken": true,
+    "userAuthentication": {
+      "type": "oauth",
+      "displayName": "Stainless",
+      "clientId": {"$env": "STAINLESS_OAUTH_CLIENT_ID"},
+      "clientSecret": {"$env": "STAINLESS_OAUTH_CLIENT_SECRET"},
+      "authorizationUrl": "https://api.stainless.com/oauth/authorize",
+      "tokenUrl": "https://api.stainless.com/oauth/token",
+      "scopes": ["mcp:read", "mcp:write"]
+    }
+  }
+}
+```
+This provides a seamless experience for the user and enables automatic token refreshes.
 
 ### Full configuration example
 

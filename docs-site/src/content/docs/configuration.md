@@ -171,7 +171,55 @@ For simple servers defined directly in the config (advanced use case):
 
 ### Server options
 
-Use the `options` field for additional configuration:
+Additional configuration via `options` field.
+
+#### Per-User Authentication
+
+Services like Notion or Linear need individual user auth. Set `requiresUserToken: true` and add `userAuthentication` object.
+
+##### Type: `manual`
+
+User-generated API tokens.
+
+```json
+"notion": {
+  "transportType": "stdio",
+  "requiresUserToken": true,
+  "userAuthentication": {
+    "type": "manual",
+    "displayName": "Notion Integration Token",
+    "instructions": "Create a new internal integration and copy the 'Internal Integration Secret'.",
+    "helpUrl": "https://www.notion.so/my-integrations",
+    "validation": "^secret_[a-zA-Z0-9]{43}$"
+  }
+}
+```
+
+Users enter tokens at `/my/tokens`.
+
+##### Type: `oauth`
+
+Services with OAuth 2.0 support. Handles flow and token refresh.
+
+```json
+"stainless": {
+  "transportType": "stdio",
+  "requiresUserToken": true,
+  "userAuthentication": {
+    "type": "oauth",
+    "displayName": "Stainless",
+    "clientId": {"$env": "STAINLESS_OAUTH_CLIENT_ID"},
+    "clientSecret": {"$env": "STAINLESS_OAUTH_CLIENT_SECRET"},
+    "authorizationUrl": "https://api.stainless.com/oauth/authorize",
+    "tokenUrl": "https://api.stainless.com/oauth/token",
+    "scopes": ["mcp:read", "mcp:write"]
+  }
+}
+```
+
+#### Other Options
+
+You can also configure other options like `timeout`, `headers` for proxied requests, and `authTokens` for server-level bearer token validation (distinct from the main `proxy.auth` block).
 
 ```json
 {
@@ -179,24 +227,15 @@ Use the `options` field for additional configuration:
     "transportType": "sse",
     "url": "http://postgres-mcp:3000/sse",
     "options": {
-      "authTokens": ["dev", "prod"],
+      "authTokens": ["server-specific-token"],
       "timeout": "30s",
       "headers": {
         "X-API-Key": { "$env": "DB_API_KEY" }
-      },
-      "requiresUserToken": true,
-      "userAuthentication": {
-        "type": "manual",
-        "displayName": "Database Token",
-        "instructions": "Get your token from the admin panel",
-        "helpUrl": "https://db.company.com/tokens"
       }
     }
   }
 }
 ```
-
-`authTokens` lists bearer tokens that can access this server (bearer auth only). `requiresUserToken` prompts users to provide their own token via the `/my/tokens` web UI. This is useful for services like Notion where each user needs their own API key.
 
 ### Routing to servers
 
