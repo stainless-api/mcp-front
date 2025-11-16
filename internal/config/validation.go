@@ -489,15 +489,7 @@ func validateUserAuthentication(userAuth any, path string, result *ValidationRes
 	// Validate based on type
 	switch authType {
 	case "oauth":
-		// OAuth requires OAuth configuration
-		if oauth, ok := auth["oauth"].(map[string]any); !ok {
-			result.Errors = append(result.Errors, ValidationError{
-				Path:    path + ".oauth",
-				Message: "oauth configuration is required when type is oauth",
-			})
-		} else {
-			validateOAuthServiceConfig(oauth, path+".oauth", result)
-		}
+		validateOAuthServiceConfig(auth, path, result)
 	case "manual":
 		// Manual requires displayName and instructions
 		if _, ok := auth["displayName"]; !ok {

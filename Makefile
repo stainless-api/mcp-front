@@ -11,8 +11,12 @@ lint:
 	staticcheck ./...
 	golangci-lint run ./...
 
+lint-config:
+	go build -o cmd/mcp-front/mcp-front ./cmd/mcp-front
+	./scripts/validate-configs.sh
+
 build:
 	go build -o mcp-front ./cmd/mcp-front
 	cd docs-site && npm run build
 
-.PHONY: doc format build lint
+.PHONY: doc format build lint lint-config
