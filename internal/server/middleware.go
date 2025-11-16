@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
@@ -342,7 +343,9 @@ func NewBrowserSSOMiddleware(authConfig config.OAuthAuthConfig, sessionEncryptor
 			}
 
 			// Valid session, set user in context
-			ctx := servicecontext.WithUser(r.Context(), sessionData.Email)
+			// Use oauth.WithUserContext to set user for OAuth-protected endpoints
+			// (token management, service selection page, etc.)
+			ctx := context.WithValue(r.Context(), oauth.GetUserContextKey(), sessionData.Email)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}

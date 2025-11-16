@@ -121,10 +121,7 @@ func (h *ServiceAuthHandlers) CallbackHandler(w http.ResponseWriter, r *http.Req
 
 		// Service OAuth errors always redirect back to interstitial page
 		// This maintains user context in the upstream OAuth flow
-		errorMsg := fmt.Sprintf("OAuth authorization failed: %s", errorParam)
-		if errorDesc != "" {
-			errorMsg = fmt.Sprintf("%s - %s", errorMsg, errorDesc)
-		}
+		errorMsg := getUserFriendlyOAuthError(errorParam, errorDesc)
 
 		// Redirect to interstitial page with error
 		errorURL := fmt.Sprintf("/oauth/services?error=%s&service=%s&error_msg=%s",
@@ -196,6 +193,34 @@ func (h *ServiceAuthHandlers) CallbackHandler(w http.ResponseWriter, r *http.Req
 		strings.ReplaceAll(fmt.Sprintf("Successfully connected to %s", displayName), " ", "+"),
 	)
 	http.Redirect(w, r, successURL, http.StatusFound)
+}
+
+// getUserFriendlyOAuthError converts OAuth error codes to user-friendly messages
+func getUserFriendlyOAuthError(errorCode, errorDescription string) string {
+	switch errorCode {
+	case "access_denied":
+		return "You cancelled the authorization. You can try again if this was a mistake."
+	case "invalid_request":
+		return "OAuth request was invalid. Please contact support if this persists."
+	case "unauthorized_client":
+		return "The application is not authorized. Please contact support."
+	case "unsupported_response_type":
+		return "OAuth configuration error. Please contact support."
+	case "invalid_scope":
+		return "Requested permissions are not available. Please contact support."
+	case "server_error":
+		if errorDescription != "" {
+			return fmt.Sprintf("OAuth provider error: %s", errorDescription)
+		}
+		return "The service OAuth server encountered an error. Please try again later."
+	case "temporarily_unavailable":
+		return "The service is temporarily unavailable. Please try again in a few minutes."
+	default:
+		if errorDescription != "" {
+			return fmt.Sprintf("OAuth authorization failed: %s", errorDescription)
+		}
+		return fmt.Sprintf("OAuth authorization failed: %s", errorCode)
+	}
 }
 
 // DisconnectHandler revokes OAuth access for a service

@@ -185,9 +185,26 @@ func (c *ServiceOAuthClient) RefreshToken(
 		return fmt.Errorf("token is not an OAuth token")
 	}
 
-	// Check if refresh is needed (refresh if expires within 5 minutes)
+	// Early refresh strategy: Refresh tokens 5 minutes before expiry
+	//
+	// Why 5 minutes?
+	// - Users are in Claude.ai, not mcp-front UI. If token expires mid-session,
+	//   they see cryptic "tool failed" errors with no way to re-auth without
+	//   leaving Claude.
+	// - Stdio processes are created on-demand. Token is fetched from storage and
+	//   injected into process env. If storage has expired token, process fails
+	//   to connect to external service.
+	// - Early refresh prevents these failures. Cost is negligible (one HTTP request
+	//   per service per hour vs broken user workflow).
+	//
+	// Why not background refresh job?
+	// - mcp-front is request-driven. Tokens are fetched when stdio sessions are
+	//   created (user triggers operation in Claude). Refreshing on request path
+	//   is simpler and aligns with the architecture.
+	// - Background jobs require distributed coordination for multi-instance deploys,
+	//   lifecycle management, and handling refresh failures asynchronously.
 	if time.Until(storedToken.OAuthData.ExpiresAt) > 5*time.Minute {
-		return nil // Token still valid
+		return nil // Token still valid, no refresh needed
 	}
 
 	if storedToken.OAuthData.RefreshToken == "" {
@@ -210,7 +227,7 @@ func (c *ServiceOAuthClient) RefreshToken(
 		Scopes: auth.Scopes,
 	}
 
-	// Create token source for refresh
+	// Create token for refresh
 	oldToken := &oauth2.Token{
 		AccessToken:  storedToken.OAuthData.AccessToken,
 		RefreshToken: storedToken.OAuthData.RefreshToken,
@@ -218,8 +235,19 @@ func (c *ServiceOAuthClient) RefreshToken(
 		TokenType:    storedToken.OAuthData.TokenType,
 	}
 
-	tokenSource := oauth2Config.TokenSource(ctx, oldToken)
-	newToken, err := tokenSource.Token()
+	// Use ReuseTokenSourceWithExpiry to enforce our 5-minute early refresh threshold.
+	// The default TokenSource only refreshes when token is expired. We want to refresh
+	// earlier to prevent tokens expiring mid-operation. The earlyExpiry parameter
+	// tells the oauth2 library to consider tokens expired 5 minutes before their
+	// actual expiry time.
+	//
+	// Division of responsibility:
+	// - We decide WHEN to refresh (5-minute threshold via our check + earlyExpiry)
+	// - oauth2 library decides HOW to refresh (HTTP request format, error handling,
+	//   refresh token rotation, provider-specific quirks across OAuth providers)
+	baseSource := oauth2Config.TokenSource(ctx, oldToken)
+	earlyRefreshSource := oauth2.ReuseTokenSourceWithExpiry(oldToken, baseSource, 5*time.Minute)
+	newToken, err := earlyRefreshSource.Token()
 	if err != nil {
 		log.LogErrorWithFields("service_oauth", "Failed to refresh token", map[string]any{
 			"service": serviceName,

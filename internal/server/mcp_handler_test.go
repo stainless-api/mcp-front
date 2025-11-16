@@ -89,7 +89,8 @@ func createTestMCPHandler(serverName string, serverConfig *config.MCPClientConfi
 		"http://localhost:8080",
 		info,
 		sessionManager,
-		nil,
+		nil, // sharedSSEServer
+		nil, // sharedMCPServer
 		func(ctx context.Context, userEmail, serviceName string, serviceConfig *config.MCPClientConfig) (string, error) {
 			if userEmail == "" {
 				return "", fmt.Errorf("no user")

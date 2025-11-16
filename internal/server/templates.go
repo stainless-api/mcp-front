@@ -44,9 +44,11 @@ type ServiceTokenData struct {
 
 // ServicesPageData represents the data for the service selection page
 type ServicesPageData struct {
-	Services  []ServiceSelectionData
-	State     string
-	ReturnURL string
+	Services    []ServiceSelectionData
+	State       string
+	ReturnURL   string
+	Message     string
+	MessageType string // "success" or "error"
 }
 
 // ServiceSelectionData represents a single service in the selection page

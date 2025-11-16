@@ -6,7 +6,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/dgellow/mcp-front/internal/auth"
 	"github.com/dgellow/mcp-front/internal/config"
 	"github.com/dgellow/mcp-front/internal/servicecontext"
 	"github.com/stretchr/testify/assert"
@@ -75,7 +74,7 @@ func TestCorsMiddleware(t *testing.T) {
 			})
 
 			// Wrap with CORS middleware
-			corsHandler := corsMiddleware(tt.allowedOrigins)(handler)
+			corsHandler := NewCORSMiddleware(tt.allowedOrigins)(handler)
 
 			// Create request
 			method := "GET"
@@ -125,7 +124,7 @@ func TestCorsMiddleware_CaseSensitivity(t *testing.T) {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
-	corsHandler := corsMiddleware(allowedOrigins)(handler)
+	corsHandler := NewCORSMiddleware(allowedOrigins)(handler)
 
 	// Test with different case
 	req := httptest.NewRequest("GET", "/test", nil)
@@ -150,7 +149,7 @@ func TestCorsMiddleware_MultipleOrigins(t *testing.T) {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
-	corsHandler := corsMiddleware(allowedOrigins)(handler)
+	corsHandler := NewCORSMiddleware(allowedOrigins)(handler)
 
 	// Test each allowed origin
 	for _, origin := range allowedOrigins {

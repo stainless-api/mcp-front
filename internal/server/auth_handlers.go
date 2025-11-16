@@ -522,10 +522,19 @@ func (h *AuthHandlers) ServiceSelectionHandler(w http.ResponseWriter, r *http.Re
 		}
 	}
 
+	// Get message and type from query params
+	message := r.URL.Query().Get("message")
+	messageType := r.URL.Query().Get("type")
+	if messageType == "" && message != "" {
+		messageType = "error" // Default to error if type not specified
+	}
+
 	pageData := ServicesPageData{
-		Services:  services,
-		State:     url.QueryEscape(signedState),
-		ReturnURL: url.QueryEscape(returnURL),
+		Services:    services,
+		State:       url.QueryEscape(signedState),
+		ReturnURL:   url.QueryEscape(returnURL),
+		Message:     message,
+		MessageType: messageType,
 	}
 
 	// Render template

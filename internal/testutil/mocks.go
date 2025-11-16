@@ -183,3 +183,18 @@ func (m *MockUserTokenStore) ListUserServices(ctx context.Context, userEmail str
 	}
 	return args.Get(0).([]string), args.Error(1)
 }
+
+// MockEncryptor is a mock implementation of crypto.Encryptor
+type MockEncryptor struct {
+	mock.Mock
+}
+
+func (m *MockEncryptor) Encrypt(plaintext string) (string, error) {
+	args := m.Called(plaintext)
+	return args.String(0), args.Error(1)
+}
+
+func (m *MockEncryptor) Decrypt(ciphertext string) (string, error) {
+	args := m.Called(ciphertext)
+	return args.String(0), args.Error(1)
+}

@@ -11,7 +11,7 @@ import (
 func TestAdminHandlers_CSRF(t *testing.T) {
 	// Create test dependencies
 	storage := storage.NewMemoryStorage()
-	cfg := &config.Config{
+	cfg := config.Config{
 		Proxy: config.ProxyConfig{
 			Admin: &config.AdminConfig{
 				Enabled:     true,
@@ -23,7 +23,7 @@ func TestAdminHandlers_CSRF(t *testing.T) {
 	encryptionKey := "test-encryption-key-32-bytes-long"
 
 	// Create admin handlers
-	handlers := NewAdminHandlers(storage, *cfg, sessionManager, encryptionKey)
+	handlers := NewAdminHandlers(storage, cfg, sessionManager, encryptionKey)
 
 	t.Run("generate and validate CSRF token", func(t *testing.T) {
 		// Generate token
@@ -76,7 +76,7 @@ func TestAdminHandlers_CSRF(t *testing.T) {
 
 	t.Run("different encryption keys", func(t *testing.T) {
 		// Create handlers with different key
-		handlers2 := NewAdminHandlers(storage, *cfg, sessionManager, "different-encryption-key-32bytes")
+		handlers2 := NewAdminHandlers(storage, cfg, sessionManager, "different-encryption-key-32bytes")
 
 		// Generate token with first handler
 		token1, err := handlers.generateCSRFToken()
