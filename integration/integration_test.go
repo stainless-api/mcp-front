@@ -24,9 +24,17 @@ func TestIntegration(t *testing.T) {
 	waitForMCPFront(t)
 	trace(t, "mcp-front is ready")
 
+	// Get initial container count for cleanup
+	initialContainers := getMCPContainers()
+
 	client := NewMCPSSEClient("http://localhost:8080")
 	require.NotNil(t, client, "Failed to create MCP client")
 	defer client.Close() // Ensure SSE connection is closed
+
+	// Cleanup any containers created during this test
+	t.Cleanup(func() {
+		cleanupContainers(t, initialContainers)
+	})
 
 	err := client.Authenticate()
 	require.NoError(t, err, "Authentication failed")
