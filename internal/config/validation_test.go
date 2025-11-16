@@ -332,13 +332,11 @@ func TestValidateFile(t *testing.T) {
 						"userAuthentication": {
 							"type": "oauth",
 							"displayName": "Linear",
-							"oauth": {
-								"clientId": "client123",
-								"clientSecret": {"$env": "LINEAR_CLIENT_SECRET"},
-								"authorizationUrl": "https://linear.app/oauth/authorize",
-								"tokenUrl": "https://api.linear.app/oauth/token",
-								"scopes": ["read", "write"]
-							}
+							"clientId": "client123",
+							"clientSecret": {"$env": "LINEAR_CLIENT_SECRET"},
+							"authorizationUrl": "https://linear.app/oauth/authorize",
+							"tokenUrl": "https://api.linear.app/oauth/token",
+							"scopes": ["read", "write"]
 						}
 					}
 				}
@@ -373,9 +371,7 @@ func TestValidateFile(t *testing.T) {
 						"userAuthentication": {
 							"type": "oauth",
 							"displayName": "Linear",
-							"oauth": {
-								"clientId": "client123"
-							}
+							"clientId": "client123"
 						}
 					}
 				}
@@ -536,13 +532,11 @@ func TestValidateFile_ImprovedErrorMessages(t *testing.T) {
 						"userAuthentication": {
 							"type": "oauth",
 							"displayName": "Linear",
-							"oauth": {
-								"clientId": "client123",
-								"clientSecret": "super-secret",
-								"authorizationUrl": "https://linear.app/oauth/authorize",
-								"tokenUrl": "https://api.linear.app/oauth/token",
-								"scopes": ["read"]
-							}
+							"clientId": "client123",
+							"clientSecret": "super-secret",
+							"authorizationUrl": "https://linear.app/oauth/authorize",
+							"tokenUrl": "https://api.linear.app/oauth/token",
+							"scopes": ["read"]
 						}
 					}
 				}
