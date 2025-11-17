@@ -17,7 +17,14 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// FirestoreStorage implements OAuth client storage using Google Cloud Firestore
+// FirestoreStorage implements OAuth client storage using Google Cloud Firestore.
+//
+// Error handling strategy:
+// - Read operations: Return errors (data must be available for auth to work)
+// - Write operations: Log and continue (fallback to memory cache is acceptable)
+//
+// This allows the system to function even if Firestore has transient issues,
+// while ensuring that missing data causes explicit failures.
 type FirestoreStorage struct {
 	*storage.MemoryStore
 	client          *firestore.Client

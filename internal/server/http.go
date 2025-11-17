@@ -29,7 +29,13 @@ func NewUserTokenService(storage storage.Storage, serviceOAuthClient *auth.Servi
 	}
 }
 
-// GetUserToken retrieves and formats a user token for a service, handling OAuth refresh
+// GetUserToken retrieves and formats a user token for a service, handling OAuth refresh.
+//
+// Token refresh strategy: Optimistic continuation on failure.
+// If refresh fails, we log a warning and continue with the current token. The external
+// service will reject the expired token with 401, giving the user a clear error.
+// This is acceptable because: (1) refresh failures are rare (network issues, revoked
+// tokens), and (2) forcing users to re-auth is better than silently hiding auth issues.
 func (uts *UserTokenService) GetUserToken(ctx context.Context, userEmail, serviceName string, serviceConfig *config.MCPClientConfig) (string, error) {
 	storedToken, err := uts.storage.GetUserToken(ctx, userEmail, serviceName)
 	if err != nil {
