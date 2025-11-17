@@ -256,7 +256,7 @@ func setupAuthentication(ctx context.Context, cfg config.Config, store storage.S
 	}
 
 	// Create OAuth client for service authentication and token refresh
-	serviceOAuthClient := auth.NewServiceOAuthClient(store, cfg.Proxy.BaseURL)
+	serviceOAuthClient := auth.NewServiceOAuthClient(store, cfg.Proxy.BaseURL, encryptionKey)
 
 	// Initialize admin users if admin is enabled
 	if cfg.Proxy.Admin != nil && cfg.Proxy.Admin.Enabled {

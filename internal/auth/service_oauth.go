@@ -18,26 +18,26 @@ import (
 
 // ServiceOAuthClient handles OAuth flows for external MCP services
 type ServiceOAuthClient struct {
-	storage    storage.UserTokenStore
-	baseURL    string
-	httpClient *http.Client
-	stateCache map[string]*ServiceOAuthState // In production, use distributed cache
+	storage     storage.UserTokenStore
+	baseURL     string
+	httpClient  *http.Client
+	stateSigner crypto.TokenSigner
 }
 
 // ServiceOAuthState stores OAuth flow state for external service authentication (mcp-front → external service)
 type ServiceOAuthState struct {
-	Service   string
-	UserEmail string
-	CreatedAt time.Time
+	Service   string    `json:"service"`
+	UserEmail string    `json:"user_email"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // NewServiceOAuthClient creates a new OAuth client for external services
-func NewServiceOAuthClient(storage storage.UserTokenStore, baseURL string) *ServiceOAuthClient {
+func NewServiceOAuthClient(storage storage.UserTokenStore, baseURL string, signingKey []byte) *ServiceOAuthClient {
 	return &ServiceOAuthClient{
-		storage:    storage,
-		baseURL:    baseURL,
-		httpClient: &http.Client{Timeout: 30 * time.Second},
-		stateCache: make(map[string]*ServiceOAuthState),
+		storage:     storage,
+		baseURL:     baseURL,
+		httpClient:  &http.Client{Timeout: 30 * time.Second},
+		stateSigner: crypto.NewTokenSigner(signingKey, 10*time.Minute),
 	}
 }
 
@@ -67,16 +67,17 @@ func (c *ServiceOAuthClient) StartOAuthFlow(
 		Scopes:      auth.Scopes,
 	}
 
-	// Generate state parameter
-	state := crypto.GenerateSecureToken()
-	c.stateCache[state] = &ServiceOAuthState{
+	// Generate signed state parameter (stateless - no cache needed)
+	stateData := ServiceOAuthState{
 		Service:   serviceName,
 		UserEmail: userEmail,
 		CreatedAt: time.Now(),
 	}
 
-	// Clean up old states (older than 10 minutes)
-	c.cleanupOldStates()
+	state, err := c.stateSigner.Sign(stateData)
+	if err != nil {
+		return "", fmt.Errorf("failed to sign state: %w", err)
+	}
 
 	// Generate authorization URL
 	authURL := oauth2Config.AuthCodeURL(state, oauth2.AccessTypeOffline)
@@ -99,15 +100,14 @@ func (c *ServiceOAuthClient) HandleCallback(
 	state string,
 	serviceConfig *config.MCPClientConfig,
 ) (userEmail string, err error) {
-	// Validate state
-	oauthState, exists := c.stateCache[state]
-	if !exists {
-		return "", fmt.Errorf("invalid state parameter")
+	// Verify and decode signed state
+	var stateData ServiceOAuthState
+	if err := c.stateSigner.Verify(state, &stateData); err != nil {
+		return "", fmt.Errorf("invalid or expired state parameter: %w", err)
 	}
-	delete(c.stateCache, state) // One-time use
 
 	// Validate service matches
-	if oauthState.Service != serviceName {
+	if stateData.Service != serviceName {
 		return "", fmt.Errorf("service mismatch in OAuth callback")
 	}
 
@@ -151,10 +151,10 @@ func (c *ServiceOAuthClient) HandleCallback(
 		UpdatedAt: time.Now(),
 	}
 
-	if err := c.storage.SetUserToken(ctx, oauthState.UserEmail, serviceName, storedToken); err != nil {
+	if err := c.storage.SetUserToken(ctx, stateData.UserEmail, serviceName, storedToken); err != nil {
 		log.LogErrorWithFields("service_oauth", "Failed to store OAuth token", map[string]any{
 			"service": serviceName,
-			"user":    oauthState.UserEmail,
+			"user":    stateData.UserEmail,
 			"error":   err.Error(),
 		})
 		return "", fmt.Errorf("failed to store token: %w", err)
@@ -162,10 +162,10 @@ func (c *ServiceOAuthClient) HandleCallback(
 
 	log.LogInfoWithFields("service_oauth", "OAuth flow completed successfully", map[string]any{
 		"service": serviceName,
-		"user":    oauthState.UserEmail,
+		"user":    stateData.UserEmail,
 	})
 
-	return oauthState.UserEmail, nil
+	return stateData.UserEmail, nil
 }
 
 // RefreshToken refreshes an OAuth token if needed
@@ -286,16 +286,6 @@ func (c *ServiceOAuthClient) GetConnectURL(serviceName string, returnPath string
 		params.Set("return", returnPath)
 	}
 	return fmt.Sprintf("%s/oauth/connect?%s", c.baseURL, params.Encode())
-}
-
-// cleanupOldStates removes expired state entries
-func (c *ServiceOAuthClient) cleanupOldStates() {
-	cutoff := time.Now().Add(-10 * time.Minute)
-	for state, oauthState := range c.stateCache {
-		if oauthState.CreatedAt.Before(cutoff) {
-			delete(c.stateCache, state)
-		}
-	}
 }
 
 // ParseTokenResponse parses a token response for custom OAuth implementations

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,7 +18,7 @@ import (
 
 func TestStartOAuthFlow(t *testing.T) {
 	store := storage.NewMemoryStorage()
-	client := NewServiceOAuthClient(store, "https://mcp-front.example.com")
+	client := NewServiceOAuthClient(store, "https://mcp-front.example.com", []byte(strings.Repeat("test-key", 4)))
 
 	serviceConfig := &config.MCPClientConfig{
 		RequiresUserToken: true,
@@ -43,9 +45,6 @@ func TestStartOAuthFlow(t *testing.T) {
 	assert.Contains(t, authURL, "redirect_uri=https%3A%2F%2Fmcp-front.example.com%2Foauth%2Fcallback%2Ftest-service")
 	assert.Contains(t, authURL, "scope=read+write")
 	assert.Contains(t, authURL, "state=") // State should be present
-
-	// Verify state was stored
-	assert.NotEmpty(t, client.stateCache)
 }
 
 func TestHandleCallback(t *testing.T) {
@@ -66,7 +65,7 @@ func TestHandleCallback(t *testing.T) {
 	defer tokenServer.Close()
 
 	store := storage.NewMemoryStorage()
-	client := NewServiceOAuthClient(store, "https://mcp-front.example.com")
+	client := NewServiceOAuthClient(store, "https://mcp-front.example.com", []byte(strings.Repeat("test-key", 4)))
 
 	serviceConfig := &config.MCPClientConfig{
 		RequiresUserToken: true,
@@ -80,8 +79,8 @@ func TestHandleCallback(t *testing.T) {
 		},
 	}
 
-	// Start flow to get state
-	_, err := client.StartOAuthFlow(
+	// Start flow to get state from URL
+	authURL, err := client.StartOAuthFlow(
 		context.Background(),
 		"user@example.com",
 		"test-service",
@@ -89,12 +88,10 @@ func TestHandleCallback(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	// Get the state from the cache
-	var state string
-	for s := range client.stateCache {
-		state = s
-		break
-	}
+	// Extract state from authorization URL
+	parsedURL, err := url.Parse(authURL)
+	require.NoError(t, err)
+	state := parsedURL.Query().Get("state")
 	require.NotEmpty(t, state)
 
 	// Handle callback
@@ -116,8 +113,6 @@ func TestHandleCallback(t *testing.T) {
 	assert.Equal(t, "mock-access-token", storedToken.OAuthData.AccessToken)
 	assert.Equal(t, "mock-refresh-token", storedToken.OAuthData.RefreshToken)
 
-	// State should be consumed (one-time use)
-	assert.Empty(t, client.stateCache)
 }
 
 func TestRefreshToken(t *testing.T) {
@@ -143,7 +138,7 @@ func TestRefreshToken(t *testing.T) {
 	defer tokenServer.Close()
 
 	store := storage.NewMemoryStorage()
-	client := NewServiceOAuthClient(store, "https://mcp-front.example.com")
+	client := NewServiceOAuthClient(store, "https://mcp-front.example.com", []byte(strings.Repeat("test-key", 4)))
 
 	// Store a token expiring in 2 minutes (within our 5-minute refresh threshold)
 	// This tests our early refresh logic, not just "can refresh expired tokens"
@@ -191,7 +186,7 @@ func TestRefreshToken(t *testing.T) {
 }
 
 func TestGetConnectURL(t *testing.T) {
-	client := NewServiceOAuthClient(nil, "https://mcp-front.example.com")
+	client := NewServiceOAuthClient(nil, "https://mcp-front.example.com", []byte(strings.Repeat("test-key", 4)))
 
 	t.Run("with return path", func(t *testing.T) {
 		url := client.GetConnectURL("my-service", "/my/tokens")
@@ -202,32 +197,4 @@ func TestGetConnectURL(t *testing.T) {
 		url := client.GetConnectURL("my-service", "")
 		assert.Equal(t, "https://mcp-front.example.com/oauth/connect?service=my-service", url)
 	})
-}
-
-func TestCleanupOldStates(t *testing.T) {
-	client := NewServiceOAuthClient(nil, "https://mcp-front.example.com")
-
-	// Add some states with different ages
-	client.stateCache["old-state"] = &ServiceOAuthState{
-		Service:   "service1",
-		UserEmail: "user@example.com",
-		CreatedAt: time.Now().Add(-15 * time.Minute), // Old
-	}
-
-	client.stateCache["recent-state"] = &ServiceOAuthState{
-		Service:   "service2",
-		UserEmail: "user@example.com",
-		CreatedAt: time.Now().Add(-5 * time.Minute), // Recent
-	}
-
-	// Cleanup
-	client.cleanupOldStates()
-
-	// Old state should be removed
-	_, exists := client.stateCache["old-state"]
-	assert.False(t, exists)
-
-	// Recent state should remain
-	_, exists = client.stateCache["recent-state"]
-	assert.True(t, exists)
 }

@@ -313,8 +313,6 @@ func (h *AuthHandlers) GoogleCallbackHandler(w http.ResponseWriter, r *http.Requ
 }
 
 // TokenHandler handles OAuth 2.0 token requests
-//
-// TODO: feels messy, need to see if we can simplify that whole logic
 func (h *AuthHandlers) TokenHandler(w http.ResponseWriter, r *http.Request) {
 	log.Logf("Token handler called: %s %s", r.Method, r.URL.Path)
 	ctx := r.Context()

@@ -203,24 +203,27 @@ func (s *FirestoreStorage) GetAuthorizeRequest(state string) (fosite.AuthorizeRe
 	return nil, false
 }
 
-// GetClient retrieves a client from memory (which is kept in sync with Firestore)
+// GetClient retrieves a client from memory cache, loading from Firestore on miss.
+// Concurrent cache misses may load the same client multiple times from Firestore.
+// This is acceptable because: (1) clients are loaded once at startup via loadAllClients,
+// so misses only occur for newly registered clients, and (2) duplicate Firestore reads
+// are safe (idempotent) and cost-negligible at mcp-front's scale.
 func (s *FirestoreStorage) GetClient(ctx context.Context, id string) (fosite.Client, error) {
 	s.clientsMutex.RLock()
-	defer s.clientsMutex.RUnlock()
-
 	cl, ok := s.MemoryStore.Clients[id]
-	if !ok {
-		// Try to load from Firestore if not in memory
-		s.clientsMutex.RUnlock()
-		client, err := s.loadClientFromFirestore(ctx, id)
-		s.clientsMutex.RLock()
+	s.clientsMutex.RUnlock()
 
-		if err != nil {
-			return nil, fosite.ErrNotFound
-		}
-		return client, nil
+	if ok {
+		return cl, nil
 	}
-	return cl, nil
+
+	// Cache miss - load from Firestore
+	// Multiple threads might load simultaneously, but this is rare and safe
+	client, err := s.loadClientFromFirestore(ctx, id)
+	if err != nil {
+		return nil, fosite.ErrNotFound
+	}
+	return client, nil
 }
 
 // loadClientFromFirestore loads a single client from Firestore

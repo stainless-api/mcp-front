@@ -56,7 +56,7 @@ func TestOAuthEndpointsCORS(t *testing.T) {
 	require.NoError(t, err)
 	sessionEncryptor, err := oauth.NewSessionEncryptor([]byte(oauthConfig.EncryptionKey))
 	require.NoError(t, err)
-	serviceOAuthClient := auth.NewServiceOAuthClient(store, "https://test.example.com")
+	serviceOAuthClient := auth.NewServiceOAuthClient(store, "https://test.example.com", []byte(strings.Repeat("k", 32)))
 
 	authHandlers := NewAuthHandlers(
 		oauthProvider,
