@@ -16,6 +16,16 @@ import (
 	"golang.org/x/oauth2"
 )
 
+const (
+	// OAuthStateExpiry is how long OAuth state parameters remain valid
+	OAuthStateExpiry = 10 * time.Minute
+
+	// TokenRefreshThreshold is how early to refresh tokens before expiry
+	// Set to 5 minutes to prevent tokens expiring mid-operation when users
+	// are in Claude and cannot easily re-authenticate
+	TokenRefreshThreshold = 5 * time.Minute
+)
+
 // ServiceOAuthClient handles OAuth flows for external MCP services
 type ServiceOAuthClient struct {
 	storage     storage.UserTokenStore
@@ -37,7 +47,7 @@ func NewServiceOAuthClient(storage storage.UserTokenStore, baseURL string, signi
 		storage:     storage,
 		baseURL:     baseURL,
 		httpClient:  &http.Client{Timeout: 30 * time.Second},
-		stateSigner: crypto.NewTokenSigner(signingKey, 10*time.Minute),
+		stateSigner: crypto.NewTokenSigner(signingKey, OAuthStateExpiry),
 	}
 }
 
@@ -185,7 +195,7 @@ func (c *ServiceOAuthClient) RefreshToken(
 		return fmt.Errorf("token is not an OAuth token")
 	}
 
-	// Early refresh strategy: Refresh tokens 5 minutes before expiry
+	// Early refresh strategy: Refresh tokens TokenRefreshThreshold before expiry
 	//
 	// Why 5 minutes?
 	// - Users are in Claude.ai, not mcp-front UI. If token expires mid-session,
@@ -203,7 +213,7 @@ func (c *ServiceOAuthClient) RefreshToken(
 	//   is simpler and aligns with the architecture.
 	// - Background jobs require distributed coordination for multi-instance deploys,
 	//   lifecycle management, and handling refresh failures asynchronously.
-	if time.Until(storedToken.OAuthData.ExpiresAt) > 5*time.Minute {
+	if time.Until(storedToken.OAuthData.ExpiresAt) > TokenRefreshThreshold {
 		return nil // Token still valid, no refresh needed
 	}
 
@@ -246,7 +256,7 @@ func (c *ServiceOAuthClient) RefreshToken(
 	// - oauth2 library decides HOW to refresh (HTTP request format, error handling,
 	//   refresh token rotation, provider-specific quirks across OAuth providers)
 	baseSource := oauth2Config.TokenSource(ctx, oldToken)
-	earlyRefreshSource := oauth2.ReuseTokenSourceWithExpiry(oldToken, baseSource, 5*time.Minute)
+	earlyRefreshSource := oauth2.ReuseTokenSourceWithExpiry(oldToken, baseSource, TokenRefreshThreshold)
 	newToken, err := earlyRefreshSource.Token()
 	if err != nil {
 		log.LogErrorWithFields("service_oauth", "Failed to refresh token", map[string]any{

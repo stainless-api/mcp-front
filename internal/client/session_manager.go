@@ -15,6 +15,17 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 )
 
+const (
+	// DefaultSessionTimeout is how long idle sessions remain active
+	DefaultSessionTimeout = 5 * time.Minute
+
+	// DefaultCleanupInterval is how often to check for expired sessions
+	DefaultCleanupInterval = 1 * time.Minute
+
+	// DefaultMaxSessionsPerUser limits concurrent sessions per user
+	DefaultMaxSessionsPerUser = 10
+)
+
 var (
 	// ErrSessionNotFound is returned when a session doesn't exist
 	ErrSessionNotFound = errors.New("session not found")
@@ -91,9 +102,9 @@ func WithClientCreator(creator func(name string, config *config.MCPClientConfig)
 func NewStdioSessionManager(opts ...SessionManagerOption) *StdioSessionManager {
 	sm := &StdioSessionManager{
 		sessions:        make(map[SessionKey]*StdioSession),
-		defaultTimeout:  5 * time.Minute,
-		maxPerUser:      10,
-		cleanupInterval: 1 * time.Minute,
+		defaultTimeout:  DefaultSessionTimeout,
+		maxPerUser:      DefaultMaxSessionsPerUser,
+		cleanupInterval: DefaultCleanupInterval,
 		stopCleanup:     make(chan struct{}),
 		createClient:    NewMCPClient,
 	}
