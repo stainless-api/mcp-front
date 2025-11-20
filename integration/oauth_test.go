@@ -1188,7 +1188,7 @@ func TestServiceOAuthIntegration(t *testing.T) {
 	fakeService := NewFakeServiceOAuthServer("9091")
 	err := fakeService.Start()
 	require.NoError(t, err)
-	defer fakeService.Stop()
+	defer func() { _ = fakeService.Stop() }()
 
 	// Start mcp-front with OAuth service configuration
 	startMCPFront(t, "config/config.oauth-service-integration-test.json",

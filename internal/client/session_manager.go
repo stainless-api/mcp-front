@@ -195,7 +195,7 @@ func (sm *StdioSessionManager) RemoveSession(key SessionKey) {
 			"user":      key.UserEmail,
 		})
 	}
-	sessionCount := len(sm.sessions)
+	remainingSessions := len(sm.sessions)
 	sm.mu.Unlock()
 
 	if ok {
@@ -225,7 +225,7 @@ func (sm *StdioSessionManager) RemoveSession(key SessionKey) {
 			"created":           session.created,
 			"duration":          time.Since(session.created).String(),
 			"lastAccessed":      session.lastAccessed.Load(),
-			"remainingSessions": sessionCount,
+			"remainingSessions": remainingSessions,
 		})
 	}
 }
@@ -426,6 +426,7 @@ func (sm *StdioSessionManager) createSession(
 	// Store session
 	sm.mu.Lock()
 	sm.sessions[key] = session
+	totalSessions := len(sm.sessions)
 	sm.mu.Unlock()
 
 	log.LogInfoWithFields("session_manager", "Created new session", map[string]any{
@@ -441,7 +442,7 @@ func (sm *StdioSessionManager) createSession(
 		"timeout":         sm.defaultTimeout.String(),
 		"maxPerUser":      sm.maxPerUser,
 		"cleanupInterval": sm.cleanupInterval.String(),
-		"totalSessions":   len(sm.sessions),
+		"totalSessions":   totalSessions,
 	})
 
 	return session, nil
