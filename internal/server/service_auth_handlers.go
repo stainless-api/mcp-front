@@ -187,10 +187,9 @@ func (h *ServiceAuthHandlers) CallbackHandler(w http.ResponseWriter, r *http.Req
 		displayName = serviceConfig.UserAuthentication.DisplayName
 	}
 
-	// Service OAuth success always redirects back to interstitial page
-	// This maintains user context in the upstream OAuth flow
-	successURL := fmt.Sprintf("/oauth/services?message=%s&type=success",
-		strings.ReplaceAll(fmt.Sprintf("Successfully connected to %s", displayName), " ", "+"),
+	// Service OAuth success redirects to /my/tokens with success message
+	successURL := fmt.Sprintf("/my/tokens?message=%s&type=success",
+		url.QueryEscape(fmt.Sprintf("Successfully connected to %s", displayName)),
 	)
 	http.Redirect(w, r, successURL, http.StatusFound)
 }

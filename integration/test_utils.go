@@ -548,6 +548,78 @@ func (m *FakeGCPServer) Stop() error {
 	return m.server.Shutdown(ctx)
 }
 
+// FakeServiceOAuthServer provides a fake OAuth server for external services (like Linear, GitHub)
+type FakeServiceOAuthServer struct {
+	server *http.Server
+	port   string
+}
+
+// NewFakeServiceOAuthServer creates a new fake service OAuth server
+func NewFakeServiceOAuthServer(port string) *FakeServiceOAuthServer {
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("/oauth/authorize", func(w http.ResponseWriter, r *http.Request) {
+		redirectURI := r.URL.Query().Get("redirect_uri")
+		state := r.URL.Query().Get("state")
+		http.Redirect(w, r, fmt.Sprintf("%s?code=service-auth-code&state=%s", redirectURI, state), http.StatusFound)
+	})
+
+	mux.HandleFunc("/oauth/token", func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "Invalid request", http.StatusBadRequest)
+			return
+		}
+
+		code := r.FormValue("code")
+		if code != "service-auth-code" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"error":             "invalid_grant",
+				"error_description": "Invalid authorization code",
+			})
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"access_token":  "service-oauth-access-token",
+			"refresh_token": "service-oauth-refresh-token",
+			"token_type":    "Bearer",
+			"expires_in":    3600,
+		})
+	})
+
+	server := &http.Server{
+		Addr:    ":" + port,
+		Handler: mux,
+	}
+
+	return &FakeServiceOAuthServer{
+		server: server,
+		port:   port,
+	}
+}
+
+// Start starts the fake service OAuth server
+func (s *FakeServiceOAuthServer) Start() error {
+	go func() {
+		if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			panic(err)
+		}
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+	return nil
+}
+
+// Stop stops the fake service OAuth server
+func (s *FakeServiceOAuthServer) Stop() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return s.server.Shutdown(ctx)
+}
+
 // TestEnvironment manages the complete test environment
 type TestEnvironment struct {
 	dbCmd   *exec.Cmd
