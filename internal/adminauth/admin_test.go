@@ -1,4 +1,4 @@
-package auth
+package adminauth
 
 import (
 	"context"

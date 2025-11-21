@@ -5,16 +5,17 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"strings"
 
-	"github.com/dgellow/mcp-front/internal/auth"
 	"github.com/dgellow/mcp-front/internal/client"
 	"github.com/dgellow/mcp-front/internal/config"
 	jsonwriter "github.com/dgellow/mcp-front/internal/json"
 	"github.com/dgellow/mcp-front/internal/jsonrpc"
 	"github.com/dgellow/mcp-front/internal/log"
 	"github.com/dgellow/mcp-front/internal/oauth"
+	"github.com/dgellow/mcp-front/internal/servicecontext"
 	"github.com/dgellow/mcp-front/internal/storage"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -23,10 +24,13 @@ import (
 // SessionManager defines the interface for managing stdio sessions
 type SessionManager interface {
 	GetSession(key client.SessionKey) (*client.StdioSession, bool)
-	GetOrCreateSession(ctx context.Context, key client.SessionKey, config *config.MCPClientConfig, info mcp.Implementation, setupBaseURL string) (*client.StdioSession, error)
+	GetOrCreateSession(ctx context.Context, key client.SessionKey, config *config.MCPClientConfig, info mcp.Implementation, setupBaseURL string, userToken string) (*client.StdioSession, error)
 	RemoveSession(key client.SessionKey)
 	Shutdown()
 }
+
+// UserTokenFunc defines a function that retrieves a formatted user token for a service
+type UserTokenFunc func(ctx context.Context, userEmail, serviceName string, serviceConfig *config.MCPClientConfig) (string, error)
 
 // MCPHandler handles MCP requests with session management for stdio servers
 type MCPHandler struct {
@@ -37,6 +41,8 @@ type MCPHandler struct {
 	info            mcp.Implementation
 	sessionManager  SessionManager
 	sharedSSEServer *server.SSEServer // Shared SSE server for stdio servers
+	sharedMCPServer *server.MCPServer // Shared MCP server for stdio servers
+	getUserToken    UserTokenFunc     // Function to get formatted user tokens
 }
 
 // NewMCPHandler creates a new MCP handler with session management
@@ -48,6 +54,8 @@ func NewMCPHandler(
 	info mcp.Implementation,
 	sessionManager SessionManager,
 	sharedSSEServer *server.SSEServer, // Shared SSE server for stdio servers
+	sharedMCPServer *server.MCPServer, // Shared MCP server for stdio servers
+	getUserToken UserTokenFunc,
 ) *MCPHandler {
 	return &MCPHandler{
 		serverName:      serverName,
@@ -57,6 +65,8 @@ func NewMCPHandler(
 		info:            info,
 		sessionManager:  sessionManager,
 		sharedSSEServer: sharedSSEServer,
+		sharedMCPServer: sharedMCPServer,
+		getUserToken:    getUserToken,
 	}
 }
 
@@ -67,7 +77,7 @@ func (h *MCPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	userEmail, _ := oauth.GetUserFromContext(ctx)
 	if userEmail == "" {
 		// Check for basic auth username
-		username, _ := auth.GetUser(ctx)
+		username, _ := servicecontext.GetUser(ctx)
 		userEmail = username
 	}
 
@@ -85,7 +95,8 @@ func (h *MCPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if serverConfig.TransportType == config.MCPClientTypeStreamable {
-		if r.Method == http.MethodPost {
+		switch r.Method {
+		case http.MethodPost:
 			log.LogInfoWithFields("mcp", "Handling streamable POST request", map[string]any{
 				"path":          r.URL.Path,
 				"server":        h.serverName,
@@ -94,7 +105,7 @@ func (h *MCPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				"contentLength": r.ContentLength,
 			})
 			h.handleStreamablePost(ctx, w, r, userEmail, serverConfig)
-		} else if r.Method == http.MethodGet {
+		case http.MethodGet:
 			log.LogInfoWithFields("mcp", "Handling streamable GET request", map[string]any{
 				"path":       r.URL.Path,
 				"server":     h.serverName,
@@ -103,7 +114,7 @@ func (h *MCPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				"userAgent":  r.UserAgent(),
 			})
 			h.handleStreamableGet(ctx, w, r, userEmail, serverConfig)
-		} else {
+		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
 	} else {
@@ -176,14 +187,10 @@ func (h *MCPHandler) handleSSERequest(ctx context.Context, w http.ResponseWriter
 	// that will be called when sessions are registered/unregistered
 	// We need to set up our session-specific handlers
 	// Create a custom hook handler for this specific request
-	sessionHandler := &sessionRequestHandler{
-		h:         h,
-		userEmail: userEmail,
-		config:    config,
-	}
+	sessionHandler := NewSessionRequestHandler(h, userEmail, config, h.sharedMCPServer)
 
 	// Store the handler in context so hooks can access it
-	ctx = context.WithValue(ctx, sessionHandlerKey{}, sessionHandler)
+	ctx = context.WithValue(ctx, SessionHandlerKey{}, sessionHandler)
 	r = r.WithContext(ctx)
 	log.LogInfoWithFields("mcp", "Serving SSE request for stdio server", map[string]any{
 		"server": h.serverName,
@@ -269,15 +276,15 @@ func (h *MCPHandler) getUserTokenIfAvailable(ctx context.Context, userEmail stri
 		return "", fmt.Errorf("authentication required")
 	}
 
-	log.LogTraceWithFields("mcp_handler", "Attempting to resolve user token", map[string]interface{}{
+	log.LogTraceWithFields("mcp_handler", "Attempting to resolve user token", map[string]any{
 		"server_name": h.serverName,
 		"user":        userEmail,
 	})
 
 	// Check for service auth first - services provide their own user tokens
-	if serviceAuth, ok := auth.GetServiceAuth(ctx); ok {
+	if serviceAuth, ok := servicecontext.GetAuthInfo(ctx); ok {
 		if serviceAuth.UserToken != "" {
-			log.LogTraceWithFields("mcp_handler", "Found user token in service auth context", map[string]interface{}{
+			log.LogTraceWithFields("mcp_handler", "Found user token in service auth context", map[string]any{
 				"server_name": h.serverName,
 				"user":        userEmail,
 			})
@@ -285,7 +292,7 @@ func (h *MCPHandler) getUserTokenIfAvailable(ctx context.Context, userEmail stri
 		}
 	}
 
-	log.LogTraceWithFields("mcp_handler", "No user token in service auth context, falling back to storage lookup", map[string]interface{}{
+	log.LogTraceWithFields("mcp_handler", "No user token in service auth context, falling back to storage lookup", map[string]any{
 		"server_name": h.serverName,
 		"user":        userEmail,
 	})
@@ -295,22 +302,28 @@ func (h *MCPHandler) getUserTokenIfAvailable(ctx context.Context, userEmail stri
 		return "", fmt.Errorf("storage not configured")
 	}
 
-	token, err := h.storage.GetUserToken(ctx, userEmail, h.serverName)
+	storedToken, err := h.storage.GetUserToken(ctx, userEmail, h.serverName)
 	if err != nil {
 		return "", err
 	}
 
-	// Validate token format if configured
-	if h.serverConfig.TokenSetup != nil && h.serverConfig.TokenSetup.CompiledRegex != nil {
-		if !h.serverConfig.TokenSetup.CompiledRegex.MatchString(token) {
-			log.LogWarnWithFields("mcp", "User token doesn't match expected format", map[string]any{
-				"user":    userEmail,
-				"service": h.serverName,
-			})
+	// Use injected function to get formatted token with refresh handling
+	if h.getUserToken != nil {
+		return h.getUserToken(ctx, userEmail, h.serverName, h.serverConfig)
+	}
+
+	// Fallback: extract raw token without refresh (for backwards compatibility)
+	var tokenString string
+	switch storedToken.Type {
+	case storage.TokenTypeManual:
+		tokenString = storedToken.Value
+	case storage.TokenTypeOAuth:
+		if storedToken.OAuthData != nil {
+			tokenString = storedToken.OAuthData.AccessToken
 		}
 	}
 
-	return token, nil
+	return tokenString, nil
 }
 
 func (h *MCPHandler) forwardMessageToBackend(ctx context.Context, w http.ResponseWriter, r *http.Request, config *config.MCPClientConfig) {
@@ -375,9 +388,7 @@ func (h *MCPHandler) forwardMessageToBackend(ctx context.Context, w http.Respons
 
 	w.WriteHeader(resp.StatusCode)
 
-	for k, v := range resp.Header {
-		w.Header()[k] = v
-	}
+	maps.Copy(w.Header(), resp.Header)
 
 	if _, err := io.Copy(w, resp.Body); err != nil {
 		log.LogErrorWithFields("mcp", "Failed to copy response body", map[string]any{

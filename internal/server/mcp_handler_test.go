@@ -31,11 +31,13 @@ type mockStorage struct {
 	mock.Mock
 }
 
-// Override only the methods we want to mock
-func (m *mockStorage) GetUserToken(ctx context.Context, userEmail, service string) (string, error) {
+func (m *mockStorage) GetUserToken(ctx context.Context, userEmail, service string) (*storage.StoredToken, error) {
 	if m.Mock.ExpectedCalls != nil {
 		args := m.Called(ctx, userEmail, service)
-		return args.String(0), args.Error(1)
+		if args.Get(0) == nil {
+			return nil, args.Error(1)
+		}
+		return args.Get(0).(*storage.StoredToken), args.Error(1)
 	}
 	return m.MemoryStorage.GetUserToken(ctx, userEmail, service)
 }
@@ -56,8 +58,8 @@ func (m *mockSessionManager) GetSession(key client.SessionKey) (*client.StdioSes
 	return args.Get(0).(*client.StdioSession), args.Bool(1)
 }
 
-func (m *mockSessionManager) GetOrCreateSession(ctx context.Context, key client.SessionKey, config *config.MCPClientConfig, info mcp.Implementation, setupBaseURL string) (*client.StdioSession, error) {
-	args := m.Called(ctx, key, config, info, setupBaseURL)
+func (m *mockSessionManager) GetOrCreateSession(ctx context.Context, key client.SessionKey, config *config.MCPClientConfig, info mcp.Implementation, setupBaseURL string, userToken string) (*client.StdioSession, error) {
+	args := m.Called(ctx, key, config, info, setupBaseURL, userToken)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
@@ -73,7 +75,7 @@ func (m *mockSessionManager) Shutdown() {
 }
 
 // Test helper to create MCPHandler for SSE tests
-func createTestMCPHandler(serverName string, config *config.MCPClientConfig) *MCPHandler {
+func createTestMCPHandler(serverName string, serverConfig *config.MCPClientConfig) *MCPHandler {
 	mockStore := &mockStorage{
 		MemoryStorage: storage.NewMemoryStorage(),
 	}
@@ -82,12 +84,19 @@ func createTestMCPHandler(serverName string, config *config.MCPClientConfig) *MC
 
 	return NewMCPHandler(
 		serverName,
-		config,
+		serverConfig,
 		mockStore,
 		"http://localhost:8080",
 		info,
 		sessionManager,
-		nil,
+		nil, // sharedSSEServer
+		nil, // sharedMCPServer
+		func(ctx context.Context, userEmail, serviceName string, serviceConfig *config.MCPClientConfig) (string, error) {
+			if userEmail == "" {
+				return "", fmt.Errorf("no user")
+			}
+			return "test-token-for-" + serviceName, nil
+		},
 	)
 }
 
@@ -576,7 +585,7 @@ func TestHandleStreamableGet(t *testing.T) {
 		defer backend.Close()
 
 		// Configure client
-		config := &config.MCPClientConfig{
+		serverConfig := &config.MCPClientConfig{
 			URL:           backend.URL,
 			TransportType: config.MCPClientTypeStreamable,
 			Headers: map[string]string{
@@ -585,7 +594,7 @@ func TestHandleStreamableGet(t *testing.T) {
 			Timeout: 5 * time.Second,
 		}
 
-		handler := createTestMCPHandler("test-streamable", config)
+		handler := createTestMCPHandler("test-streamable", serverConfig)
 
 		// Create request with Accept header
 		req := httptest.NewRequest(http.MethodGet, "/test-streamable", nil)
@@ -593,7 +602,7 @@ func TestHandleStreamableGet(t *testing.T) {
 		rec := httptest.NewRecorder()
 
 		// Call the function
-		handler.handleStreamableGet(context.Background(), rec, req, "user@example.com", config)
+		handler.handleStreamableGet(context.Background(), rec, req, "user@example.com", serverConfig)
 
 		// Verify response
 		assert.Equal(t, http.StatusOK, rec.Code)
@@ -602,18 +611,18 @@ func TestHandleStreamableGet(t *testing.T) {
 	})
 
 	t.Run("missing Accept header", func(t *testing.T) {
-		config := &config.MCPClientConfig{
+		serverConfig := &config.MCPClientConfig{
 			URL:           "http://example.com",
 			TransportType: config.MCPClientTypeStreamable,
 		}
 
-		handler := createTestMCPHandler("test-streamable", config)
+		handler := createTestMCPHandler("test-streamable", serverConfig)
 
 		// Create request without Accept header
 		req := httptest.NewRequest(http.MethodGet, "/test-streamable", nil)
 		rec := httptest.NewRecorder()
 
-		handler.handleStreamableGet(context.Background(), rec, req, "user@example.com", config)
+		handler.handleStreamableGet(context.Background(), rec, req, "user@example.com", serverConfig)
 
 		// Should return 406 Not Acceptable
 		assert.Equal(t, http.StatusNotAcceptable, rec.Code)
@@ -621,19 +630,19 @@ func TestHandleStreamableGet(t *testing.T) {
 	})
 
 	t.Run("wrong Accept header", func(t *testing.T) {
-		config := &config.MCPClientConfig{
+		serverConfig := &config.MCPClientConfig{
 			URL:           "http://example.com",
 			TransportType: config.MCPClientTypeStreamable,
 		}
 
-		handler := createTestMCPHandler("test-streamable", config)
+		handler := createTestMCPHandler("test-streamable", serverConfig)
 
 		// Create request with wrong Accept header
 		req := httptest.NewRequest(http.MethodGet, "/test-streamable", nil)
 		req.Header.Set("Accept", "application/json")
 		rec := httptest.NewRecorder()
 
-		handler.handleStreamableGet(context.Background(), rec, req, "user@example.com", config)
+		handler.handleStreamableGet(context.Background(), rec, req, "user@example.com", serverConfig)
 
 		// Should return 406 Not Acceptable
 		assert.Equal(t, http.StatusNotAcceptable, rec.Code)
@@ -650,12 +659,12 @@ func TestStreamableTransportRouting(t *testing.T) {
 		}))
 		defer backend.Close()
 
-		config := &config.MCPClientConfig{
+		serverConfig := &config.MCPClientConfig{
 			URL:           backend.URL,
 			TransportType: config.MCPClientTypeStreamable,
 		}
 
-		handler := createTestMCPHandler("test-streamable", config)
+		handler := createTestMCPHandler("test-streamable", serverConfig)
 
 		req := httptest.NewRequest(http.MethodPost, "/test-streamable", bytes.NewReader([]byte("{}")))
 		req.Header.Set("Content-Type", "application/json")
@@ -675,12 +684,12 @@ func TestStreamableTransportRouting(t *testing.T) {
 		}))
 		defer backend.Close()
 
-		config := &config.MCPClientConfig{
+		serverConfig := &config.MCPClientConfig{
 			URL:           backend.URL,
 			TransportType: config.MCPClientTypeStreamable,
 		}
 
-		handler := createTestMCPHandler("test-streamable", config)
+		handler := createTestMCPHandler("test-streamable", serverConfig)
 
 		req := httptest.NewRequest(http.MethodGet, "/test-streamable", nil)
 		req.Header.Set("Accept", "text/event-stream")
@@ -693,12 +702,12 @@ func TestStreamableTransportRouting(t *testing.T) {
 	})
 
 	t.Run("unsupported method returns 405", func(t *testing.T) {
-		config := &config.MCPClientConfig{
+		serverConfig := &config.MCPClientConfig{
 			URL:           "http://example.com",
 			TransportType: config.MCPClientTypeStreamable,
 		}
 
-		handler := createTestMCPHandler("test-streamable", config)
+		handler := createTestMCPHandler("test-streamable", serverConfig)
 
 		req := httptest.NewRequest(http.MethodPut, "/test-streamable", nil)
 		rec := httptest.NewRecorder()

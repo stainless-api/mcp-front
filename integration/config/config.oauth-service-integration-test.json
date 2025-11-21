@@ -1,0 +1,41 @@
+{
+  "version": "v0.0.1-DEV_EDITION_EXPECT_CHANGES",
+  "proxy": {
+    "baseURL": "http://localhost:8080",
+    "addr": ":8080",
+    "name": "mcp-front-oauth-service-integration-test",
+    "auth": {
+      "kind": "oauth",
+      "issuer": "http://localhost:8080",
+      "gcpProject": "test-project",
+      "allowedDomains": ["test.com"],
+      "allowedOrigins": ["https://claude.ai"],
+      "tokenTtl": "1h",
+      "storage": "memory",
+      "googleClientId": {"$env": "GOOGLE_CLIENT_ID"},
+      "googleClientSecret": {"$env": "GOOGLE_CLIENT_SECRET"},
+      "googleRedirectUri": "http://localhost:8080/oauth/callback",
+      "jwtSecret": {"$env": "JWT_SECRET"},
+      "encryptionKey": {"$env": "ENCRYPTION_KEY"}
+    }
+  },
+  "mcpServers": {
+    "test-service": {
+      "transportType": "sse",
+      "url": "http://localhost:3001/sse",
+      "requiresUserToken": true,
+      "userAuthentication": {
+        "type": "oauth",
+        "displayName": "Test OAuth Service",
+        "clientId": {"$env": "TEST_SERVICE_CLIENT_ID"},
+        "clientSecret": {"$env": "TEST_SERVICE_CLIENT_SECRET"},
+        "authorizationUrl": "http://localhost:9091/oauth/authorize",
+        "tokenUrl": "http://localhost:9091/oauth/token",
+        "scopes": ["read", "write"]
+      },
+      "headers": {
+        "Authorization": {"$userToken": "Bearer {{token}}"}
+      }
+    }
+  }
+}

@@ -90,17 +90,17 @@ func TestServer_HandleToolCall(t *testing.T) {
 	tests := []struct {
 		name      string
 		toolName  string
-		args      map[string]interface{}
+		args      map[string]any
 		wantError bool
-		validate  func(t *testing.T, result interface{}, err error)
+		validate  func(t *testing.T, result any, err error)
 	}{
 		{
 			name:      "echo tool",
 			toolName:  "echo",
-			args:      map[string]interface{}{},
+			args:      map[string]any{},
 			wantError: false,
-			validate: func(t *testing.T, result interface{}, err error) {
-				resultMap, ok := result.(map[string]interface{})
+			validate: func(t *testing.T, result any, err error) {
+				resultMap, ok := result.(map[string]any)
 				require.True(t, ok)
 				output := resultMap["output"].(string)
 				assert.Equal(t, "test-message\n", output)
@@ -109,9 +109,9 @@ func TestServer_HandleToolCall(t *testing.T) {
 		{
 			name:      "nonexistent tool",
 			toolName:  "nonexistent",
-			args:      map[string]interface{}{},
+			args:      map[string]any{},
 			wantError: true,
-			validate: func(t *testing.T, result interface{}, err error) {
+			validate: func(t *testing.T, result any, err error) {
 				assert.Error(t, err)
 				assert.Contains(t, err.Error(), "tool nonexistent not found")
 			},
@@ -119,11 +119,11 @@ func TestServer_HandleToolCall(t *testing.T) {
 		{
 			name:      "cat nonexistent file",
 			toolName:  "cat",
-			args:      map[string]interface{}{},
+			args:      map[string]any{},
 			wantError: true,
-			validate: func(t *testing.T, result interface{}, err error) {
+			validate: func(t *testing.T, result any, err error) {
 				assert.Error(t, err)
-				resultMap, ok := result.(map[string]interface{})
+				resultMap, ok := result.(map[string]any)
 				require.True(t, ok)
 				stderr := resultMap["stderr"].(string)
 				assert.Contains(t, stderr, "No such file")
@@ -132,10 +132,10 @@ func TestServer_HandleToolCall(t *testing.T) {
 		{
 			name:      "environment variable test",
 			toolName:  "env_test",
-			args:      map[string]interface{}{},
+			args:      map[string]any{},
 			wantError: false,
-			validate: func(t *testing.T, result interface{}, err error) {
-				resultMap, ok := result.(map[string]interface{})
+			validate: func(t *testing.T, result any, err error) {
+				resultMap, ok := result.(map[string]any)
 				require.True(t, ok)
 				output := resultMap["output"].(string)
 				assert.Contains(t, output, "TEST_VAR=test-value")
@@ -175,12 +175,12 @@ func TestServer_HandleToolCall_JSON(t *testing.T) {
 	server := NewServer("test", Config{}, resolvedTools)
 
 	ctx := context.Background()
-	result, err := server.HandleToolCall(ctx, "json_output", map[string]interface{}{})
+	result, err := server.HandleToolCall(ctx, "json_output", map[string]any{})
 
 	require.NoError(t, err)
 
 	// Should parse as JSON
-	resultMap, ok := result.(map[string]interface{})
+	resultMap, ok := result.(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, "ok", resultMap["status"])
 	assert.Equal(t, float64(42), resultMap["value"])
@@ -205,13 +205,13 @@ func TestServer_HandleToolCall_Timeout(t *testing.T) {
 	server := NewServer("test", Config{}, resolvedTools)
 
 	ctx := context.Background()
-	result, err := server.HandleToolCall(ctx, "slow_command", map[string]interface{}{})
+	result, err := server.HandleToolCall(ctx, "slow_command", map[string]any{})
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "command failed")
 
 	// Check that we got a timeout-related error in stderr or error message
-	if resultMap, ok := result.(map[string]interface{}); ok {
+	if resultMap, ok := result.(map[string]any); ok {
 		stderr, _ := resultMap["stderr"].(string)
 		errorMsg, _ := resultMap["error"].(string)
 		// The actual error message varies by OS, but it should indicate termination

@@ -25,7 +25,8 @@ func TestValidateConfig_UserTokensRequireOAuth(t *testing.T) {
 						TransportType:     MCPClientTypeSSE,
 						URL:               "https://notion.example.com",
 						RequiresUserToken: true,
-						TokenSetup: &TokenSetupConfig{
+						UserAuthentication: &UserAuthentication{
+							Type:        UserAuthTypeManual,
 							DisplayName: "Notion",
 						},
 					},
@@ -56,7 +57,8 @@ func TestValidateConfig_UserTokensRequireOAuth(t *testing.T) {
 						TransportType:     MCPClientTypeSSE,
 						URL:               "https://notion.example.com",
 						RequiresUserToken: true,
-						TokenSetup: &TokenSetupConfig{
+						UserAuthentication: &UserAuthentication{
+							Type:        UserAuthTypeManual,
 							DisplayName: "Notion",
 						},
 					},

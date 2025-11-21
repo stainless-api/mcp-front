@@ -143,6 +143,30 @@
             background-color: #c82333;
         }
         
+        button.oauth {
+            background-color: #4285f4;
+            color: white;
+        }
+        
+        button.oauth:hover {
+            background-color: #357ae8;
+        }
+        
+        .oauth-status {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-top: 15px;
+        }
+        
+        .oauth-connected {
+            color: #2e7d32;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        
         .message {
             padding: 12px;
             margin-bottom: 20px;
@@ -206,25 +230,43 @@
                 {{end}}
             </div>
             
-            <form method="POST" action="/my/tokens/set">
-                <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
-                <input type="hidden" name="service" value="{{.Name}}">
-                <input type="password" 
-                       name="token" 
-                       placeholder="{{if .HasToken}}Enter new token to update{{else}}Enter your {{.DisplayName}} token{{end}}"
-                       {{if .TokenFormat}}pattern="{{.TokenFormat}}" title="Token must match pattern: {{.TokenFormat}}"{{end}}
-                       required>
-                <button type="submit" class="primary">
-                    {{if .HasToken}}Update Token{{else}}Save Token{{end}}
-                </button>
-            </form>
-            
-            {{if .HasToken}}
-            <form method="POST" action="/my/tokens/delete" class="delete-form">
-                <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
-                <input type="hidden" name="service" value="{{.Name}}">
-                <button type="submit" class="danger">Remove Token</button>
-            </form>
+            {{if .SupportsOAuth}}
+                {{if .IsOAuthConnected}}
+                <div class="oauth-status">
+                    <span class="oauth-connected">✓ Connected via OAuth</span>
+                    <form method="POST" action="/oauth/disconnect" style="display: inline;">
+                        <input type="hidden" name="service" value="{{.Name}}">
+                        <button type="submit" class="danger">Disconnect {{.DisplayName}}</button>
+                    </form>
+                </div>
+                {{else}}
+                <div class="oauth-status">
+                    <a href="{{.ConnectURL}}" style="display: inline;">
+                        <button type="button" class="oauth">Connect with {{.DisplayName}}</button>
+                    </a>
+                </div>
+                {{end}}
+            {{else}}
+                <form method="POST" action="/my/tokens/set">
+                    <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+                    <input type="hidden" name="service" value="{{.Name}}">
+                    <input type="password" 
+                           name="token" 
+                           placeholder="{{if .HasToken}}Enter new token to update{{else}}Enter your {{.DisplayName}} token{{end}}"
+                           {{if .TokenFormat}}pattern="{{.TokenFormat}}" title="Token must match pattern: {{.TokenFormat}}"{{end}}
+                           required>
+                    <button type="submit" class="primary">
+                        {{if .HasToken}}Update Token{{else}}Save Token{{end}}
+                    </button>
+                </form>
+                
+                {{if .HasToken}}
+                <form method="POST" action="/my/tokens/delete" class="delete-form">
+                    <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+                    <input type="hidden" name="service" value="{{.Name}}">
+                    <button type="submit" class="danger">Remove Token</button>
+                </form>
+                {{end}}
             {{end}}
             {{else}}
             <div class="instructions">

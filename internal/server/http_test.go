@@ -8,63 +8,64 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dgellow/mcp-front/internal/auth"
+	"github.com/dgellow/mcp-front/internal/config"
 	"github.com/dgellow/mcp-front/internal/oauth"
 	"github.com/dgellow/mcp-front/internal/storage"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestHealthEndpoint(t *testing.T) {
+	handler := NewHealthHandler()
+
 	req := httptest.NewRequest("GET", "/health", nil)
 	w := httptest.NewRecorder()
 
-	// Test the health handler directly
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"status":"ok","service":"mcp-front"}`))
-	})
-
 	handler.ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Errorf("Expected 200, got %d", w.Code)
-	}
-
-	if w.Header().Get("Content-Type") != "application/json" {
-		t.Errorf("Expected Content-Type: application/json, got: %s", w.Header().Get("Content-Type"))
-	}
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "application/json", w.Header().Get("Content-Type"))
 
 	var response map[string]string
-	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
-		t.Fatalf("Failed to unmarshal response: %v", err)
-	}
+	err := json.Unmarshal(w.Body.Bytes(), &response)
+	require.NoError(t, err)
 
-	if response["status"] != "ok" {
-		t.Errorf("Expected status: ok, got: %s", response["status"])
-	}
-
-	if response["service"] != "mcp-front" {
-		t.Errorf("Expected service: mcp-front, got: %s", response["service"])
-	}
+	assert.Equal(t, "ok", response["status"])
 }
 
 func TestOAuthEndpointsCORS(t *testing.T) {
-	oauthConfig := oauth.Config{
+	// Setup OAuth config
+	oauthConfig := config.OAuthAuthConfig{
+		Kind:               config.AuthKindOAuth,
 		Issuer:             "https://test.example.com",
-		TokenTTL:           time.Hour,
-		AllowedDomains:     []string{"example.com"},
 		GoogleClientID:     "test-client-id",
-		GoogleClientSecret: "test-client-secret",
-		GoogleRedirectURI:  "https://test.example.com/callback",
-		JWTSecret:          "test-secret-32-bytes-long-for-testing",
-		EncryptionKey:      "test-encryption-key-32-bytes-ok!",
-		StorageType:        "memory",
+		GoogleClientSecret: config.Secret("test-client-secret"),
+		GoogleRedirectURI:  "https://test.example.com/oauth/callback",
+		JWTSecret:          config.Secret(strings.Repeat("a", 32)),
+		EncryptionKey:      config.Secret(strings.Repeat("b", 32)),
+		TokenTTL:           time.Hour,
+		Storage:            "memory",
+		AllowedOrigins:     []string{"http://localhost:6274"},
 	}
 
 	store := storage.NewMemoryStorage()
-	server, err := oauth.NewServer(oauthConfig, store)
-	if err != nil {
-		t.Fatalf("Failed to create OAuth server: %v", err)
-	}
+	jwtSecret, err := oauth.GenerateJWTSecret(string(oauthConfig.JWTSecret))
+	require.NoError(t, err)
+	oauthProvider, err := oauth.NewOAuthProvider(oauthConfig, store, jwtSecret)
+	require.NoError(t, err)
+	sessionEncryptor, err := oauth.NewSessionEncryptor([]byte(oauthConfig.EncryptionKey))
+	require.NoError(t, err)
+	serviceOAuthClient := auth.NewServiceOAuthClient(store, "https://test.example.com", []byte(strings.Repeat("k", 32)))
+
+	authHandlers := NewAuthHandlers(
+		oauthProvider,
+		oauthConfig,
+		store,
+		sessionEncryptor,
+		map[string]*config.MCPClientConfig{},
+		serviceOAuthClient,
+	)
 
 	// Test endpoints that should have CORS headers
 	endpoints := []struct {
@@ -76,6 +77,8 @@ func TestOAuthEndpointsCORS(t *testing.T) {
 		{"/register", "POST"},
 		{"/register", "OPTIONS"},
 	}
+
+	corsMiddleware := NewCORSMiddleware([]string{"http://localhost:6274"})
 
 	for _, endpoint := range endpoints {
 		t.Run(endpoint.method+" "+endpoint.path, func(t *testing.T) {
@@ -100,14 +103,13 @@ func TestOAuthEndpointsCORS(t *testing.T) {
 			w := httptest.NewRecorder()
 
 			// Create CORS-wrapped handler
-			corsHandler := corsMiddleware([]string{"http://localhost:6274"})
 			var handler http.Handler
 
 			switch endpoint.path {
 			case "/.well-known/oauth-authorization-server":
-				handler = corsHandler(http.HandlerFunc(server.WellKnownHandler))
+				handler = corsMiddleware(http.HandlerFunc(authHandlers.WellKnownHandler))
 			case "/register":
-				handler = corsHandler(http.HandlerFunc(server.RegisterHandler))
+				handler = corsMiddleware(http.HandlerFunc(authHandlers.RegisterHandler))
 			default:
 				t.Fatalf("Unknown endpoint: %s", endpoint.path)
 			}
@@ -125,16 +127,12 @@ func TestOAuthEndpointsCORS(t *testing.T) {
 
 			for header, expectedValue := range corsHeaders {
 				actualValue := w.Header().Get(header)
-				if actualValue != expectedValue {
-					t.Errorf("Expected %s: %s, got: %s", header, expectedValue, actualValue)
-				}
+				assert.Equal(t, expectedValue, actualValue, "Header %s", header)
 			}
 
 			// OPTIONS requests should return 200 OK
 			if endpoint.method == "OPTIONS" {
-				if w.Code != http.StatusOK {
-					t.Errorf("Expected OPTIONS request to return 200, got %d", w.Code)
-				}
+				assert.Equal(t, http.StatusOK, w.Code, "OPTIONS should return 200")
 			}
 		})
 	}

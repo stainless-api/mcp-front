@@ -52,7 +52,23 @@ Create `config.json`:
   },
   "mcpServers": {
     "database": {
+      "transportType": "sse",
       "url": "http://postgres-mcp:3000/sse"
+    },
+    "stainless": {
+      "transportType": "stdio",
+      "command": "stainless",
+      "args": ["mcp"],
+      "requiresUserToken": true,
+      "userAuthentication": {
+        "type": "oauth",
+        "displayName": "Stainless",
+        "clientId": { "$env": "STAINLESS_OAUTH_CLIENT_ID" },
+        "clientSecret": { "$env": "STAINLESS_OAUTH_CLIENT_SECRET" },
+        "authorizationUrl": "https://api.stainless.com/oauth/authorize",
+        "tokenUrl": "https://api.stainless.com/oauth/token",
+        "scopes": ["mcp:read", "mcp:write"]
+      }
     }
   }
 }

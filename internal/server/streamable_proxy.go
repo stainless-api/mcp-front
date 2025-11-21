@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"maps"
 	"net/http"
 	"strings"
 
@@ -106,9 +107,7 @@ func forwardStreamablePostToBackend(ctx context.Context, w http.ResponseWriter, 
 	} else {
 		w.WriteHeader(resp.StatusCode)
 
-		for k, v := range resp.Header {
-			w.Header()[k] = v
-		}
+		maps.Copy(w.Header(), resp.Header)
 
 		if _, err := io.Copy(w, resp.Body); err != nil {
 			log.LogErrorWithFields("streamable_proxy", "Failed to copy response body", map[string]any{

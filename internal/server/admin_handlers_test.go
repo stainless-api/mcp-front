@@ -11,7 +11,7 @@ import (
 func TestAdminHandlers_CSRF(t *testing.T) {
 	// Create test dependencies
 	storage := storage.NewMemoryStorage()
-	cfg := &config.Config{
+	cfg := config.Config{
 		Proxy: config.ProxyConfig{
 			Admin: &config.AdminConfig{
 				Enabled:     true,

@@ -129,10 +129,11 @@ func TestMCPClientConfig_UnmarshalJSON(t *testing.T) {
 			"AUTH_HEADER": {"$userToken": "Bearer {{token}}"}
 		},
 		"requiresUserToken": true,
-		"tokenSetup": {
+		"userAuthentication": {
+			"type": "manual",
 			"displayName": "Test Token",
 			"instructions": "Enter your test token",
-			"tokenFormat": "^test_[a-z]+$"
+			"validation": "^test_[a-z]+$"
 		}
 	}`
 
@@ -155,13 +156,14 @@ func TestMCPClientConfig_UnmarshalJSON(t *testing.T) {
 		"AUTH_HEADER":  true,
 	}, config.EnvNeedsToken)
 
-	// Check token setup
+	// Check user authentication
 	assert.True(t, config.RequiresUserToken)
-	assert.NotNil(t, config.TokenSetup)
-	assert.Equal(t, "Test Token", config.TokenSetup.DisplayName)
-	assert.NotNil(t, config.TokenSetup.CompiledRegex)
-	assert.True(t, config.TokenSetup.CompiledRegex.MatchString("test_abc"))
-	assert.False(t, config.TokenSetup.CompiledRegex.MatchString("test_123"))
+	assert.NotNil(t, config.UserAuthentication)
+	assert.Equal(t, UserAuthTypeManual, config.UserAuthentication.Type)
+	assert.Equal(t, "Test Token", config.UserAuthentication.DisplayName)
+	assert.NotNil(t, config.UserAuthentication.ValidationRegex)
+	assert.True(t, config.UserAuthentication.ValidationRegex.MatchString("test_abc"))
+	assert.False(t, config.UserAuthentication.ValidationRegex.MatchString("test_123"))
 }
 
 func TestMCPClientConfig_ApplyUserToken(t *testing.T) {
@@ -270,9 +272,9 @@ func TestOAuthAuthConfig_UnmarshalJSON(t *testing.T) {
 	assert.Equal(t, []string{"example.com"}, config.AllowedDomains)
 	assert.Equal(t, []string{"https://claude.ai", "https://example.com"}, config.AllowedOrigins)
 	assert.Equal(t, "test-client-id", config.GoogleClientID)
-	assert.Equal(t, "test-secret-value", config.GoogleClientSecret)
-	assert.Equal(t, "this-is-a-very-long-jwt-secret-key", config.JWTSecret)
-	assert.Equal(t, "exactly-32-bytes-long-encryptkey", config.EncryptionKey)
+	assert.Equal(t, Secret("test-secret-value"), config.GoogleClientSecret)
+	assert.Equal(t, Secret("this-is-a-very-long-jwt-secret-key"), config.JWTSecret)
+	assert.Equal(t, Secret("exactly-32-bytes-long-encryptkey"), config.EncryptionKey)
 }
 
 func TestOAuthAuthConfig_ValidationErrors(t *testing.T) {

@@ -8,6 +8,25 @@ import (
 	"time"
 )
 
+// Secret is a string type that redacts itself when printed
+type Secret string
+
+// String implements fmt.Stringer to redact the secret
+func (s Secret) String() string {
+	if s == "" {
+		return ""
+	}
+	return "***"
+}
+
+// MarshalJSON implements json.Marshaler to prevent secrets in JSON logs
+func (s Secret) MarshalJSON() ([]byte, error) {
+	if s == "" {
+		return json.Marshal("")
+	}
+	return json.Marshal("***")
+}
+
 // MCPClientType represents the transport type for MCP clients
 type MCPClientType string
 
@@ -46,15 +65,6 @@ type Options struct {
 	ToolFilter     *ToolFilterConfig `json:"toolFilter,omitempty"`
 }
 
-// TokenSetupConfig provides information for users to set up their tokens
-type TokenSetupConfig struct {
-	DisplayName   string         `json:"displayName"`
-	Instructions  string         `json:"instructions"`
-	HelpURL       string         `json:"helpUrl,omitempty"`
-	TokenFormat   string         `json:"tokenFormat,omitempty"`
-	CompiledRegex *regexp.Regexp `json:"-"`
-}
-
 // ServiceAuthType represents the type of service authentication
 type ServiceAuthType string
 
@@ -63,23 +73,65 @@ const (
 	ServiceAuthTypeBasic  ServiceAuthType = "basic"
 )
 
+// UserAuthType represents the type of user authentication
+type UserAuthType string
+
+const (
+	// UserAuthTypeManual indicates that users manually provide API tokens/keys
+	// through the web UI. These tokens are stored encrypted and injected into
+	// MCP servers as configured.
+	UserAuthTypeManual UserAuthType = "manual"
+
+	// UserAuthTypeOAuth indicates OAuth 2.0 authorization code flow is used.
+	// Users click "Connect with X" and are redirected to the service's OAuth
+	// consent page. The resulting access tokens are stored, automatically
+	// refreshed, and injected into MCP servers.
+	UserAuthTypeOAuth UserAuthType = "oauth"
+)
+
 // ServiceAuth represents authentication method for service-to-service communication
 type ServiceAuth struct {
 	Type ServiceAuthType `json:"type"`
 
 	// For basic auth
-	Username string          `json:"username,omitempty"`
-	Password json.RawMessage `json:"password,omitempty"`
+	Username    string          `json:"username,omitempty"`
+	PasswordRaw json.RawMessage `json:"password,omitempty"`
 
 	// For bearer auth
 	Tokens []string `json:"tokens,omitempty"`
 
 	// User token to inject when requiresUserToken is true
-	UserToken json.RawMessage `json:"userToken,omitempty"`
+	UserTokenRaw json.RawMessage `json:"userToken,omitempty"`
 
 	// Computed fields
-	HashedPassword    string `json:"-"` // bcrypt hash for basic auth
-	ResolvedUserToken string `json:"-"` // resolved user token
+	HashedPassword Secret `json:"-"` // bcrypt hash for basic auth
+	UserToken      Secret `json:"-"` // parsed user token
+}
+
+// UserAuthentication represents authentication configuration for end users
+type UserAuthentication struct {
+	Type        UserAuthType `json:"type"`
+	DisplayName string       `json:"displayName"`
+
+	// For OAuth
+	ClientIDRaw      json.RawMessage `json:"clientId,omitempty"`
+	ClientSecretRaw  json.RawMessage `json:"clientSecret,omitempty"`
+	AuthorizationURL string          `json:"authorizationUrl,omitempty"`
+	TokenURL         string          `json:"tokenUrl,omitempty"`
+	Scopes           []string        `json:"scopes,omitempty"`
+
+	// For Manual
+	Instructions string `json:"instructions,omitempty"`
+	HelpURL      string `json:"helpUrl,omitempty"`
+	Validation   string `json:"validation,omitempty"`
+
+	// Common
+	TokenFormat string `json:"tokenFormat,omitempty"`
+
+	// Computed fields
+	ClientID        Secret         `json:"-"`
+	ClientSecret    Secret         `json:"-"`
+	ValidationRegex *regexp.Regexp `json:"-"`
 }
 
 // MCPClientConfig represents the configuration for an MCP client after parsing.
@@ -125,8 +177,8 @@ type MCPClientConfig struct {
 	Options *Options `json:"options,omitempty"`
 
 	// User token requirements
-	RequiresUserToken bool              `json:"requiresUserToken,omitempty"`
-	TokenSetup        *TokenSetupConfig `json:"tokenSetup,omitempty"`
+	RequiresUserToken  bool                `json:"requiresUserToken,omitempty"`
+	UserAuthentication *UserAuthentication `json:"userAuthentication,omitempty"`
 
 	// Service-to-service authentication
 	ServiceAuths []ServiceAuth `json:"serviceAuths,omitempty"`
@@ -150,30 +202,30 @@ type AdminConfig struct {
 
 // OAuthAuthConfig represents OAuth 2.1 configuration with resolved values
 type OAuthAuthConfig struct {
-	Kind                AuthKind `json:"kind"`
-	Issuer              string   `json:"issuer"`
-	GCPProject          string   `json:"gcpProject"`
-	AllowedDomains      []string `json:"allowedDomains"` // For Google OAuth email validation
-	AllowedOrigins      []string `json:"allowedOrigins"` // For CORS validation
-	TokenTTL            string   `json:"tokenTtl"`
-	Storage             string   `json:"storage"`                       // "memory" or "firestore"
-	FirestoreDatabase   string   `json:"firestoreDatabase,omitempty"`   // Optional: Firestore database name
-	FirestoreCollection string   `json:"firestoreCollection,omitempty"` // Optional: Firestore collection name
-	GoogleClientID      string   `json:"googleClientId"`
-	GoogleClientSecret  string   `json:"googleClientSecret"`
-	GoogleRedirectURI   string   `json:"googleRedirectUri"`
-	JWTSecret           string   `json:"jwtSecret"`
-	EncryptionKey       string   `json:"encryptionKey"`
+	Kind                AuthKind      `json:"kind"`
+	Issuer              string        `json:"issuer"`
+	GCPProject          string        `json:"gcpProject"`
+	AllowedDomains      []string      `json:"allowedDomains"` // For Google OAuth email validation
+	AllowedOrigins      []string      `json:"allowedOrigins"` // For CORS validation
+	TokenTTL            time.Duration `json:"tokenTtl"`
+	Storage             string        `json:"storage"`                       // "memory" or "firestore"
+	FirestoreDatabase   string        `json:"firestoreDatabase,omitempty"`   // Optional: Firestore database name
+	FirestoreCollection string        `json:"firestoreCollection,omitempty"` // Optional: Firestore collection name
+	GoogleClientID      string        `json:"googleClientId"`
+	GoogleClientSecret  Secret        `json:"googleClientSecret"`
+	GoogleRedirectURI   string        `json:"googleRedirectUri"`
+	JWTSecret           Secret        `json:"jwtSecret"`
+	EncryptionKey       Secret        `json:"encryptionKey"`
 }
 
 // ProxyConfig represents the proxy configuration with resolved values
 type ProxyConfig struct {
-	BaseURL  string         `json:"baseURL"`
-	Addr     string         `json:"addr"`
-	Name     string         `json:"name"`
-	Auth     interface{}    `json:"-"` // OAuthAuthConfig or BearerTokenAuthConfig
-	Admin    *AdminConfig   `json:"admin,omitempty"`
-	Sessions *SessionConfig `json:"sessions,omitempty"`
+	BaseURL  string           `json:"baseURL"`
+	Addr     string           `json:"addr"`
+	Name     string           `json:"name"`
+	Auth     *OAuthAuthConfig `json:"auth,omitempty"` // Only OAuth is supported
+	Admin    *AdminConfig     `json:"admin,omitempty"`
+	Sessions *SessionConfig   `json:"sessions,omitempty"`
 }
 
 // Config represents the config structure with resolved values

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dgellow/mcp-front/internal/utils"
+	emailutil "github.com/dgellow/mcp-front/internal/emailutil"
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/dgellow/mcp-front/internal/log"
@@ -17,18 +17,18 @@ import (
 func (c *MCPClientConfig) UnmarshalJSON(data []byte) error {
 	// Use a raw type to avoid recursion
 	type rawConfig struct {
-		TransportType     MCPClientType              `json:"transportType,omitempty"`
-		Command           json.RawMessage            `json:"command,omitempty"`
-		Args              []json.RawMessage          `json:"args,omitempty"`
-		Env               map[string]json.RawMessage `json:"env,omitempty"`
-		URL               json.RawMessage            `json:"url,omitempty"`
-		Headers           map[string]json.RawMessage `json:"headers,omitempty"`
-		Timeout           string                     `json:"timeout,omitempty"`
-		Options           *Options                   `json:"options,omitempty"`
-		RequiresUserToken bool                       `json:"requiresUserToken,omitempty"`
-		TokenSetup        *TokenSetupConfig          `json:"tokenSetup,omitempty"`
-		ServiceAuths      []ServiceAuth              `json:"serviceAuths,omitempty"`
-		InlineConfig      json.RawMessage            `json:"inline,omitempty"`
+		TransportType      MCPClientType              `json:"transportType,omitempty"`
+		Command            json.RawMessage            `json:"command,omitempty"`
+		Args               []json.RawMessage          `json:"args,omitempty"`
+		Env                map[string]json.RawMessage `json:"env,omitempty"`
+		URL                json.RawMessage            `json:"url,omitempty"`
+		Headers            map[string]json.RawMessage `json:"headers,omitempty"`
+		Timeout            string                     `json:"timeout,omitempty"`
+		Options            *Options                   `json:"options,omitempty"`
+		RequiresUserToken  bool                       `json:"requiresUserToken,omitempty"`
+		UserAuthentication *UserAuthentication        `json:"userAuthentication,omitempty"`
+		ServiceAuths       []ServiceAuth              `json:"serviceAuths,omitempty"`
+		InlineConfig       json.RawMessage            `json:"inline,omitempty"`
 	}
 
 	var raw rawConfig
@@ -39,7 +39,7 @@ func (c *MCPClientConfig) UnmarshalJSON(data []byte) error {
 	c.TransportType = raw.TransportType
 	c.Options = raw.Options
 	c.RequiresUserToken = raw.RequiresUserToken
-	c.TokenSetup = raw.TokenSetup
+	c.UserAuthentication = raw.UserAuthentication
 	c.ServiceAuths = raw.ServiceAuths
 	c.InlineConfig = raw.InlineConfig
 
@@ -108,15 +108,6 @@ func (c *MCPClientConfig) UnmarshalJSON(data []byte) error {
 		c.HeadersNeedToken = needsToken
 	}
 
-	// Compile token format regex if present
-	if c.TokenSetup != nil && c.TokenSetup.TokenFormat != "" {
-		regex, err := regexp.Compile(c.TokenSetup.TokenFormat)
-		if err != nil {
-			return fmt.Errorf("compiling token format regex: %w", err)
-		}
-		c.TokenSetup.CompiledRegex = regex
-	}
-
 	return nil
 }
 
@@ -149,39 +140,96 @@ func (o *OAuthAuthConfig) UnmarshalJSON(data []byte) error {
 	o.Kind = raw.Kind
 	o.AllowedDomains = raw.AllowedDomains
 	o.AllowedOrigins = raw.AllowedOrigins
-	o.TokenTTL = raw.TokenTTL
 	o.Storage = raw.Storage
 	o.FirestoreDatabase = raw.FirestoreDatabase
 	o.FirestoreCollection = raw.FirestoreCollection
 
-	// Parse fields that can be references
-	fields := []struct {
-		name           string
-		raw            json.RawMessage
-		target         *string
-		allowUserToken bool
-	}{
-		{"issuer", raw.Issuer, &o.Issuer, false},
-		{"gcpProject", raw.GCPProject, &o.GCPProject, false},
-		{"googleClientId", raw.GoogleClientID, &o.GoogleClientID, false},
-		{"googleClientSecret", raw.GoogleClientSecret, &o.GoogleClientSecret, false},
-		{"googleRedirectUri", raw.GoogleRedirectURI, &o.GoogleRedirectURI, false},
-		{"jwtSecret", raw.JWTSecret, &o.JWTSecret, false},
-		{"encryptionKey", raw.EncryptionKey, &o.EncryptionKey, false},
+	// Parse TokenTTL duration
+	if raw.TokenTTL != "" {
+		tokenTTL, err := time.ParseDuration(raw.TokenTTL)
+		if err != nil {
+			return fmt.Errorf("parsing tokenTtl: %w", err)
+		}
+		o.TokenTTL = tokenTTL
 	}
 
-	for _, field := range fields {
-		if field.raw == nil {
-			continue
-		}
-		parsed, err := ParseConfigValue(field.raw)
+	// Parse string fields
+	if raw.Issuer != nil {
+		parsed, err := ParseConfigValue(raw.Issuer)
 		if err != nil {
-			return fmt.Errorf("parsing %s: %w", field.name, err)
+			return fmt.Errorf("parsing issuer: %w", err)
 		}
-		if parsed.needsUserToken && !field.allowUserToken {
-			return fmt.Errorf("%s cannot be a user token reference", field.name)
+		if parsed.needsUserToken {
+			return fmt.Errorf("issuer cannot be a user token reference")
 		}
-		*field.target = parsed.value
+		o.Issuer = parsed.value
+	}
+
+	if raw.GCPProject != nil {
+		parsed, err := ParseConfigValue(raw.GCPProject)
+		if err != nil {
+			return fmt.Errorf("parsing gcpProject: %w", err)
+		}
+		if parsed.needsUserToken {
+			return fmt.Errorf("gcpProject cannot be a user token reference")
+		}
+		o.GCPProject = parsed.value
+	}
+
+	if raw.GoogleClientID != nil {
+		parsed, err := ParseConfigValue(raw.GoogleClientID)
+		if err != nil {
+			return fmt.Errorf("parsing googleClientId: %w", err)
+		}
+		if parsed.needsUserToken {
+			return fmt.Errorf("googleClientId cannot be a user token reference")
+		}
+		o.GoogleClientID = parsed.value
+	}
+
+	if raw.GoogleRedirectURI != nil {
+		parsed, err := ParseConfigValue(raw.GoogleRedirectURI)
+		if err != nil {
+			return fmt.Errorf("parsing googleRedirectUri: %w", err)
+		}
+		if parsed.needsUserToken {
+			return fmt.Errorf("googleRedirectUri cannot be a user token reference")
+		}
+		o.GoogleRedirectURI = parsed.value
+	}
+
+	// Parse secret fields
+	if raw.GoogleClientSecret != nil {
+		parsed, err := ParseConfigValue(raw.GoogleClientSecret)
+		if err != nil {
+			return fmt.Errorf("parsing googleClientSecret: %w", err)
+		}
+		if parsed.needsUserToken {
+			return fmt.Errorf("googleClientSecret cannot be a user token reference")
+		}
+		o.GoogleClientSecret = Secret(parsed.value)
+	}
+
+	if raw.JWTSecret != nil {
+		parsed, err := ParseConfigValue(raw.JWTSecret)
+		if err != nil {
+			return fmt.Errorf("parsing jwtSecret: %w", err)
+		}
+		if parsed.needsUserToken {
+			return fmt.Errorf("jwtSecret cannot be a user token reference")
+		}
+		o.JWTSecret = Secret(parsed.value)
+	}
+
+	if raw.EncryptionKey != nil {
+		parsed, err := ParseConfigValue(raw.EncryptionKey)
+		if err != nil {
+			return fmt.Errorf("parsing encryptionKey: %w", err)
+		}
+		if parsed.needsUserToken {
+			return fmt.Errorf("encryptionKey cannot be a user token reference")
+		}
+		o.EncryptionKey = Secret(parsed.value)
 	}
 
 	// Validate JWT secret length
@@ -224,8 +272,8 @@ func (p *ProxyConfig) UnmarshalJSON(data []byte) error {
 	// Normalize admin emails for consistent comparison
 	if p.Admin != nil && len(p.Admin.AdminEmails) > 0 {
 		normalizedEmails := make([]string, len(p.Admin.AdminEmails))
-		for i, email := range p.Admin.AdminEmails {
-			normalizedEmails[i] = utils.NormalizeEmail(email)
+		for i, emailAddr := range p.Admin.AdminEmails {
+			normalizedEmails[i] = emailutil.Normalize(emailAddr)
 		}
 		p.Admin.AdminEmails = normalizedEmails
 	}
@@ -347,34 +395,27 @@ func (c *MCPClientConfig) ApplyUserToken(userToken string) *MCPClientConfig {
 
 // UnmarshalJSON implements custom unmarshaling for ServiceAuth
 func (s *ServiceAuth) UnmarshalJSON(data []byte) error {
-	// First unmarshal without custom processing
-	type rawServiceAuth struct {
-		Type      ServiceAuthType `json:"type"`
-		Username  string          `json:"username,omitempty"`
-		Password  json.RawMessage `json:"password,omitempty"`
-		Tokens    []string        `json:"tokens,omitempty"`
-		UserToken json.RawMessage `json:"userToken,omitempty"`
-	}
-
+	// Use type alias to avoid recursion
+	type rawServiceAuth ServiceAuth
 	var raw rawServiceAuth
+
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
 
-	log.LogTraceWithFields("config", "Unmarshaling service auth", map[string]interface{}{
-		"type": raw.Type,
+	// Copy all fields
+	*s = ServiceAuth(raw)
+
+	log.LogTraceWithFields("config", "Unmarshaling service auth", map[string]any{
+		"type": s.Type,
 	})
 
-	s.Type = raw.Type
-	s.Username = raw.Username
-	s.Tokens = raw.Tokens
-
 	// Parse password if provided (for basic auth)
-	if raw.Password != nil {
-		log.LogTraceWithFields("config", "Parsing password for basic auth", map[string]interface{}{
+	if s.PasswordRaw != nil {
+		log.LogTraceWithFields("config", "Parsing password for basic auth", map[string]any{
 			"username": s.Username,
 		})
-		parsed, err := ParseConfigValue(raw.Password)
+		parsed, err := ParseConfigValue(s.PasswordRaw)
 		if err != nil {
 			return fmt.Errorf("parsing password: %w", err)
 		}
@@ -383,29 +424,29 @@ func (s *ServiceAuth) UnmarshalJSON(data []byte) error {
 		}
 
 		// Hash the password using bcrypt
-		log.LogTraceWithFields("config", "Hashing password for basic auth", map[string]interface{}{
+		log.LogTraceWithFields("config", "Hashing password for basic auth", map[string]any{
 			"username": s.Username,
 		})
 		hashed, err := bcrypt.GenerateFromPassword([]byte(parsed.value), bcrypt.DefaultCost)
 		if err != nil {
 			return fmt.Errorf("hashing password: %w", err)
 		}
-		s.HashedPassword = string(hashed)
+		s.HashedPassword = Secret(hashed)
 	}
 
 	// Parse user token if provided
-	if raw.UserToken != nil {
-		log.LogTraceWithFields("config", "Parsing user token for service auth", map[string]interface{}{
+	if s.UserTokenRaw != nil {
+		log.LogTraceWithFields("config", "Parsing user token for service auth", map[string]any{
 			"type": s.Type,
 		})
-		parsed, err := ParseConfigValue(raw.UserToken)
+		parsed, err := ParseConfigValue(s.UserTokenRaw)
 		if err != nil {
 			return fmt.Errorf("parsing userToken: %w", err)
 		}
 		if parsed.needsUserToken {
 			return fmt.Errorf("userToken cannot be a user token reference")
 		}
-		s.ResolvedUserToken = parsed.value
+		s.UserToken = Secret(parsed.value)
 	}
 
 	// Validate required fields based on type
@@ -414,7 +455,7 @@ func (s *ServiceAuth) UnmarshalJSON(data []byte) error {
 		if s.Username == "" {
 			return fmt.Errorf("username is required for basic auth")
 		}
-		if raw.Password == nil {
+		if s.PasswordRaw == nil {
 			return fmt.Errorf("password is required for basic auth")
 		}
 	case ServiceAuthTypeBearer:
@@ -423,6 +464,61 @@ func (s *ServiceAuth) UnmarshalJSON(data []byte) error {
 		}
 	default:
 		return fmt.Errorf("unknown service auth type: %s", s.Type)
+	}
+
+	return nil
+}
+
+// UnmarshalJSON implements custom unmarshaling for UserAuthentication
+func (u *UserAuthentication) UnmarshalJSON(data []byte) error {
+	// First unmarshal to get the type
+	// Use type alias to avoid recursion
+	type rawAuth UserAuthentication
+	var raw rawAuth
+
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	// Copy all fields
+	*u = UserAuthentication(raw)
+
+	// Set default token format if not specified
+	if u.TokenFormat == "" {
+		u.TokenFormat = "{{token}}"
+	}
+
+	switch u.Type {
+	case UserAuthTypeOAuth:
+		// Parse OAuth credentials
+		if u.ClientIDRaw != nil {
+			parsed, err := ParseConfigValue(u.ClientIDRaw)
+			if err != nil {
+				return fmt.Errorf("parsing clientId: %w", err)
+			}
+			u.ClientID = Secret(parsed.value)
+		}
+
+		if u.ClientSecretRaw != nil {
+			parsed, err := ParseConfigValue(u.ClientSecretRaw)
+			if err != nil {
+				return fmt.Errorf("parsing clientSecret: %w", err)
+			}
+			u.ClientSecret = Secret(parsed.value)
+		}
+
+	case UserAuthTypeManual:
+		// Compile validation regex if present
+		if u.Validation != "" {
+			regex, err := regexp.Compile(u.Validation)
+			if err != nil {
+				return fmt.Errorf("compiling validation regex: %w", err)
+			}
+			u.ValidationRegex = regex
+		}
+
+	default:
+		return fmt.Errorf("unknown user auth type: %s", u.Type)
 	}
 
 	return nil

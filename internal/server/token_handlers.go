@@ -5,7 +5,9 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
+	"github.com/dgellow/mcp-front/internal/auth"
 	"github.com/dgellow/mcp-front/internal/config"
 	"github.com/dgellow/mcp-front/internal/crypto"
 	jsonwriter "github.com/dgellow/mcp-front/internal/json"
@@ -16,18 +18,20 @@ import (
 
 // TokenHandlers handles the web UI for token management
 type TokenHandlers struct {
-	tokenStore   storage.UserTokenStore
-	mcpServers   map[string]*config.MCPClientConfig
-	csrfTokens   sync.Map // Thread-safe CSRF token storage
-	oauthEnabled bool
+	tokenStore         storage.UserTokenStore
+	mcpServers         map[string]*config.MCPClientConfig
+	csrfTokens         sync.Map // Thread-safe CSRF token storage
+	oauthEnabled       bool
+	serviceOAuthClient *auth.ServiceOAuthClient
 }
 
 // NewTokenHandlers creates a new token handlers instance
-func NewTokenHandlers(tokenStore storage.UserTokenStore, mcpServers map[string]*config.MCPClientConfig, oauthEnabled bool) *TokenHandlers {
+func NewTokenHandlers(tokenStore storage.UserTokenStore, mcpServers map[string]*config.MCPClientConfig, oauthEnabled bool, serviceOAuthClient *auth.ServiceOAuthClient) *TokenHandlers {
 	return &TokenHandlers{
-		tokenStore:   tokenStore,
-		mcpServers:   mcpServers,
-		oauthEnabled: oauthEnabled,
+		tokenStore:         tokenStore,
+		mcpServers:         mcpServers,
+		oauthEnabled:       oauthEnabled,
+		serviceOAuthClient: serviceOAuthClient,
 	}
 }
 
@@ -70,35 +74,59 @@ func (h *TokenHandlers) ListTokensHandler(w http.ResponseWriter, r *http.Request
 	// Build service list
 	var services []ServiceTokenData
 
-	for name, config := range h.mcpServers {
+	for name, serverConfig := range h.mcpServers {
 		service := ServiceTokenData{
 			Name:        name,
 			DisplayName: name,
 		}
 
 		// Determine authentication type
-		if config.RequiresUserToken {
+		if serverConfig.RequiresUserToken {
 			service.RequiresToken = true
 			service.Instructions = fmt.Sprintf("Please create a %s API token", name)
 
-			if config.TokenSetup != nil {
-				if config.TokenSetup.DisplayName != "" {
-					service.DisplayName = config.TokenSetup.DisplayName
+			if serverConfig.UserAuthentication != nil {
+				if serverConfig.UserAuthentication.DisplayName != "" {
+					service.DisplayName = serverConfig.UserAuthentication.DisplayName
 				}
-				if config.TokenSetup.Instructions != "" {
-					service.Instructions = config.TokenSetup.Instructions
-				}
-				service.HelpURL = config.TokenSetup.HelpURL
-				service.TokenFormat = config.TokenSetup.TokenFormat
-			}
 
-			_, err := h.tokenStore.GetUserToken(r.Context(), userEmail, name)
-			service.HasToken = err == nil
+				// Check if this service supports OAuth
+				if serverConfig.UserAuthentication.Type == config.UserAuthTypeOAuth {
+					service.SupportsOAuth = true
+					service.Instructions = fmt.Sprintf("Connect your %s account via OAuth", service.DisplayName)
+
+					// Generate OAuth connect URL if OAuth client is available
+					if h.serviceOAuthClient != nil {
+						service.ConnectURL = h.serviceOAuthClient.GetConnectURL(name, "/my/tokens")
+					}
+
+					// Check if OAuth is already connected
+					storedToken, err := h.tokenStore.GetUserToken(r.Context(), userEmail, name)
+					if err == nil && storedToken.Type == storage.TokenTypeOAuth {
+						service.IsOAuthConnected = true
+						service.HasToken = true
+					}
+				} else if serverConfig.UserAuthentication.Type == config.UserAuthTypeManual {
+					if serverConfig.UserAuthentication.Instructions != "" {
+						service.Instructions = serverConfig.UserAuthentication.Instructions
+					}
+					service.HelpURL = serverConfig.UserAuthentication.HelpURL
+
+					// Check if manual token exists
+					_, err := h.tokenStore.GetUserToken(r.Context(), userEmail, name)
+					service.HasToken = err == nil
+				}
+				service.TokenFormat = serverConfig.UserAuthentication.TokenFormat
+			} else {
+				// No UserAuthentication config means manual token
+				_, err := h.tokenStore.GetUserToken(r.Context(), userEmail, name)
+				service.HasToken = err == nil
+			}
 		} else {
 			// Determine if it's OAuth authenticated or uses bearer tokens
 			if h.oauthEnabled {
 				service.AuthType = "oauth"
-			} else if config.Options != nil && len(config.Options.AuthTokens) > 0 {
+			} else if serverConfig.Options != nil && len(serverConfig.Options.AuthTokens) > 0 {
 				service.AuthType = "bearer"
 			} else {
 				service.AuthType = "none"
@@ -111,7 +139,7 @@ func (h *TokenHandlers) ListTokensHandler(w http.ResponseWriter, r *http.Request
 	// Generate CSRF token
 	csrfToken, err := h.generateCSRFToken()
 	if err != nil {
-		log.LogErrorWithFields("token", "Failed to generate CSRF token", map[string]interface{}{
+		log.LogErrorWithFields("token", "Failed to generate CSRF token", map[string]any{
 			"error": err.Error(),
 			"user":  userEmail,
 		})
@@ -130,7 +158,7 @@ func (h *TokenHandlers) ListTokensHandler(w http.ResponseWriter, r *http.Request
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := tokenPageTemplate.Execute(w, data); err != nil {
-		log.LogErrorWithFields("token", "Failed to render token page", map[string]interface{}{
+		log.LogErrorWithFields("token", "Failed to render token page", map[string]any{
 			"error": err.Error(),
 			"user":  userEmail,
 		})
@@ -191,29 +219,32 @@ func (h *TokenHandlers) SetTokenHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if serviceConfig.TokenSetup != nil && serviceConfig.TokenSetup.CompiledRegex != nil {
-		if !serviceConfig.TokenSetup.CompiledRegex.MatchString(token) {
+	if serviceConfig.UserAuthentication != nil &&
+		serviceConfig.UserAuthentication.Type == config.UserAuthTypeManual &&
+		serviceConfig.UserAuthentication.ValidationRegex != nil {
+		if !serviceConfig.UserAuthentication.ValidationRegex.MatchString(token) {
 			var helpMsg string
 			displayName := serviceName
-			if serviceConfig.TokenSetup.DisplayName != "" {
-				displayName = serviceConfig.TokenSetup.DisplayName
+			if serviceConfig.UserAuthentication.DisplayName != "" {
+				displayName = serviceConfig.UserAuthentication.DisplayName
 			}
 
 			// Provide specific error messages based on common token patterns
+			validation := serviceConfig.UserAuthentication.Validation
 			switch {
-			case serviceConfig.TokenSetup.TokenFormat == "^[A-Za-z0-9_-]+$":
+			case validation == "^[A-Za-z0-9_-]+$":
 				helpMsg = fmt.Sprintf("%s token must contain only letters, numbers, underscores, and hyphens", displayName)
-			case strings.Contains(serviceConfig.TokenSetup.TokenFormat, "^[A-Fa-f0-9]{64}$"):
+			case strings.Contains(validation, "^[A-Fa-f0-9]{64}$"):
 				helpMsg = fmt.Sprintf("%s token must be a 64-character hexadecimal string", displayName)
-			case strings.Contains(serviceConfig.TokenSetup.TokenFormat, "Bearer "):
+			case strings.Contains(serviceConfig.UserAuthentication.TokenFormat, "Bearer "):
 				helpMsg = fmt.Sprintf("%s token should not include 'Bearer' prefix - just the token value", displayName)
 			default:
-				if serviceConfig.TokenSetup.HelpURL != "" {
+				if serviceConfig.UserAuthentication.HelpURL != "" {
 					helpMsg = fmt.Sprintf("Invalid %s token format. Please check the required format at %s",
-						displayName, serviceConfig.TokenSetup.HelpURL)
+						displayName, serviceConfig.UserAuthentication.HelpURL)
 				} else {
 					helpMsg = fmt.Sprintf("Invalid %s token format. Expected pattern: %s",
-						displayName, serviceConfig.TokenSetup.TokenFormat)
+						displayName, validation)
 				}
 			}
 			redirectWithMessage(w, r, helpMsg, "error")
@@ -221,8 +252,15 @@ func (h *TokenHandlers) SetTokenHandler(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	if err := h.tokenStore.SetUserToken(r.Context(), userEmail, serviceName, token); err != nil {
-		log.LogErrorWithFields("token", "Failed to store token", map[string]interface{}{
+	// Create StoredToken for manual entry
+	storedToken := &storage.StoredToken{
+		Type:      storage.TokenTypeManual,
+		Value:     token,
+		UpdatedAt: time.Now(),
+	}
+
+	if err := h.tokenStore.SetUserToken(r.Context(), userEmail, serviceName, storedToken); err != nil {
+		log.LogErrorWithFields("token", "Failed to store token", map[string]any{
 			"error":   err.Error(),
 			"user":    userEmail,
 			"service": serviceName,
@@ -232,11 +270,11 @@ func (h *TokenHandlers) SetTokenHandler(w http.ResponseWriter, r *http.Request) 
 	}
 
 	displayName := serviceName
-	if serviceConfig.TokenSetup != nil && serviceConfig.TokenSetup.DisplayName != "" {
-		displayName = serviceConfig.TokenSetup.DisplayName
+	if serviceConfig.UserAuthentication != nil && serviceConfig.UserAuthentication.DisplayName != "" {
+		displayName = serviceConfig.UserAuthentication.DisplayName
 	}
 
-	log.LogInfoWithFields("token", "User configured token", map[string]interface{}{
+	log.LogInfoWithFields("token", "User configured token", map[string]any{
 		"user":    userEmail,
 		"service": serviceName,
 		"action":  "set_token",
@@ -284,7 +322,7 @@ func (h *TokenHandlers) DeleteTokenHandler(w http.ResponseWriter, r *http.Reques
 	}
 
 	if err := h.tokenStore.DeleteUserToken(r.Context(), userEmail, serviceName); err != nil {
-		log.LogErrorWithFields("token", "Failed to delete token", map[string]interface{}{
+		log.LogErrorWithFields("token", "Failed to delete token", map[string]any{
 			"error":   err.Error(),
 			"user":    userEmail,
 			"service": serviceName,
@@ -294,11 +332,11 @@ func (h *TokenHandlers) DeleteTokenHandler(w http.ResponseWriter, r *http.Reques
 	}
 
 	displayName := serviceName
-	if serviceConfig.TokenSetup != nil && serviceConfig.TokenSetup.DisplayName != "" {
-		displayName = serviceConfig.TokenSetup.DisplayName
+	if serviceConfig.UserAuthentication != nil && serviceConfig.UserAuthentication.DisplayName != "" {
+		displayName = serviceConfig.UserAuthentication.DisplayName
 	}
 
-	log.LogInfoWithFields("token", "User deleted token", map[string]interface{}{
+	log.LogInfoWithFields("token", "User deleted token", map[string]any{
 		"user":    userEmail,
 		"service": serviceName,
 		"action":  "delete_token",

@@ -7,7 +7,7 @@ import (
 )
 
 // WriteMessage writes a SSE message to the response writer
-func WriteMessage(w http.ResponseWriter, flusher http.Flusher, data interface{}) error {
+func WriteMessage(w http.ResponseWriter, flusher http.Flusher, data any) error {
 	jsonData, err := json.Marshal(data)
 	if err != nil {
 		return fmt.Errorf("failed to marshal data: %w", err)

@@ -3,6 +3,7 @@ package testutil
 import (
 	"context"
 
+	"github.com/dgellow/mcp-front/internal/storage"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/stretchr/testify/mock"
@@ -157,12 +158,15 @@ type MockUserTokenStore struct {
 	mock.Mock
 }
 
-func (m *MockUserTokenStore) GetUserToken(ctx context.Context, userEmail, serverName string) (string, error) {
+func (m *MockUserTokenStore) GetUserToken(ctx context.Context, userEmail, serverName string) (*storage.StoredToken, error) {
 	args := m.Called(ctx, userEmail, serverName)
-	return args.String(0), args.Error(1)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*storage.StoredToken), args.Error(1)
 }
 
-func (m *MockUserTokenStore) SetUserToken(ctx context.Context, userEmail, serverName, token string) error {
+func (m *MockUserTokenStore) SetUserToken(ctx context.Context, userEmail, serverName string, token *storage.StoredToken) error {
 	args := m.Called(ctx, userEmail, serverName, token)
 	return args.Error(0)
 }
@@ -178,4 +182,19 @@ func (m *MockUserTokenStore) ListUserServices(ctx context.Context, userEmail str
 		return nil, args.Error(1)
 	}
 	return args.Get(0).([]string), args.Error(1)
+}
+
+// MockEncryptor is a mock implementation of crypto.Encryptor
+type MockEncryptor struct {
+	mock.Mock
+}
+
+func (m *MockEncryptor) Encrypt(plaintext string) (string, error) {
+	args := m.Called(plaintext)
+	return args.String(0), args.Error(1)
+}
+
+func (m *MockEncryptor) Decrypt(ciphertext string) (string, error) {
+	args := m.Called(ciphertext)
+	return args.String(0), args.Error(1)
 }

@@ -114,7 +114,7 @@ func SetLogLevel(level string) error {
 	currentLevel.Store(newLevel)
 	updateHandler()
 
-	LogInfoWithFields("logging", "Log level changed", map[string]interface{}{
+	LogInfoWithFields("logging", "Log level changed", map[string]any{
 		"new_level": level,
 	})
 
@@ -142,30 +142,30 @@ func GetLogLevel() string {
 }
 
 // Convenience functions using standard slog with component context
-func Logf(format string, args ...interface{}) {
+func Logf(format string, args ...any) {
 	logger.Info(fmt.Sprintf(format, args...))
 }
 
-func LogError(format string, args ...interface{}) {
+func LogError(format string, args ...any) {
 	logger.Error(fmt.Sprintf(format, args...))
 }
 
-func LogWarn(format string, args ...interface{}) {
+func LogWarn(format string, args ...any) {
 	logger.Warn(fmt.Sprintf(format, args...))
 }
 
-func LogDebug(format string, args ...interface{}) {
+func LogDebug(format string, args ...any) {
 	logger.Debug(fmt.Sprintf(format, args...))
 }
 
-func LogTrace(format string, args ...interface{}) {
+func LogTrace(format string, args ...any) {
 	if currentLevel.Load().(slog.Level) <= LevelTrace {
 		logger.Log(context.Background(), LevelTrace, fmt.Sprintf(format, args...))
 	}
 }
 
 // Structured logging functions with component and fields
-func LogInfoWithFields(component, message string, fields map[string]interface{}) {
+func LogInfoWithFields(component, message string, fields map[string]any) {
 	args := make([]any, 0, len(fields)*2+2)
 	args = append(args, "component", component)
 	for k, v := range fields {
@@ -174,7 +174,7 @@ func LogInfoWithFields(component, message string, fields map[string]interface{})
 	logger.Info(message, args...)
 }
 
-func LogDebugWithFields(component, message string, fields map[string]interface{}) {
+func LogDebugWithFields(component, message string, fields map[string]any) {
 	args := make([]any, 0, len(fields)*2+2)
 	args = append(args, "component", component)
 	for k, v := range fields {
@@ -183,7 +183,7 @@ func LogDebugWithFields(component, message string, fields map[string]interface{}
 	logger.Debug(message, args...)
 }
 
-func LogErrorWithFields(component, message string, fields map[string]interface{}) {
+func LogErrorWithFields(component, message string, fields map[string]any) {
 	args := make([]any, 0, len(fields)*2+2)
 	args = append(args, "component", component)
 	for k, v := range fields {
@@ -192,7 +192,7 @@ func LogErrorWithFields(component, message string, fields map[string]interface{}
 	logger.Error(message, args...)
 }
 
-func LogWarnWithFields(component, message string, fields map[string]interface{}) {
+func LogWarnWithFields(component, message string, fields map[string]any) {
 	args := make([]any, 0, len(fields)*2+2)
 	args = append(args, "component", component)
 	for k, v := range fields {
@@ -201,7 +201,7 @@ func LogWarnWithFields(component, message string, fields map[string]interface{})
 	logger.Warn(message, args...)
 }
 
-func LogTraceWithFields(component, message string, fields map[string]interface{}) {
+func LogTraceWithFields(component, message string, fields map[string]any) {
 	if currentLevel.Load().(slog.Level) <= LevelTrace {
 		args := make([]any, 0, len(fields)*2+2)
 		args = append(args, "component", component)

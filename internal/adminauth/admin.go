@@ -1,11 +1,11 @@
-package auth
+package adminauth
 
 import (
 	"context"
 
 	"github.com/dgellow/mcp-front/internal/config"
+	emailutil "github.com/dgellow/mcp-front/internal/emailutil"
 	"github.com/dgellow/mcp-front/internal/storage"
-	"github.com/dgellow/mcp-front/internal/utils"
 )
 
 // IsAdmin checks if a user is admin (either config-based or promoted)
@@ -15,7 +15,7 @@ func IsAdmin(ctx context.Context, email string, adminConfig *config.AdminConfig,
 	}
 
 	// Normalize the input email
-	normalizedEmail := utils.NormalizeEmail(email)
+	normalizedEmail := emailutil.Normalize(email)
 
 	// Check if user is a config admin (super admin)
 	if IsConfigAdmin(normalizedEmail, adminConfig) {
@@ -27,7 +27,7 @@ func IsAdmin(ctx context.Context, email string, adminConfig *config.AdminConfig,
 		users, err := store.GetAllUsers(ctx)
 		if err == nil {
 			for _, user := range users {
-				if utils.NormalizeEmail(user.Email) == normalizedEmail && user.IsAdmin {
+				if emailutil.Normalize(user.Email) == normalizedEmail && user.IsAdmin {
 					return true
 				}
 			}
@@ -44,12 +44,12 @@ func IsConfigAdmin(email string, adminConfig *config.AdminConfig) bool {
 	}
 
 	// Email should already be normalized by the caller, but normalize anyway for safety
-	normalizedEmail := utils.NormalizeEmail(email)
+	normalizedEmail := emailutil.Normalize(email)
 
 	for _, adminEmail := range adminConfig.AdminEmails {
 		// Admin emails should be normalized during config load, but we normalize here too
 		// to handle any legacy configs or manual edits
-		if utils.NormalizeEmail(adminEmail) == normalizedEmail {
+		if emailutil.Normalize(adminEmail) == normalizedEmail {
 			return true
 		}
 	}

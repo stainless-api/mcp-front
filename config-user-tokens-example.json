@@ -28,7 +28,8 @@
         "OPENAPI_MCP_HEADERS": {"$userToken": "{\"Authorization\": \"Bearer {{token}}\"}"}
       },
       "requiresUserToken": true,
-      "tokenSetup": {
+      "userAuthentication": {
+        "type": "manual",
         "displayName": "Notion API Token",
         "instructions": "Enter your Notion API token. You can find this at https://www.notion.so/my-integrations",
         "helpUrl": "https://developers.notion.com/docs/authorization",
@@ -43,7 +44,8 @@
         "GITHUB_TOKEN": {"$userToken": "{{token}}"}
       },
       "requiresUserToken": true,
-      "tokenSetup": {
+      "userAuthentication": {
+        "type": "manual",
         "displayName": "GitHub Personal Access Token",
         "instructions": "Create a personal access token at https://github.com/settings/tokens",
         "helpUrl": "https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/creating-a-personal-access-token",

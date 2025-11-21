@@ -81,7 +81,7 @@ func DefaultTransportCreator(conf *config.MCPClientConfig) (MCPClientInterface, 
 			envs = append(envs, fmt.Sprintf("%s=%s", k, v))
 		}
 
-		log.LogInfoWithFields("client", "Starting stdio MCP process", map[string]interface{}{
+		log.LogInfoWithFields("client", "Starting stdio MCP process", map[string]any{
 			"command": conf.Command,
 			"args":    conf.Args,
 			"env":     envs,
@@ -89,7 +89,7 @@ func DefaultTransportCreator(conf *config.MCPClientConfig) (MCPClientInterface, 
 
 		mcpClient, err := client.NewStdioMCPClient(conf.Command, envs, conf.Args...)
 		if err != nil {
-			log.LogErrorWithFields("client", "Failed to start stdio MCP process", map[string]interface{}{
+			log.LogErrorWithFields("client", "Failed to start stdio MCP process", map[string]any{
 				"command": conf.Command,
 				"args":    conf.Args,
 				"error":   err.Error(),
@@ -97,7 +97,7 @@ func DefaultTransportCreator(conf *config.MCPClientConfig) (MCPClientInterface, 
 			return nil, err
 		}
 
-		log.LogInfoWithFields("client", "Successfully started stdio MCP process", map[string]interface{}{
+		log.LogInfoWithFields("client", "Successfully started stdio MCP process", map[string]any{
 			"command": conf.Command,
 		})
 
@@ -162,7 +162,7 @@ func (c *Client) addToolsToServer(
 	tokenStore storage.UserTokenStore,
 	serverName string,
 	setupBaseURL string,
-	tokenSetup *config.TokenSetupConfig,
+	userAuth *config.UserAuthentication,
 	session server.ClientSession,
 ) error {
 	toolsRequest := mcp.ListToolsRequest{}
@@ -198,7 +198,7 @@ func (c *Client) addToolsToServer(
 		}
 	}
 
-	log.LogInfoWithFields("client", "Starting tool discovery", map[string]interface{}{
+	log.LogInfoWithFields("client", "Starting tool discovery", map[string]any{
 		"server": c.name,
 	})
 
@@ -213,7 +213,7 @@ func (c *Client) addToolsToServer(
 			return fmt.Errorf("session does not support session-specific tools")
 		}
 		sessionTools = make(map[string]server.ServerTool)
-		log.LogInfoWithFields("client", "Using session-specific tool registration", map[string]interface{}{
+		log.LogInfoWithFields("client", "Using session-specific tool registration", map[string]any{
 			"server":    c.name,
 			"sessionID": session.SessionID(),
 		})
@@ -222,7 +222,7 @@ func (c *Client) addToolsToServer(
 	for {
 		tools, err := c.client.ListTools(ctx, toolsRequest)
 		if err != nil {
-			log.LogErrorWithFields("client", "Failed to list tools", map[string]interface{}{
+			log.LogErrorWithFields("client", "Failed to list tools", map[string]any{
 				"server": c.name,
 				"error":  err.Error(),
 			})
@@ -236,7 +236,7 @@ func (c *Client) addToolsToServer(
 
 		for _, tool := range tools.Tools {
 			if filterFunc(tool.Name) {
-				log.LogDebugWithFields("client", "Adding tool", map[string]interface{}{
+				log.LogDebugWithFields("client", "Adding tool", map[string]any{
 					"server":      c.name,
 					"tool":        tool.Name,
 					"description": tool.Description,
@@ -251,7 +251,7 @@ func (c *Client) addToolsToServer(
 						userEmail,
 						serverName,
 						setupBaseURL,
-						tokenSetup,
+						userAuth,
 					)
 				} else {
 					handler = c.client.CallTool
@@ -275,14 +275,14 @@ func (c *Client) addToolsToServer(
 
 	if len(sessionTools) > 0 {
 		sessionWithTools.SetSessionTools(sessionTools)
-		log.LogInfoWithFields("client", "Registered session-specific tools", map[string]interface{}{
+		log.LogInfoWithFields("client", "Registered session-specific tools", map[string]any{
 			"server":    c.name,
 			"sessionID": session.SessionID(),
 			"toolCount": len(sessionTools),
 		})
 	}
 
-	log.LogInfoWithFields("client", "Tool discovery completed", map[string]interface{}{
+	log.LogInfoWithFields("client", "Tool discovery completed", map[string]any{
 		"server":     c.name,
 		"totalTools": totalTools,
 	})
@@ -291,7 +291,7 @@ func (c *Client) addToolsToServer(
 }
 
 func (c *Client) addPromptsToServer(ctx context.Context, mcpServer *server.MCPServer) error {
-	log.LogInfoWithFields("client", "Starting prompt discovery", map[string]interface{}{
+	log.LogInfoWithFields("client", "Starting prompt discovery", map[string]any{
 		"server": c.name,
 	})
 
@@ -300,7 +300,7 @@ func (c *Client) addPromptsToServer(ctx context.Context, mcpServer *server.MCPSe
 	for {
 		prompts, err := c.client.ListPrompts(ctx, promptsRequest)
 		if err != nil {
-			log.LogErrorWithFields("client", "Failed to list prompts", map[string]interface{}{
+			log.LogErrorWithFields("client", "Failed to list prompts", map[string]any{
 				"server": c.name,
 				"error":  err.Error(),
 			})
@@ -321,7 +321,7 @@ func (c *Client) addPromptsToServer(ctx context.Context, mcpServer *server.MCPSe
 		promptsRequest.Params.Cursor = prompts.NextCursor
 	}
 
-	log.LogInfoWithFields("client", "Prompt discovery completed", map[string]interface{}{
+	log.LogInfoWithFields("client", "Prompt discovery completed", map[string]any{
 		"server":       c.name,
 		"totalPrompts": totalPrompts,
 	})
@@ -330,7 +330,7 @@ func (c *Client) addPromptsToServer(ctx context.Context, mcpServer *server.MCPSe
 }
 
 func (c *Client) addResourcesToServer(ctx context.Context, mcpServer *server.MCPServer) error {
-	log.LogInfoWithFields("client", "Starting resource discovery", map[string]interface{}{
+	log.LogInfoWithFields("client", "Starting resource discovery", map[string]any{
 		"server": c.name,
 	})
 
@@ -339,7 +339,7 @@ func (c *Client) addResourcesToServer(ctx context.Context, mcpServer *server.MCP
 	for {
 		resources, err := c.client.ListResources(ctx, resourcesRequest)
 		if err != nil {
-			log.LogErrorWithFields("client", "Failed to list resources", map[string]interface{}{
+			log.LogErrorWithFields("client", "Failed to list resources", map[string]any{
 				"server": c.name,
 				"error":  err.Error(),
 			})
@@ -367,7 +367,7 @@ func (c *Client) addResourcesToServer(ctx context.Context, mcpServer *server.MCP
 
 	}
 
-	log.LogInfoWithFields("client", "Resource discovery completed", map[string]interface{}{
+	log.LogInfoWithFields("client", "Resource discovery completed", map[string]any{
 		"server":         c.name,
 		"totalResources": totalResources,
 	})
@@ -412,11 +412,11 @@ func (c *Client) wrapToolHandler(
 	userEmail string,
 	serverName string,
 	setupBaseURL string,
-	tokenSetup *config.TokenSetupConfig,
+	userAuth *config.UserAuthentication,
 ) func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	return func(toolCtx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		// Log tool invocation
-		log.LogInfoWithFields("client", "Tool invocation requested", map[string]interface{}{
+		log.LogInfoWithFields("client", "Tool invocation requested", map[string]any{
 			"server": serverName,
 			"tool":   request.Params.Name,
 			"user":   userEmail,
@@ -427,7 +427,7 @@ func (c *Client) wrapToolHandler(
 			if userEmail == "" {
 				// This shouldn't happen with proper config validation
 				// (requiresUserToken requires OAuth to be configured)
-				log.LogErrorWithFields("client", "User token required but no user email provided", map[string]interface{}{
+				log.LogErrorWithFields("client", "User token required but no user email provided", map[string]any{
 					"service": serverName,
 					"tool":    request.Params.Name,
 				})
@@ -435,7 +435,6 @@ func (c *Client) wrapToolHandler(
 				errorData := createTokenRequiredError(
 					serverName,
 					setupBaseURL,
-					tokenSetup,
 					"configuration error: this service requires user tokens but OAuth is not properly configured.",
 				)
 
@@ -449,14 +448,14 @@ func (c *Client) wrapToolHandler(
 				tokenSetupURL := fmt.Sprintf("%s/my/tokens", setupBaseURL)
 
 				var errorMessage string
-				if tokenSetup != nil {
+				if userAuth != nil {
 					errorMessage = fmt.Sprintf(
 						"token required: %s requires a user token to access the API. "+
 							"please visit %s to set up your %s token. %s",
-						tokenSetup.DisplayName,
+						userAuth.DisplayName,
 						tokenSetupURL,
-						tokenSetup.DisplayName,
-						tokenSetup.Instructions,
+						userAuth.DisplayName,
+						userAuth.Instructions,
 					)
 				} else {
 					errorMessage = fmt.Sprintf(
@@ -469,7 +468,6 @@ func (c *Client) wrapToolHandler(
 				errorData := createTokenRequiredError(
 					serverName,
 					setupBaseURL,
-					tokenSetup,
 					errorMessage,
 				)
 
@@ -482,14 +480,14 @@ func (c *Client) wrapToolHandler(
 		result, err := originalHandler(toolCtx, request)
 
 		if err != nil {
-			log.LogErrorWithFields("client", "Tool invocation failed", map[string]interface{}{
+			log.LogErrorWithFields("client", "Tool invocation failed", map[string]any{
 				"server": serverName,
 				"tool":   request.Params.Name,
 				"user":   userEmail,
 				"error":  err.Error(),
 			})
 		} else {
-			log.LogInfoWithFields("client", "Tool invocation completed", map[string]interface{}{
+			log.LogInfoWithFields("client", "Tool invocation completed", map[string]any{
 				"server": serverName,
 				"tool":   request.Params.Name,
 				"user":   userEmail,
@@ -509,18 +507,18 @@ func (c *Client) Close() error {
 }
 
 // createTokenRequiredError creates the structured error for missing user tokens
-func createTokenRequiredError(serverName, setupBaseURL string, tokenSetup *config.TokenSetupConfig, message string) map[string]interface{} {
+func createTokenRequiredError(serverName, setupBaseURL string, message string) map[string]any {
 	tokenSetupURL := fmt.Sprintf("%s/my/tokens", setupBaseURL)
 
-	return map[string]interface{}{
+	return map[string]any{
 		"jsonrpc": "2.0",
-		"error": map[string]interface{}{
+		"error": map[string]any{
 			"code":    "token_required",
 			"message": message,
-			"data": map[string]interface{}{
+			"data": map[string]any{
 				"service":       serverName,
 				"tokenSetupUrl": tokenSetupURL,
-				"instructions": map[string]interface{}{
+				"instructions": map[string]any{
 					"ai": "CRITICAL: You MUST pass these error details EXACTLY as provided to the human. " +
 						"You are FORBIDDEN from modifying URLs or instructions. " +
 						"Tell the human they need to visit the tokenSetupUrl to configure their token.",

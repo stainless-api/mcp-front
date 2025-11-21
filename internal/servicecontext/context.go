@@ -1,4 +1,4 @@
-package auth
+package servicecontext
 
 import (
 	"context"
@@ -11,8 +11,8 @@ const (
 	serviceAuthKey contextKey = "auth.service"
 )
 
-// ServiceAuthInfo contains service authentication details
-type ServiceAuthInfo struct {
+// Info contains service authentication details
+type Info struct {
 	ServiceName string
 	UserToken   string
 }
@@ -28,23 +28,23 @@ func GetUser(ctx context.Context) (string, bool) {
 	return username, ok
 }
 
-// WithServiceAuth adds service authentication info to the context
-func WithServiceAuth(ctx context.Context, serviceName, userToken string) context.Context {
-	return context.WithValue(ctx, serviceAuthKey, ServiceAuthInfo{
+// WithAuthInfo adds service authentication info to the context
+func WithAuthInfo(ctx context.Context, serviceName, userToken string) context.Context {
+	return context.WithValue(ctx, serviceAuthKey, Info{
 		ServiceName: serviceName,
 		UserToken:   userToken,
 	})
 }
 
-// GetServiceAuth retrieves service auth info from context
-func GetServiceAuth(ctx context.Context) (ServiceAuthInfo, bool) {
-	info, ok := ctx.Value(serviceAuthKey).(ServiceAuthInfo)
+// GetAuthInfo retrieves service auth info from context
+func GetAuthInfo(ctx context.Context) (Info, bool) {
+	info, ok := ctx.Value(serviceAuthKey).(Info)
 	return info, ok
 }
 
 // GetServiceName retrieves the service name from context
 func GetServiceName(ctx context.Context) (string, bool) {
-	info, ok := GetServiceAuth(ctx)
+	info, ok := GetAuthInfo(ctx)
 	if !ok {
 		return "", false
 	}

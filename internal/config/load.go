@@ -10,47 +10,47 @@ import (
 )
 
 // Load loads and processes the config with immediate env var resolution
-func Load(path string) (*Config, error) {
+func Load(path string) (Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("reading config file: %w", err)
+		return Config{}, fmt.Errorf("reading config file: %w", err)
 	}
 
-	var rawConfig map[string]interface{}
+	var rawConfig map[string]any
 	if err := json.Unmarshal(data, &rawConfig); err != nil {
-		return nil, fmt.Errorf("parsing config JSON: %w", err)
+		return Config{}, fmt.Errorf("parsing config JSON: %w", err)
 	}
 
 	version, ok := rawConfig["version"].(string)
 	if !ok {
-		return nil, fmt.Errorf("config version is required")
+		return Config{}, fmt.Errorf("config version is required")
 	}
 	if !strings.HasPrefix(version, "v0.0.1-DEV_EDITION") {
-		return nil, fmt.Errorf("unsupported config version: %s", version)
+		return Config{}, fmt.Errorf("unsupported config version: %s", version)
 	}
 
 	if err := validateRawConfig(rawConfig); err != nil {
-		return nil, fmt.Errorf("config validation failed: %w", err)
+		return Config{}, fmt.Errorf("config validation failed: %w", err)
 	}
 
 	// Parse directly into typed Config struct
 	// The custom UnmarshalJSON methods will resolve env vars immediately
 	var config Config
 	if err := json.Unmarshal(data, &config); err != nil {
-		return nil, fmt.Errorf("parsing config: %w", err)
+		return Config{}, fmt.Errorf("parsing config: %w", err)
 	}
 
 	if err := ValidateConfig(&config); err != nil {
-		return nil, fmt.Errorf("config validation failed: %w", err)
+		return Config{}, fmt.Errorf("config validation failed: %w", err)
 	}
 
-	return &config, nil
+	return config, nil
 }
 
 // validateRawConfig validates the config structure before environment resolution
-func validateRawConfig(rawConfig map[string]interface{}) error {
-	if proxy, ok := rawConfig["proxy"].(map[string]interface{}); ok {
-		if auth, ok := proxy["auth"].(map[string]interface{}); ok {
+func validateRawConfig(rawConfig map[string]any) error {
+	if proxy, ok := rawConfig["proxy"].(map[string]any); ok {
+		if auth, ok := proxy["auth"].(map[string]any); ok {
 			if kind, ok := auth["kind"].(string); ok && kind == "oauth" {
 				secrets := []struct {
 					name     string
@@ -68,7 +68,7 @@ func validateRawConfig(rawConfig map[string]interface{}) error {
 							return fmt.Errorf("%s must use environment variable reference for security", secret.name)
 						}
 						// Verify it's an env ref
-						if refMap, isMap := value.(map[string]interface{}); isMap {
+						if refMap, isMap := value.(map[string]any); isMap {
 							if _, hasEnv := refMap["$env"]; !hasEnv {
 								return fmt.Errorf("%s must use {\"$env\": \"VAR_NAME\"} format", secret.name)
 							}
@@ -97,16 +97,13 @@ func ValidateConfig(config *Config) error {
 		return fmt.Errorf("proxy.addr is required")
 	}
 
-	if oauth, ok := config.Proxy.Auth.(*OAuthAuthConfig); ok {
+	if oauth := config.Proxy.Auth; oauth != nil {
 		if err := validateOAuthConfig(oauth); err != nil {
 			return fmt.Errorf("oauth config: %w", err)
 		}
 	}
 
-	hasOAuth := false
-	if _, ok := config.Proxy.Auth.(*OAuthAuthConfig); ok {
-		hasOAuth = true
-	}
+	hasOAuth := config.Proxy.Auth != nil
 
 	for name, server := range config.MCPServers {
 		if err := validateMCPServer(name, server); err != nil {
@@ -204,9 +201,9 @@ func validateMCPServer(name string, server *MCPClientConfig) error {
 		return fmt.Errorf("server %s has invalid transportType: %s", name, server.TransportType)
 	}
 
-	// Validate token setup if required
-	if server.RequiresUserToken && server.TokenSetup == nil {
-		return fmt.Errorf("server %s requires user token but has no tokenSetup", name)
+	// Validate user authentication if required
+	if server.RequiresUserToken && server.UserAuthentication == nil {
+		return fmt.Errorf("server %s requires user token but has no userAuthentication", name)
 	}
 
 	return nil

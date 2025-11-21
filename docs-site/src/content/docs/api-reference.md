@@ -138,6 +138,34 @@ Returns:
 }
 ```
 
+## User Service Endpoints
+
+Browser-only endpoints for service connections. Require browser SSO session.
+
+### `GET /oauth/services`
+
+Service connection page. Lists OAuth-enabled services, shown after Google login if services need auth.
+
+### `GET /my/tokens`
+
+Token management. Connect OAuth services, add manual tokens.
+
+### `GET /oauth/connect?service={service_name}`
+
+Initiate OAuth flow. Redirects to service.
+
+### `POST /oauth/disconnect`
+
+Revoke OAuth connection. Form: `service={service_name}`.
+
+### `POST /my/tokens/set`
+
+Save manual token. Form: `service={service_name}&token={user_token}`.
+
+### `GET /oauth/callback/{service_name}`
+
+OAuth callback. Set as redirect URI in service OAuth config.
+
 ## Authentication
 
 ### Bearer token
@@ -159,19 +187,4 @@ PKCE is required for all OAuth flows.
 
 ## Errors
 
-All errors follow OAuth 2.1 format:
-
-```json
-{
-  "error": "invalid_request",
-  "error_description": "Missing required parameter"
-}
-```
-
-Common errors:
-
-- `invalid_request` - Bad parameters
-- `invalid_client` - Unknown client
-- `invalid_grant` - Bad auth code
-- `unauthorized_client` - Client can't use grant type
-- `server_error` - Internal error
+OAuth 2.1 format with `error` and `error_description` fields. Common codes: `invalid_request` (bad parameters), `invalid_client` (unknown client), `invalid_grant` (bad auth code), `unauthorized_client` (client can't use grant type), `server_error` (internal error).

@@ -35,7 +35,7 @@ func ValidateFile(path string) (*ValidationResult, error) {
 	}
 
 	// Check JSON syntax
-	var rawConfig map[string]interface{}
+	var rawConfig map[string]any
 	if err := json.Unmarshal(data, &rawConfig); err != nil {
 		result.Errors = append(result.Errors, ValidationError{
 			Message: fmt.Sprintf("invalid JSON: %v", err),
@@ -51,12 +51,12 @@ func ValidateFile(path string) (*ValidationResult, error) {
 	if !ok {
 		result.Errors = append(result.Errors, ValidationError{
 			Path:    "version",
-			Message: "version field is required",
+			Message: "version field is required. Hint: Add \"version\": \"v0.0.1-DEV_EDITION\"",
 		})
 	} else if !strings.HasPrefix(version, "v0.0.1-DEV_EDITION") {
 		result.Errors = append(result.Errors, ValidationError{
 			Path:    "version",
-			Message: fmt.Sprintf("unsupported version: %s", version),
+			Message: fmt.Sprintf("unsupported version '%s' - use 'v0.0.1-DEV_EDITION' or 'v0.0.1-DEV_EDITION-<variant>'", version),
 		})
 	}
 
@@ -70,8 +70,8 @@ func ValidateFile(path string) (*ValidationResult, error) {
 }
 
 // validateProxyStructure checks the proxy configuration structure
-func validateProxyStructure(rawConfig map[string]interface{}, result *ValidationResult) {
-	proxy, ok := rawConfig["proxy"].(map[string]interface{})
+func validateProxyStructure(rawConfig map[string]any, result *ValidationResult) {
+	proxy, ok := rawConfig["proxy"].(map[string]any)
 	if !ok {
 		result.Errors = append(result.Errors, ValidationError{
 			Path:    "proxy",
@@ -84,29 +84,29 @@ func validateProxyStructure(rawConfig map[string]interface{}, result *Validation
 	if _, ok := proxy["baseURL"]; !ok {
 		result.Errors = append(result.Errors, ValidationError{
 			Path:    "proxy.baseURL",
-			Message: "baseURL is required",
+			Message: "baseURL is required. Example: \"https://api.example.com\"",
 		})
 	}
 	if _, ok := proxy["addr"]; !ok {
 		result.Errors = append(result.Errors, ValidationError{
 			Path:    "proxy.addr",
-			Message: "addr is required",
+			Message: "addr is required. Example: \":8080\" or \"0.0.0.0:8080\"",
 		})
 	}
 
 	// Check auth if present
-	if auth, ok := proxy["auth"].(map[string]interface{}); ok {
+	if auth, ok := proxy["auth"].(map[string]any); ok {
 		validateAuthStructure(auth, result)
 	}
 
 	// Check admin if present
-	if admin, ok := proxy["admin"].(map[string]interface{}); ok {
+	if admin, ok := proxy["admin"].(map[string]any); ok {
 		validateAdminStructure(admin, result)
 
 		// If admin is enabled, ensure OAuth is configured
 		if enabled, ok := admin["enabled"].(bool); ok && enabled {
 			hasOAuth := false
-			if auth, ok := proxy["auth"].(map[string]interface{}); ok {
+			if auth, ok := proxy["auth"].(map[string]any); ok {
 				if kind, ok := auth["kind"].(string); ok && kind == "oauth" {
 					hasOAuth = true
 				}
@@ -122,12 +122,12 @@ func validateProxyStructure(rawConfig map[string]interface{}, result *Validation
 }
 
 // validateAuthStructure checks auth configuration structure
-func validateAuthStructure(auth map[string]interface{}, result *ValidationResult) {
+func validateAuthStructure(auth map[string]any, result *ValidationResult) {
 	kind, ok := auth["kind"].(string)
 	if !ok {
 		result.Errors = append(result.Errors, ValidationError{
 			Path:    "proxy.auth.kind",
-			Message: "auth kind is required",
+			Message: "auth kind is required. Use \"oauth\" for Google OAuth authentication",
 		})
 		return
 	}
@@ -158,13 +158,13 @@ func validateAuthStructure(auth map[string]interface{}, result *ValidationResult
 				})
 			}
 		}
-		if domains, ok := auth["allowedDomains"].([]interface{}); !ok || len(domains) == 0 {
+		if domains, ok := auth["allowedDomains"].([]any); !ok || len(domains) == 0 {
 			result.Errors = append(result.Errors, ValidationError{
 				Path:    "proxy.auth.allowedDomains",
 				Message: "at least one allowed domain is required for OAuth",
 			})
 		}
-		if origins, ok := auth["allowedOrigins"].([]interface{}); !ok || len(origins) == 0 {
+		if origins, ok := auth["allowedOrigins"].([]any); !ok || len(origins) == 0 {
 			result.Errors = append(result.Errors, ValidationError{
 				Path:    "proxy.auth.allowedOrigins",
 				Message: "at least one allowed origin is required for OAuth (CORS configuration)",
@@ -173,13 +173,13 @@ func validateAuthStructure(auth map[string]interface{}, result *ValidationResult
 	default:
 		result.Errors = append(result.Errors, ValidationError{
 			Path:    "proxy.auth.kind",
-			Message: fmt.Sprintf("unknown auth kind: %s (only 'oauth' is supported for proxy auth)", kind),
+			Message: fmt.Sprintf("unknown auth kind '%s' - only 'oauth' is supported for proxy auth", kind),
 		})
 	}
 }
 
 // validateAdminStructure checks admin configuration structure
-func validateAdminStructure(admin map[string]interface{}, result *ValidationResult) {
+func validateAdminStructure(admin map[string]any, result *ValidationResult) {
 	enabled, ok := admin["enabled"].(bool)
 	if !ok {
 		result.Errors = append(result.Errors, ValidationError{
@@ -191,7 +191,7 @@ func validateAdminStructure(admin map[string]interface{}, result *ValidationResu
 
 	if enabled {
 		// Check adminEmails when enabled
-		emails, ok := admin["adminEmails"].([]interface{})
+		emails, ok := admin["adminEmails"].([]any)
 		if !ok {
 			result.Errors = append(result.Errors, ValidationError{
 				Path:    "proxy.admin.adminEmails",
@@ -208,7 +208,7 @@ func validateAdminStructure(admin map[string]interface{}, result *ValidationResu
 				if _, ok := email.(string); !ok {
 					result.Errors = append(result.Errors, ValidationError{
 						Path:    fmt.Sprintf("proxy.admin.adminEmails[%d]", i),
-						Message: "admin email must be a string",
+						Message: fmt.Sprintf("admin email must be a string, got %T - use \"user@example.com\" format", email),
 					})
 				}
 			}
@@ -220,8 +220,8 @@ func validateAdminStructure(admin map[string]interface{}, result *ValidationResu
 }
 
 // validateServersStructure checks MCP servers configuration
-func validateServersStructure(rawConfig map[string]interface{}, result *ValidationResult) {
-	servers, ok := rawConfig["mcpServers"].(map[string]interface{})
+func validateServersStructure(rawConfig map[string]any, result *ValidationResult) {
+	servers, ok := rawConfig["mcpServers"].(map[string]any)
 	if !ok {
 		result.Errors = append(result.Errors, ValidationError{
 			Path:    "mcpServers",
@@ -231,8 +231,8 @@ func validateServersStructure(rawConfig map[string]interface{}, result *Validati
 	}
 
 	hasOAuth := false
-	if proxy, ok := rawConfig["proxy"].(map[string]interface{}); ok {
-		if auth, ok := proxy["auth"].(map[string]interface{}); ok {
+	if proxy, ok := rawConfig["proxy"].(map[string]any); ok {
+		if auth, ok := proxy["auth"].(map[string]any); ok {
 			if kind, ok := auth["kind"].(string); ok && kind == "oauth" {
 				hasOAuth = true
 			}
@@ -240,7 +240,7 @@ func validateServersStructure(rawConfig map[string]interface{}, result *Validati
 	}
 
 	for name, server := range servers {
-		srv, ok := server.(map[string]interface{})
+		srv, ok := server.(map[string]any)
 		if !ok {
 			result.Errors = append(result.Errors, ValidationError{
 				Path:    fmt.Sprintf("mcpServers.%s", name),
@@ -254,7 +254,7 @@ func validateServersStructure(rawConfig map[string]interface{}, result *Validati
 		if !ok {
 			result.Errors = append(result.Errors, ValidationError{
 				Path:    fmt.Sprintf("mcpServers.%s.transportType", name),
-				Message: "transportType is required",
+				Message: "transportType is required. Options: stdio, sse, streamable-http, inline",
 			})
 			continue
 		}
@@ -265,7 +265,7 @@ func validateServersStructure(rawConfig map[string]interface{}, result *Validati
 			if _, ok := srv["command"]; !ok {
 				result.Errors = append(result.Errors, ValidationError{
 					Path:    fmt.Sprintf("mcpServers.%s.command", name),
-					Message: "command is required for stdio transport",
+					Message: "command is required for stdio transport. Example: [\"npx\", \"-y\", \"@your/mcp-server\"]",
 				})
 			}
 		case "sse", "streamable-http":
@@ -285,7 +285,7 @@ func validateServersStructure(rawConfig map[string]interface{}, result *Validati
 		default:
 			result.Errors = append(result.Errors, ValidationError{
 				Path:    fmt.Sprintf("mcpServers.%s.transportType", name),
-				Message: fmt.Sprintf("invalid transportType: %s", transportType),
+				Message: fmt.Sprintf("invalid transportType '%s' - supported types: stdio, sse, streamable-http, inline", transportType),
 			})
 		}
 
@@ -297,16 +297,18 @@ func validateServersStructure(rawConfig map[string]interface{}, result *Validati
 					Message: "server requires user token but OAuth is not configured. Hint: User tokens require OAuth authentication - set proxy.auth.kind to 'oauth'",
 				})
 			}
-			if _, ok := srv["tokenSetup"]; !ok {
+			if userAuth, ok := srv["userAuthentication"]; !ok {
 				result.Errors = append(result.Errors, ValidationError{
-					Path:    fmt.Sprintf("mcpServers.%s.tokenSetup", name),
-					Message: "tokenSetup is required when requiresUserToken is true. Hint: Add tokenSetup with displayName and instructions for users to obtain their token",
+					Path:    fmt.Sprintf("mcpServers.%s.userAuthentication", name),
+					Message: "userAuthentication is required when requiresUserToken is true. Hint: Add userAuthentication with type, displayName and instructions",
 				})
+			} else {
+				validateUserAuthentication(userAuth, fmt.Sprintf("mcpServers.%s.userAuthentication", name), result)
 			}
 		}
 
 		// Check service auth configuration
-		if serviceAuths, ok := srv["serviceAuths"].([]interface{}); ok {
+		if serviceAuths, ok := srv["serviceAuths"].([]any); ok {
 			requiresUserToken := false
 			if requiresToken, ok := srv["requiresUserToken"].(bool); ok {
 				requiresUserToken = requiresToken
@@ -317,9 +319,9 @@ func validateServersStructure(rawConfig map[string]interface{}, result *Validati
 }
 
 // validateServiceAuths validates service authentication configuration
-func validateServiceAuths(serviceAuths []interface{}, serverName string, requiresUserToken bool, result *ValidationResult) {
+func validateServiceAuths(serviceAuths []any, serverName string, requiresUserToken bool, result *ValidationResult) {
 	for i, authInterface := range serviceAuths {
-		auth, ok := authInterface.(map[string]interface{})
+		auth, ok := authInterface.(map[string]any)
 		if !ok {
 			result.Errors = append(result.Errors, ValidationError{
 				Path:    fmt.Sprintf("mcpServers.%s.serviceAuths[%d]", serverName, i),
@@ -332,7 +334,7 @@ func validateServiceAuths(serviceAuths []interface{}, serverName string, require
 		if !ok {
 			result.Errors = append(result.Errors, ValidationError{
 				Path:    fmt.Sprintf("mcpServers.%s.serviceAuths[%d].type", serverName, i),
-				Message: "service auth type is required",
+				Message: "service auth type is required. Options: basic, bearer",
 			})
 			continue
 		}
@@ -355,7 +357,7 @@ func validateServiceAuths(serviceAuths []interface{}, serverName string, require
 				validatePasswordReference(auth["password"], fmt.Sprintf("mcpServers.%s.serviceAuths[%d].password", serverName, i), result)
 			}
 		case "bearer":
-			tokens, ok := auth["tokens"].([]interface{})
+			tokens, ok := auth["tokens"].([]any)
 			if !ok {
 				result.Errors = append(result.Errors, ValidationError{
 					Path:    fmt.Sprintf("mcpServers.%s.serviceAuths[%d].tokens", serverName, i),
@@ -370,7 +372,7 @@ func validateServiceAuths(serviceAuths []interface{}, serverName string, require
 		default:
 			result.Errors = append(result.Errors, ValidationError{
 				Path:    fmt.Sprintf("mcpServers.%s.serviceAuths[%d].type", serverName, i),
-				Message: fmt.Sprintf("unknown service auth type: %s (supported: basic, bearer)", authType),
+				Message: fmt.Sprintf("unknown service auth type '%s' - supported types: basic, bearer", authType),
 			})
 		}
 
@@ -379,7 +381,7 @@ func validateServiceAuths(serviceAuths []interface{}, serverName string, require
 			if _, ok := auth["userToken"]; !ok {
 				result.Errors = append(result.Errors, ValidationError{
 					Path:    fmt.Sprintf("mcpServers.%s.serviceAuths[%d].userToken", serverName, i),
-					Message: "userToken is required when server has requiresUserToken: true",
+					Message: "userToken is required when server has requiresUserToken: true. Hint: Use {\"$userToken\": \"{{token}}\"} to inject user's token",
 				})
 			} else {
 				validateUserTokenReference(auth["userToken"], fmt.Sprintf("mcpServers.%s.serviceAuths[%d].userToken", serverName, i), result)
@@ -388,54 +390,176 @@ func validateServiceAuths(serviceAuths []interface{}, serverName string, require
 	}
 }
 
-// validatePasswordReference validates that password uses env var reference
-func validatePasswordReference(password interface{}, path string, result *ValidationResult) {
-	switch p := password.(type) {
+// validateEnvVarReference validates that a field uses proper env var reference format
+func validateEnvVarReference(value any, fieldName, path string) *ValidationError {
+	switch v := value.(type) {
 	case string:
+		// Check if it looks like a bash-style env var
+		bashStyleRegex := regexp.MustCompile(`\$\{?([A-Z_][A-Z0-9_]*)\}?`)
+		if matches := bashStyleRegex.FindStringSubmatch(v); len(matches) > 1 {
+			varName := matches[1]
+			return &ValidationError{
+				Path:    path,
+				Message: fmt.Sprintf("found bash-style syntax '%s' - use {\"$env\": \"%s\"} instead. Hint: JSON syntax prevents accidental shell expansion and ensures security", v, varName),
+			}
+		}
+		// Plain string value
+		return &ValidationError{
+			Path:    path,
+			Message: fmt.Sprintf("%s must use environment variable reference {\"$env\": \"YOUR_ENV_VAR\"} instead of plain text '%s'. Hint: This prevents secrets from being stored in config files", fieldName, v),
+		}
+	case map[string]any:
+		if _, hasEnv := v["$env"]; !hasEnv {
+			return &ValidationError{
+				Path:    path,
+				Message: fmt.Sprintf("%s must use {\"$env\": \"YOUR_ENV_VAR\"} format, not %v", fieldName, v),
+			}
+		}
+		// Valid env reference
+		return nil
+	default:
+		return &ValidationError{
+			Path:    path,
+			Message: fmt.Sprintf("%s must be an environment variable reference {\"$env\": \"YOUR_ENV_VAR\"}, not %T", fieldName, value),
+		}
+	}
+}
+
+// validatePasswordReference validates that password uses env var reference
+func validatePasswordReference(password any, path string, result *ValidationResult) {
+	if err := validateEnvVarReference(password, "password", path); err != nil {
+		result.Errors = append(result.Errors, *err)
+	}
+}
+
+// validateUserTokenReference validates that userToken uses proper reference format
+func validateUserTokenReference(userToken any, path string, result *ValidationResult) {
+	switch v := userToken.(type) {
+	case string:
+		// Plain string is not allowed for userToken
 		result.Errors = append(result.Errors, ValidationError{
 			Path:    path,
-			Message: "password must use environment variable reference {\"$env\": \"VAR_NAME\"} for security",
+			Message: fmt.Sprintf("userToken must use {\"$userToken\": \"{{token}}\"} format instead of plain text '%s'. Hint: This injects the user's authenticated token at runtime", v),
 		})
-	case map[string]interface{}:
-		if _, hasEnv := p["$env"]; !hasEnv {
-			result.Errors = append(result.Errors, ValidationError{
-				Path:    path,
-				Message: "password must use {\"$env\": \"VAR_NAME\"} format",
-			})
+	case map[string]any:
+		if _, hasUserToken := v["$userToken"]; !hasUserToken {
+			// Check if they're trying to use env var syntax
+			if _, hasEnv := v["$env"]; hasEnv {
+				result.Errors = append(result.Errors, ValidationError{
+					Path:    path,
+					Message: "userToken cannot use {\"$env\": \"...\"} syntax - use {\"$userToken\": \"{{token}}\"} to inject user's authenticated token",
+				})
+			} else {
+				result.Errors = append(result.Errors, ValidationError{
+					Path:    path,
+					Message: fmt.Sprintf("userToken must use {\"$userToken\": \"{{token}}\"} format, not %v", v),
+				})
+			}
 		}
+		// Valid userToken reference
 	default:
 		result.Errors = append(result.Errors, ValidationError{
 			Path:    path,
-			Message: "password must be an environment variable reference",
+			Message: fmt.Sprintf("userToken must be a reference object {\"$userToken\": \"{{token}}\"}, not %T", userToken),
 		})
 	}
 }
 
-// validateUserTokenReference validates that userToken uses env var reference
-func validateUserTokenReference(userToken interface{}, path string, result *ValidationResult) {
-	switch t := userToken.(type) {
-	case string:
+// validateUserAuthentication validates user authentication configuration
+func validateUserAuthentication(userAuth any, path string, result *ValidationResult) {
+	auth, ok := userAuth.(map[string]any)
+	if !ok {
 		result.Errors = append(result.Errors, ValidationError{
 			Path:    path,
-			Message: "userToken must use environment variable reference {\"$env\": \"VAR_NAME\"} for security",
+			Message: "userAuthentication must be an object",
 		})
-	case map[string]interface{}:
-		if _, hasEnv := t["$env"]; !hasEnv {
+		return
+	}
+
+	// Check required type field
+	authType, ok := auth["type"].(string)
+	if !ok {
+		result.Errors = append(result.Errors, ValidationError{
+			Path:    path + ".type",
+			Message: "type is required. Options: oauth (for automated OAuth flow) or manual (for user-provided tokens)",
+		})
+		return
+	}
+
+	// Validate based on type
+	switch authType {
+	case "oauth":
+		validateOAuthServiceConfig(auth, path, result)
+	case "manual":
+		// Manual requires displayName and instructions
+		if _, ok := auth["displayName"]; !ok {
 			result.Errors = append(result.Errors, ValidationError{
-				Path:    path,
-				Message: "userToken must use {\"$env\": \"VAR_NAME\"} format",
+				Path:    path + ".displayName",
+				Message: "displayName is required for manual authentication. Example: \"GitHub Personal Access Token\"",
+			})
+		}
+		if _, ok := auth["instructions"]; !ok {
+			result.Errors = append(result.Errors, ValidationError{
+				Path:    path + ".instructions",
+				Message: "instructions are required for manual authentication. Example: \"Create a token at https://github.com/settings/tokens\"",
 			})
 		}
 	default:
 		result.Errors = append(result.Errors, ValidationError{
-			Path:    path,
-			Message: "userToken must be an environment variable reference",
+			Path:    path + ".type",
+			Message: fmt.Sprintf("invalid authentication type '%s' - must be 'oauth' or 'manual'", authType),
 		})
+	}
+}
+
+// validateOAuthServiceConfig validates OAuth service configuration
+func validateOAuthServiceConfig(oauth map[string]any, path string, result *ValidationResult) {
+	// Check required fields
+	requiredFields := []string{"clientId", "authorizationUrl", "tokenUrl", "scopes"}
+	for _, field := range requiredFields {
+		if _, ok := oauth[field]; !ok {
+			result.Errors = append(result.Errors, ValidationError{
+				Path:    path + "." + field,
+				Message: fmt.Sprintf("%s is required for OAuth configuration", field),
+			})
+		}
+	}
+
+	// Validate scopes is an array
+	if scopes, ok := oauth["scopes"].([]any); ok {
+		if len(scopes) == 0 {
+			result.Errors = append(result.Errors, ValidationError{
+				Path:    path + ".scopes",
+				Message: "at least one scope is required",
+			})
+		}
+	} else {
+		result.Errors = append(result.Errors, ValidationError{
+			Path:    path + ".scopes",
+			Message: "scopes must be an array",
+		})
+	}
+
+	// Check client secret uses env var
+	if clientSecret, ok := oauth["clientSecret"]; ok {
+		validateSecretReference(clientSecret, path+".clientSecret", result)
+	} else {
+		result.Errors = append(result.Errors, ValidationError{
+			Path:    path + ".clientSecret",
+			Message: "clientSecret is required for OAuth configuration",
+		})
+	}
+}
+
+// validateSecretReference validates that secret uses env var reference
+func validateSecretReference(secret any, path string, result *ValidationResult) {
+	if err := validateEnvVarReference(secret, "clientSecret", path); err != nil {
+		result.Errors = append(result.Errors, *err)
 	}
 }
 
 // checkBashStyleSyntax recursively checks for bash-style env var syntax
-func checkBashStyleSyntax(value interface{}, path string, result *ValidationResult) {
+func checkBashStyleSyntax(value any, path string, result *ValidationResult) {
 	bashStyleRegex := regexp.MustCompile(`\$\{?[A-Z_][A-Z0-9_]*\}?`)
 
 	switch v := value.(type) {
@@ -449,7 +573,7 @@ func checkBashStyleSyntax(value interface{}, path string, result *ValidationResu
 				})
 			}
 		}
-	case map[string]interface{}:
+	case map[string]any:
 		// Skip if this is already an env/userToken ref
 		if _, hasEnv := v["$env"]; hasEnv {
 			return
@@ -467,7 +591,7 @@ func checkBashStyleSyntax(value interface{}, path string, result *ValidationResu
 			}
 			checkBashStyleSyntax(val, newPath, result)
 		}
-	case []interface{}:
+	case []any:
 		for i, item := range v {
 			newPath := fmt.Sprintf("%s[%d]", path, i)
 			checkBashStyleSyntax(item, newPath, result)

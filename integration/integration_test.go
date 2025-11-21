@@ -24,9 +24,17 @@ func TestIntegration(t *testing.T) {
 	waitForMCPFront(t)
 	trace(t, "mcp-front is ready")
 
+	// Get initial container count for cleanup
+	initialContainers := getMCPContainers()
+
 	client := NewMCPSSEClient("http://localhost:8080")
 	require.NotNil(t, client, "Failed to create MCP client")
 	defer client.Close() // Ensure SSE connection is closed
+
+	// Cleanup any containers created during this test
+	t.Cleanup(func() {
+		cleanupContainers(t, initialContainers)
+	})
 
 	err := client.Authenticate()
 	require.NoError(t, err, "Authentication failed")
@@ -40,9 +48,9 @@ func TestIntegration(t *testing.T) {
 
 	t.Log("Connected to MCP server with session")
 
-	queryParams := map[string]interface{}{
+	queryParams := map[string]any{
 		"name": "query",
-		"arguments": map[string]interface{}{
+		"arguments": map[string]any{
 			"sql": "SELECT COUNT(*) as user_count FROM users",
 		},
 	}
@@ -55,33 +63,33 @@ func TestIntegration(t *testing.T) {
 	require.NotNil(t, result, "Expected some response from MCP server")
 
 	// Check for error in response
-	errorMap, hasError := result["error"].(map[string]interface{})
+	errorMap, hasError := result["error"].(map[string]any)
 	assert.False(t, hasError, "Query returned error: %v", errorMap)
 
 	// Verify we got result content
-	resultMap, ok := result["result"].(map[string]interface{})
+	resultMap, ok := result["result"].(map[string]any)
 	require.True(t, ok, "Expected result in response")
 
-	content, ok := resultMap["content"].([]interface{})
+	content, ok := resultMap["content"].([]any)
 	require.True(t, ok, "Expected content in result")
 	assert.NotEmpty(t, content, "Query result missing content")
 	t.Log("Query executed successfully")
 
 	// Test resources list
-	resourcesResult, err := client.SendMCPRequest("resources/list", map[string]interface{}{})
+	resourcesResult, err := client.SendMCPRequest("resources/list", map[string]any{})
 	require.NoError(t, err, "Failed to list resources")
 
 	t.Logf("Resources response: %+v", resourcesResult)
 
 	// Check for error in resources response
-	errorMap, hasError = resourcesResult["error"].(map[string]interface{})
+	errorMap, hasError = resourcesResult["error"].(map[string]any)
 	assert.False(t, hasError, "Resources list returned error: %v", errorMap)
 
 	// Verify we got resources
-	resultMap, ok = resourcesResult["result"].(map[string]interface{})
+	resultMap, ok = resourcesResult["result"].(map[string]any)
 	require.True(t, ok, "Expected result in resources response")
 
-	resources, ok := resultMap["resources"].([]interface{})
+	resources, ok := resultMap["resources"].([]any)
 	require.True(t, ok, "Expected resources array in result")
 	assert.NotEmpty(t, resources, "Expected at least one resource")
 	t.Logf("Found %d resources", len(resources))

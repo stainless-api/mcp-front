@@ -15,6 +15,17 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 )
 
+const (
+	// DefaultSessionTimeout is how long idle sessions remain active
+	DefaultSessionTimeout = 5 * time.Minute
+
+	// DefaultCleanupInterval is how often to check for expired sessions
+	DefaultCleanupInterval = 1 * time.Minute
+
+	// DefaultMaxSessionsPerUser limits concurrent sessions per user
+	DefaultMaxSessionsPerUser = 10
+)
+
 var (
 	// ErrSessionNotFound is returned when a session doesn't exist
 	ErrSessionNotFound = errors.New("session not found")
@@ -91,9 +102,9 @@ func WithClientCreator(creator func(name string, config *config.MCPClientConfig)
 func NewStdioSessionManager(opts ...SessionManagerOption) *StdioSessionManager {
 	sm := &StdioSessionManager{
 		sessions:        make(map[SessionKey]*StdioSession),
-		defaultTimeout:  5 * time.Minute,
-		maxPerUser:      10,
-		cleanupInterval: 1 * time.Minute,
+		defaultTimeout:  DefaultSessionTimeout,
+		maxPerUser:      DefaultMaxSessionsPerUser,
+		cleanupInterval: DefaultCleanupInterval,
 		stopCleanup:     make(chan struct{}),
 		createClient:    NewMCPClient,
 	}
@@ -115,6 +126,7 @@ func (sm *StdioSessionManager) GetOrCreateSession(
 	config *config.MCPClientConfig,
 	info mcp.Implementation,
 	baseURL string,
+	userToken string,
 ) (*StdioSession, error) {
 	// Try to get existing session first
 	if session, ok := sm.GetSession(key); ok {
@@ -125,7 +137,7 @@ func (sm *StdioSessionManager) GetOrCreateSession(
 		return nil, err
 	}
 
-	return sm.createSession(ctx, key, config, info, baseURL)
+	return sm.createSession(key, config, userToken)
 }
 
 // GetSession retrieves an existing session
@@ -139,7 +151,7 @@ func (sm *StdioSessionManager) GetSession(key SessionKey) (*StdioSession, bool) 
 		lastAccessed := session.lastAccessed.Load()
 		session.lastAccessed.Store(&now)
 
-		log.LogTraceWithFields("session_manager", "Session accessed", map[string]interface{}{
+		log.LogTraceWithFields("session_manager", "Session accessed", map[string]any{
 			"sessionID":       key.SessionID,
 			"server":          key.ServerName,
 			"user":            key.UserEmail,
@@ -150,7 +162,7 @@ func (sm *StdioSessionManager) GetSession(key SessionKey) (*StdioSession, bool) 
 		select {
 		case <-session.ctx.Done():
 			// Process died, remove it
-			log.LogTraceWithFields("session_manager", "Session context cancelled, removing", map[string]interface{}{
+			log.LogTraceWithFields("session_manager", "Session context cancelled, removing", map[string]any{
 				"sessionID": key.SessionID,
 				"server":    key.ServerName,
 				"user":      key.UserEmail,
@@ -162,7 +174,7 @@ func (sm *StdioSessionManager) GetSession(key SessionKey) (*StdioSession, bool) 
 		}
 	}
 
-	log.LogTraceWithFields("session_manager", "Session not found", map[string]interface{}{
+	log.LogTraceWithFields("session_manager", "Session not found", map[string]any{
 		"sessionID": key.SessionID,
 		"server":    key.ServerName,
 		"user":      key.UserEmail,
@@ -177,13 +189,13 @@ func (sm *StdioSessionManager) RemoveSession(key SessionKey) {
 	session, ok := sm.sessions[key]
 	if ok {
 		delete(sm.sessions, key)
-		log.LogTraceWithFields("session_manager", "Removing session from map", map[string]interface{}{
+		log.LogTraceWithFields("session_manager", "Removing session from map", map[string]any{
 			"sessionID": key.SessionID,
 			"server":    key.ServerName,
 			"user":      key.UserEmail,
 		})
 	}
-	sessionCount := len(sm.sessions)
+	remainingSessions := len(sm.sessions)
 	sm.mu.Unlock()
 
 	if ok {
@@ -192,7 +204,7 @@ func (sm *StdioSessionManager) RemoveSession(key SessionKey) {
 
 		// Close the client
 		if err := session.client.Close(); err != nil {
-			log.LogErrorWithFields("session_manager", "Failed to close client", map[string]interface{}{
+			log.LogErrorWithFields("session_manager", "Failed to close client", map[string]any{
 				"error":     err.Error(),
 				"sessionID": key.SessionID,
 				"server":    key.ServerName,
@@ -200,20 +212,20 @@ func (sm *StdioSessionManager) RemoveSession(key SessionKey) {
 			})
 		}
 
-		log.LogInfoWithFields("session_manager", "Removed session", map[string]interface{}{
+		log.LogInfoWithFields("session_manager", "Removed session", map[string]any{
 			"sessionID": key.SessionID,
 			"server":    key.ServerName,
 			"user":      key.UserEmail,
 		})
 
-		log.LogTraceWithFields("session_manager", "Session removed with details", map[string]interface{}{
+		log.LogTraceWithFields("session_manager", "Session removed with details", map[string]any{
 			"sessionID":         key.SessionID,
 			"server":            key.ServerName,
 			"user":              key.UserEmail,
 			"created":           session.created,
 			"duration":          time.Since(session.created).String(),
 			"lastAccessed":      session.lastAccessed.Load(),
-			"remainingSessions": sessionCount,
+			"remainingSessions": remainingSessions,
 		})
 	}
 }
@@ -251,7 +263,7 @@ func (s *StdioSession) DiscoverAndRegisterCapabilities(
 	tokenStore storage.UserTokenStore,
 	serverName string,
 	setupBaseURL string,
-	tokenSetup *config.TokenSetupConfig,
+	userAuth *config.UserAuthentication,
 	session server.ClientSession,
 ) error {
 	// Initialize the client
@@ -268,7 +280,7 @@ func (s *StdioSession) DiscoverAndRegisterCapabilities(
 		Version: "1.0",
 	}
 	initRequest.Params.Capabilities = mcp.ClientCapabilities{
-		Experimental: make(map[string]interface{}),
+		Experimental: make(map[string]any),
 		Roots:        nil,
 		Sampling:     nil,
 	}
@@ -280,20 +292,20 @@ func (s *StdioSession) DiscoverAndRegisterCapabilities(
 	log.Logf("<%s> Successfully initialized MCP client", serverName)
 
 	// Start capability discovery
-	log.LogInfoWithFields("client", "Starting MCP capability discovery", map[string]interface{}{
+	log.LogInfoWithFields("client", "Starting MCP capability discovery", map[string]any{
 		"server": serverName,
 	})
 
-	log.LogTraceWithFields("client", "Starting capability discovery", map[string]interface{}{
+	log.LogTraceWithFields("client", "Starting capability discovery", map[string]any{
 		"server":            serverName,
 		"sessionID":         session.SessionID(),
 		"userEmail":         userEmail,
 		"requiresUserToken": requiresToken,
-		"hasTokenSetup":     tokenSetup != nil,
+		"hasTokenSetup":     userAuth != nil,
 	})
 
 	// Discover and register tools
-	if err := s.client.addToolsToServer(ctx, mcpServer, userEmail, requiresToken, tokenStore, serverName, setupBaseURL, tokenSetup, session); err != nil {
+	if err := s.client.addToolsToServer(ctx, mcpServer, userEmail, requiresToken, tokenStore, serverName, setupBaseURL, userAuth, session); err != nil {
 		return err
 	}
 
@@ -306,12 +318,12 @@ func (s *StdioSession) DiscoverAndRegisterCapabilities(
 	// Discover and register resource templates
 	_ = s.client.addResourceTemplatesToServer(ctx, mcpServer)
 
-	log.LogInfoWithFields("client", "MCP capability discovery completed", map[string]interface{}{
+	log.LogInfoWithFields("client", "MCP capability discovery completed", map[string]any{
 		"server":            serverName,
 		"userTokenRequired": requiresToken,
 	})
 
-	log.LogTraceWithFields("client", "Capability discovery completed", map[string]interface{}{
+	log.LogTraceWithFields("client", "Capability discovery completed", map[string]any{
 		"server":              serverName,
 		"sessionID":           session.SessionID(),
 		"userEmail":           userEmail,
@@ -343,7 +355,7 @@ func (sm *StdioSessionManager) checkUserLimits(userEmail string) error {
 
 	count := sm.getUserSessionCount(userEmail)
 	if count >= sm.maxPerUser {
-		log.LogWarnWithFields("session_manager", "User session limit exceeded", map[string]interface{}{
+		log.LogWarnWithFields("session_manager", "User session limit exceeded", map[string]any{
 			"user":  userEmail,
 			"count": count,
 			"limit": sm.maxPerUser,
@@ -352,7 +364,7 @@ func (sm *StdioSessionManager) checkUserLimits(userEmail string) error {
 			ErrUserLimitExceeded, userEmail, count, sm.maxPerUser)
 	}
 
-	log.LogTraceWithFields("session_manager", "User session limit check passed", map[string]interface{}{
+	log.LogTraceWithFields("session_manager", "User session limit check passed", map[string]any{
 		"user":            userEmail,
 		"currentSessions": count,
 		"maxPerUser":      sm.maxPerUser,
@@ -379,13 +391,20 @@ func (sm *StdioSessionManager) getUserSessionCount(userEmail string) int {
 
 // createSession creates a new stdio session
 func (sm *StdioSessionManager) createSession(
-	ctx context.Context,
 	key SessionKey,
 	config *config.MCPClientConfig,
-	info mcp.Implementation,
-	baseURL string,
+	userToken string,
 ) (*StdioSession, error) {
+	// Create an independent context for the stdio session. We intentionally use
+	// context.Background() instead of the HTTP request context because stdio
+	// sessions are long-lived processes that must persist across multiple HTTP
+	// requests. The session will be cleaned up by the timeout-based cleanup
+	// routine, not by HTTP request cancellation.
 	sessionCtx, cancel := context.WithCancel(context.Background())
+
+	if userToken != "" && config.RequiresUserToken {
+		config = config.ApplyUserToken(userToken)
+	}
 
 	client, err := sm.createClient(key.ServerName, config)
 	if err != nil {
@@ -407,22 +426,23 @@ func (sm *StdioSessionManager) createSession(
 	// Store session
 	sm.mu.Lock()
 	sm.sessions[key] = session
+	totalSessions := len(sm.sessions)
 	sm.mu.Unlock()
 
-	log.LogInfoWithFields("session_manager", "Created new session", map[string]interface{}{
+	log.LogInfoWithFields("session_manager", "Created new session", map[string]any{
 		"sessionID": key.SessionID,
 		"server":    key.ServerName,
 		"user":      key.UserEmail,
 	})
 
-	log.LogTraceWithFields("session_manager", "Session created with details", map[string]interface{}{
+	log.LogTraceWithFields("session_manager", "Session created with details", map[string]any{
 		"sessionID":       key.SessionID,
 		"server":          key.ServerName,
 		"user":            key.UserEmail,
 		"timeout":         sm.defaultTimeout.String(),
 		"maxPerUser":      sm.maxPerUser,
 		"cleanupInterval": sm.cleanupInterval.String(),
-		"totalSessions":   len(sm.sessions),
+		"totalSessions":   totalSessions,
 	})
 
 	return session, nil
@@ -465,7 +485,7 @@ func (sm *StdioSessionManager) cleanupTimedOutSessions() {
 	sm.mu.RUnlock()
 
 	if totalSessions > 0 || len(timedOut) > 0 {
-		log.LogTraceWithFields("session_manager", "Session cleanup cycle", map[string]interface{}{
+		log.LogTraceWithFields("session_manager", "Session cleanup cycle", map[string]any{
 			"totalSessions":    totalSessions,
 			"activeSessions":   activeSessions,
 			"timedOutSessions": len(timedOut),
@@ -474,7 +494,7 @@ func (sm *StdioSessionManager) cleanupTimedOutSessions() {
 	}
 
 	for _, key := range timedOut {
-		log.LogInfoWithFields("session_manager", "Removing timed out session", map[string]interface{}{
+		log.LogInfoWithFields("session_manager", "Removing timed out session", map[string]any{
 			"sessionID": key.SessionID,
 			"server":    key.ServerName,
 			"user":      key.UserEmail,

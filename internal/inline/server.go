@@ -36,9 +36,9 @@ func NewServer(name string, config Config, resolvedTools []ResolvedToolConfig) *
 
 // Tool represents an MCP tool
 type Tool struct {
-	Name        string                 `json:"name"`
-	Description string                 `json:"description"`
-	InputSchema map[string]interface{} `json:"inputSchema"`
+	Name        string         `json:"name"`
+	Description string         `json:"description"`
+	InputSchema map[string]any `json:"inputSchema"`
 }
 
 // ServerCapabilities represents server capabilities
@@ -51,7 +51,7 @@ func (s *Server) GetCapabilities() ServerCapabilities {
 	tools := make(map[string]Tool)
 
 	for name, tool := range s.tools {
-		var inputSchema map[string]interface{}
+		var inputSchema map[string]any
 		if len(tool.InputSchema) > 0 {
 			if err := json.Unmarshal(tool.InputSchema, &inputSchema); err != nil {
 				log.LogError("Failed to unmarshal input schema for tool %s: %v", name, err)
@@ -76,7 +76,7 @@ func (s *Server) GetDescription() string {
 }
 
 // HandleToolCall executes a tool and returns the result
-func (s *Server) HandleToolCall(ctx context.Context, toolName string, args map[string]interface{}) (interface{}, error) {
+func (s *Server) HandleToolCall(ctx context.Context, toolName string, args map[string]any) (any, error) {
 	tool, exists := s.tools[toolName]
 	if !exists {
 		return nil, fmt.Errorf("tool %s not found", toolName)
@@ -114,25 +114,25 @@ func (s *Server) HandleToolCall(ctx context.Context, toolName string, args map[s
 	// Execute
 	err := cmd.Run()
 	if err != nil {
-		log.LogErrorWithFields("inline", "Tool execution failed", map[string]interface{}{
+		log.LogErrorWithFields("inline", "Tool execution failed", map[string]any{
 			"tool":   toolName,
 			"error":  err.Error(),
 			"stderr": stderr.String(),
 		})
-		return map[string]interface{}{
+		return map[string]any{
 			"error":  err.Error(),
 			"stderr": stderr.String(),
 		}, fmt.Errorf("command failed: %w", err)
 	}
 
 	// Try to parse as JSON first
-	var result interface{}
+	var result any
 	if err := json.Unmarshal(stdout.Bytes(), &result); err == nil {
 		return result, nil
 	}
 
 	// Return as text if not JSON
-	return map[string]interface{}{
+	return map[string]any{
 		"output": stdout.String(),
 		"stderr": stderr.String(),
 	}, nil

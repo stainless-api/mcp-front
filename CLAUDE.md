@@ -56,6 +56,8 @@ mcp-front is a Go-based OAuth 2.1 proxy server for MCP (Model Context Protocol) 
 - **Define interfaces where they are used** - Not in the package that implements them
 - **Avoid circular imports** - Use interface segregation in separate packages when needed
 - **Dependency injection over getter methods** - Pass dependencies to constructors
+- **Functional core, imperative shell** - Prefer pure functions for business logic, keep side effects (I/O, state mutations) at the boundaries. Makes code more testable and reasoning easier.
+- **Upstream lifecycle control** - Manage goroutines, servers, and background processes from the application root. Library code should expose Start/Stop methods, not start things autonomously.
 
 ### 🎯 Core Development Principles (from Zig Zen)
 
@@ -115,7 +117,7 @@ LOG_FORMAT="text"           # json or text
 
 #### Updating OAuth scopes
 
-1. Check `internal/oauth/auth.go` for current scopes
+1. Check `internal/googleauth/google.go` for current scopes
 2. Use standard OpenID Connect scopes (not Google-specific URLs)
 3. Update tests to verify new scopes work
 
@@ -129,14 +131,24 @@ LOG_FORMAT="text"           # json or text
 
 ```
 internal/
-├── config/      # Configuration parsing and validation
-├── oauth/       # OAuth 2.1 implementation with fosite
-├── server/      # HTTP server and middleware
-├── client/      # MCP client management
-└── logging.go   # Structured logging setup
+├── config/         # Configuration parsing and validation
+├── oauth/          # OAuth 2.1 provider, JWT, middleware
+├── googleauth/     # Google OAuth integration (pure functions)
+├── adminauth/      # Admin authorization logic
+├── browserauth/    # Browser session types (SessionCookie, AuthorizationState)
+├── oauthsession/   # OAuth session types for fosite
+├── servicecontext/ # Service authentication context utilities
+├── server/         # HTTP server, handlers, and middleware
+├── client/         # MCP client management and session handling
+├── auth/           # Service OAuth client for upstream authentication
+├── crypto/         # Encryption, HMAC, token signing utilities
+├── storage/        # Storage abstraction (memory, Firestore)
+├── inline/         # Inline MCP server implementation
+├── mcpfront.go     # Main application orchestration (imperative shell)
+└── [utility packages: cookie, email, envutil, json, jsonrpc, log, sse, testutil]
 
-integration/     # Integration tests (OAuth, security, scenarios)
-cmd/mcp-front/   # Main application entry point
+integration/        # Integration tests (OAuth, security, scenarios)
+cmd/mcp-front/      # Main application entry point
 ```
 
 ### Testing Guidance
@@ -153,6 +165,7 @@ cmd/mcp-front/   # Main application entry point
 3. Don't create new auth patterns - use existing OAuth or bearer token auth
 4. Don't modify git configuration
 5. Don't create README files proactively
+6. **Variable shadowing package names** - `config.MCPClientConfig is not a type` means a variable named `config` is shadowing the package. Always check for variables that shadow imported package names
 
 ### When Working on Features
 

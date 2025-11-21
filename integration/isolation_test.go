@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"slices"
 	"testing"
 	"time"
 
@@ -53,11 +54,8 @@ func TestMultiUserSessionIsolation(t *testing.T) {
 	var client1Container string
 	for _, container := range containersAfterClient1 {
 		isNew := true
-		for _, initial := range initialContainers {
-			if container == initial {
-				isNew = false
-				break
-			}
+		if slices.Contains(initialContainers, container) {
+			isNew = false
 		}
 		if isNew {
 			client1Container = container
@@ -70,9 +68,9 @@ func TestMultiUserSessionIsolation(t *testing.T) {
 		t.Error("No new container created for client1")
 	}
 
-	query1Result, err := client1.SendMCPRequest("tools/call", map[string]interface{}{
+	query1Result, err := client1.SendMCPRequest("tools/call", map[string]any{
 		"name": "query",
-		"arguments": map[string]interface{}{
+		"arguments": map[string]any{
 			"sql": "SELECT 'user1-query1' as test_id, COUNT(*) as count FROM users",
 		},
 	})
@@ -101,11 +99,8 @@ func TestMultiUserSessionIsolation(t *testing.T) {
 	var client2Container string
 	for _, container := range containersAfterClient2 {
 		isNew := true
-		for _, existing := range containersAfterClient1 {
-			if container == existing {
-				isNew = false
-				break
-			}
+		if slices.Contains(containersAfterClient1, container) {
+			isNew = false
 		}
 		if isNew {
 			client2Container = container
@@ -126,9 +121,9 @@ func TestMultiUserSessionIsolation(t *testing.T) {
 		t.Logf("Confirmed different stdio processes: User1 container=%s, User2 container=%s", client1Container, client2Container)
 	}
 
-	query2Result, err := client2.SendMCPRequest("tools/call", map[string]interface{}{
+	query2Result, err := client2.SendMCPRequest("tools/call", map[string]any{
 		"name": "query",
-		"arguments": map[string]interface{}{
+		"arguments": map[string]any{
 			"sql": "SELECT 'user2-query1' as test_id, COUNT(*) as count FROM orders",
 		},
 	})
@@ -139,9 +134,9 @@ func TestMultiUserSessionIsolation(t *testing.T) {
 
 	// Step 3: First user sends another query
 	t.Log("\nStep 3: First user sends another query")
-	query3Result, err := client1.SendMCPRequest("tools/call", map[string]interface{}{
+	query3Result, err := client1.SendMCPRequest("tools/call", map[string]any{
 		"name": "query",
-		"arguments": map[string]interface{}{
+		"arguments": map[string]any{
 			"sql": "SELECT 'user1-query2' as test_id, current_timestamp as ts",
 		},
 	})
@@ -152,9 +147,9 @@ func TestMultiUserSessionIsolation(t *testing.T) {
 
 	// Step 4: First user sends another query
 	t.Log("\nStep 4: First user sends another query")
-	query4Result, err := client1.SendMCPRequest("tools/call", map[string]interface{}{
+	query4Result, err := client1.SendMCPRequest("tools/call", map[string]any{
 		"name": "query",
-		"arguments": map[string]interface{}{
+		"arguments": map[string]any{
 			"sql": "SELECT 'user1-query3' as test_id, version() as db_version",
 		},
 	})
@@ -165,9 +160,9 @@ func TestMultiUserSessionIsolation(t *testing.T) {
 
 	// Step 5: Second user sends a query
 	t.Log("\nStep 5: Second user sends a query")
-	query5Result, err := client2.SendMCPRequest("tools/call", map[string]interface{}{
+	query5Result, err := client2.SendMCPRequest("tools/call", map[string]any{
 		"name": "query",
-		"arguments": map[string]interface{}{
+		"arguments": map[string]any{
 			"sql": "SELECT 'user2-query2' as test_id, current_database() as db_name",
 		},
 	})
@@ -241,9 +236,9 @@ func TestSessionCleanupAfterTimeout(t *testing.T) {
 	assert.Greater(t, len(containersAfterConnect), len(initialContainers), "No new container created for client")
 
 	// Send a query to ensure session is active
-	_, err = client.SendMCPRequest("tools/call", map[string]interface{}{
+	_, err = client.SendMCPRequest("tools/call", map[string]any{
 		"name": "query",
-		"arguments": map[string]interface{}{
+		"arguments": map[string]any{
 			"sql": "SELECT 'test' as test_id",
 		},
 	})
@@ -310,11 +305,11 @@ func TestSessionTimerReset(t *testing.T) {
 
 	// Keep session alive by sending queries every 5 seconds
 	// With 8s timeout, this should keep it alive
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		t.Logf("Sending keepalive query %d/3...", i+1)
-		_, err := client.SendMCPRequest("tools/call", map[string]interface{}{
+		_, err := client.SendMCPRequest("tools/call", map[string]any{
 			"name": "query",
-			"arguments": map[string]interface{}{
+			"arguments": map[string]any{
 				"sql": "SELECT 'keepalive' as status, NOW() as timestamp",
 			},
 		})
@@ -413,11 +408,11 @@ func TestMultiUserTimerIndependence(t *testing.T) {
 	go func() {
 		defer close(done)
 		// Run 4 queries - the last one AFTER client1 should be cleaned up
-		for i := 0; i < 4; i++ {
+		for i := range 4 {
 			time.Sleep(4 * time.Second)
-			_, err := client2.SendMCPRequest("tools/call", map[string]interface{}{
+			_, err := client2.SendMCPRequest("tools/call", map[string]any{
 				"name": "query",
-				"arguments": map[string]interface{}{
+				"arguments": map[string]any{
 					"sql": "SELECT 'client2-keepalive' as status",
 				},
 			})

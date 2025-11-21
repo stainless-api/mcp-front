@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	"maps"
 	"sync"
 	"time"
 
@@ -16,7 +17,14 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// FirestoreStorage implements OAuth client storage using Google Cloud Firestore
+// FirestoreStorage implements OAuth client storage using Google Cloud Firestore.
+//
+// Error handling strategy:
+// - Read operations: Return errors (data must be available for auth to work)
+// - Write operations: Log and continue (fallback to memory cache is acceptable)
+//
+// This allows the system to function even if Firestore has transient issues,
+// while ensuring that missing data causes explicit failures.
 type FirestoreStorage struct {
 	*storage.MemoryStore
 	client          *firestore.Client
@@ -34,10 +42,12 @@ var _ fosite.Storage = (*FirestoreStorage)(nil)
 
 // UserTokenDoc represents a user token document in Firestore
 type UserTokenDoc struct {
-	UserEmail string    `firestore:"user_email"`
-	Service   string    `firestore:"service"`
-	Token     string    `firestore:"token"` // Encrypted
-	UpdatedAt time.Time `firestore:"updated_at"`
+	UserEmail string          `firestore:"user_email"`
+	Service   string          `firestore:"service"`
+	Type      TokenType       `firestore:"type"`
+	Value     string          `firestore:"value,omitempty"`      // Encrypted manual token
+	OAuthData *OAuthTokenData `firestore:"oauth_data,omitempty"` // OAuth metadata (tokens encrypted)
+	UpdatedAt time.Time       `firestore:"updated_at"`
 }
 
 // OAuthClientEntity represents the structure stored in Firestore
@@ -200,24 +210,27 @@ func (s *FirestoreStorage) GetAuthorizeRequest(state string) (fosite.AuthorizeRe
 	return nil, false
 }
 
-// GetClient retrieves a client from memory (which is kept in sync with Firestore)
+// GetClient retrieves a client from memory cache, loading from Firestore on miss.
+// Concurrent cache misses may load the same client multiple times from Firestore.
+// This is acceptable because: (1) clients are loaded once at startup via loadAllClients,
+// so misses only occur for newly registered clients, and (2) duplicate Firestore reads
+// are safe (idempotent) and cost-negligible at mcp-front's scale.
 func (s *FirestoreStorage) GetClient(ctx context.Context, id string) (fosite.Client, error) {
 	s.clientsMutex.RLock()
-	defer s.clientsMutex.RUnlock()
-
 	cl, ok := s.MemoryStore.Clients[id]
-	if !ok {
-		// Try to load from Firestore if not in memory
-		s.clientsMutex.RUnlock()
-		client, err := s.loadClientFromFirestore(ctx, id)
-		s.clientsMutex.RLock()
+	s.clientsMutex.RUnlock()
 
-		if err != nil {
-			return nil, fosite.ErrNotFound
-		}
-		return client, nil
+	if ok {
+		return cl, nil
 	}
-	return cl, nil
+
+	// Cache miss - load from Firestore
+	// Multiple threads might load simultaneously, but this is rare and safe
+	client, err := s.loadClientFromFirestore(ctx, id)
+	if err != nil {
+		return nil, fosite.ErrNotFound
+	}
+	return client, nil
 }
 
 // loadClientFromFirestore loads a single client from Firestore
@@ -337,9 +350,7 @@ func (s *FirestoreStorage) GetAllClients() map[string]fosite.Client {
 
 	// Create a copy to avoid race conditions
 	clients := make(map[string]fosite.Client, len(s.MemoryStore.Clients))
-	for id, client := range s.MemoryStore.Clients {
-		clients[id] = client
-	}
+	maps.Copy(clients, s.MemoryStore.Clients)
 	return clients
 }
 
@@ -361,47 +372,121 @@ func (s *FirestoreStorage) makeUserTokenDocID(userEmail, service string) string 
 }
 
 // GetUserToken retrieves a user's token for a specific service
-func (s *FirestoreStorage) GetUserToken(ctx context.Context, userEmail, service string) (string, error) {
+func (s *FirestoreStorage) GetUserToken(ctx context.Context, userEmail, service string) (*StoredToken, error) {
 	docID := s.makeUserTokenDocID(userEmail, service)
 	doc, err := s.client.Collection(s.tokenCollection).Doc(docID).Get(ctx)
 	if err != nil {
 		if status.Code(err) == codes.NotFound {
-			return "", ErrUserTokenNotFound
+			return nil, ErrUserTokenNotFound
 		}
-		return "", fmt.Errorf("failed to get token from Firestore: %w", err)
+		return nil, fmt.Errorf("failed to get token from Firestore: %w", err)
 	}
 
 	var tokenDoc UserTokenDoc
 	if err := doc.DataTo(&tokenDoc); err != nil {
-		return "", fmt.Errorf("failed to unmarshal token: %w", err)
+		return nil, fmt.Errorf("failed to unmarshal token: %w", err)
 	}
 
-	// Decrypt the token
-	decrypted, err := s.encryptor.Decrypt(tokenDoc.Token)
-	if err != nil {
-		return "", fmt.Errorf("failed to decrypt token: %w", err)
+	// Build StoredToken
+	storedToken := &StoredToken{
+		Type:      tokenDoc.Type,
+		UpdatedAt: tokenDoc.UpdatedAt,
 	}
 
-	return decrypted, nil
+	// Decrypt based on type
+	switch tokenDoc.Type {
+	case TokenTypeManual:
+		if tokenDoc.Value != "" {
+			decrypted, err := s.encryptor.Decrypt(tokenDoc.Value)
+			if err != nil {
+				return nil, fmt.Errorf("failed to decrypt manual token: %w", err)
+			}
+			storedToken.Value = decrypted
+		}
+	case TokenTypeOAuth:
+		if tokenDoc.OAuthData != nil {
+			// Decrypt OAuth tokens
+			decryptedAccess, err := s.encryptor.Decrypt(tokenDoc.OAuthData.AccessToken)
+			if err != nil {
+				return nil, fmt.Errorf("failed to decrypt access token: %w", err)
+			}
+
+			oauthData := &OAuthTokenData{
+				AccessToken: decryptedAccess,
+				TokenType:   tokenDoc.OAuthData.TokenType,
+				ExpiresAt:   tokenDoc.OAuthData.ExpiresAt,
+				Scopes:      tokenDoc.OAuthData.Scopes,
+			}
+
+			if tokenDoc.OAuthData.RefreshToken != "" {
+				decryptedRefresh, err := s.encryptor.Decrypt(tokenDoc.OAuthData.RefreshToken)
+				if err != nil {
+					return nil, fmt.Errorf("failed to decrypt refresh token: %w", err)
+				}
+				oauthData.RefreshToken = decryptedRefresh
+			}
+
+			storedToken.OAuthData = oauthData
+		}
+	}
+
+	return storedToken, nil
 }
 
 // SetUserToken stores or updates a user's token for a specific service
-func (s *FirestoreStorage) SetUserToken(ctx context.Context, userEmail, service, token string) error {
-	// Encrypt the token before storing
-	encrypted, err := s.encryptor.Encrypt(token)
-	if err != nil {
-		return fmt.Errorf("failed to encrypt token: %w", err)
+func (s *FirestoreStorage) SetUserToken(ctx context.Context, userEmail, service string, token *StoredToken) error {
+	if token == nil {
+		return fmt.Errorf("token cannot be nil")
 	}
 
 	docID := s.makeUserTokenDocID(userEmail, service)
 	tokenDoc := UserTokenDoc{
 		UserEmail: userEmail,
 		Service:   service,
-		Token:     encrypted,
+		Type:      token.Type,
 		UpdatedAt: time.Now(),
 	}
 
-	_, err = s.client.Collection(s.tokenCollection).Doc(docID).Set(ctx, tokenDoc)
+	// Encrypt based on type
+	switch token.Type {
+	case TokenTypeManual:
+		if token.Value != "" {
+			encrypted, err := s.encryptor.Encrypt(token.Value)
+			if err != nil {
+				return fmt.Errorf("failed to encrypt manual token: %w", err)
+			}
+			tokenDoc.Value = encrypted
+		}
+	case TokenTypeOAuth:
+		if token.OAuthData != nil {
+			// Encrypt OAuth tokens
+			encryptedAccess, err := s.encryptor.Encrypt(token.OAuthData.AccessToken)
+			if err != nil {
+				return fmt.Errorf("failed to encrypt access token: %w", err)
+			}
+
+			oauthData := &OAuthTokenData{
+				AccessToken: encryptedAccess,
+				TokenType:   token.OAuthData.TokenType,
+				ExpiresAt:   token.OAuthData.ExpiresAt,
+				Scopes:      token.OAuthData.Scopes,
+			}
+
+			if token.OAuthData.RefreshToken != "" {
+				encryptedRefresh, err := s.encryptor.Encrypt(token.OAuthData.RefreshToken)
+				if err != nil {
+					return fmt.Errorf("failed to encrypt refresh token: %w", err)
+				}
+				oauthData.RefreshToken = encryptedRefresh
+			}
+
+			tokenDoc.OAuthData = oauthData
+		}
+	default:
+		return fmt.Errorf("unknown token type: %s", token.Type)
+	}
+
+	_, err := s.client.Collection(s.tokenCollection).Doc(docID).Set(ctx, tokenDoc)
 	if err != nil {
 		return fmt.Errorf("failed to store token in Firestore: %w", err)
 	}

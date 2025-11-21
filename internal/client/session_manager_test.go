@@ -44,12 +44,12 @@ func TestStdioSessionManager_CreateAndRetrieve(t *testing.T) {
 	}
 
 	// Create session
-	session1, err := sm.GetOrCreateSession(context.Background(), key, config, info, "http://localhost")
+	session1, err := sm.GetOrCreateSession(context.Background(), key, config, info, "http://localhost", "")
 	require.NoError(t, err)
 	require.NotNil(t, session1)
 
 	// Retrieve same session
-	session2, err := sm.GetOrCreateSession(context.Background(), key, config, info, "http://localhost")
+	session2, err := sm.GetOrCreateSession(context.Background(), key, config, info, "http://localhost", "")
 	require.NoError(t, err)
 	require.NotNil(t, session2)
 
@@ -81,22 +81,22 @@ func TestStdioSessionManager_UserLimits(t *testing.T) {
 
 	// Create first session
 	key1 := SessionKey{UserEmail: userEmail, ServerName: "server", SessionID: "1"}
-	_, err := sm.GetOrCreateSession(context.Background(), key1, config, info, "http://localhost")
+	_, err := sm.GetOrCreateSession(context.Background(), key1, config, info, "http://localhost", "")
 	require.NoError(t, err)
 
 	// Create second session (at limit)
 	key2 := SessionKey{UserEmail: userEmail, ServerName: "server", SessionID: "2"}
-	_, err = sm.GetOrCreateSession(context.Background(), key2, config, info, "http://localhost")
+	_, err = sm.GetOrCreateSession(context.Background(), key2, config, info, "http://localhost", "")
 	require.NoError(t, err)
 
 	// Try to create third session (should fail)
 	key3 := SessionKey{UserEmail: userEmail, ServerName: "server", SessionID: "3"}
-	_, err = sm.GetOrCreateSession(context.Background(), key3, config, info, "http://localhost")
+	_, err = sm.GetOrCreateSession(context.Background(), key3, config, info, "http://localhost", "")
 	assert.ErrorIs(t, err, ErrUserLimitExceeded)
 
 	// Different user should work
 	key4 := SessionKey{UserEmail: "other@example.com", ServerName: "server", SessionID: "4"}
-	_, err = sm.GetOrCreateSession(context.Background(), key4, config, info, "http://localhost")
+	_, err = sm.GetOrCreateSession(context.Background(), key4, config, info, "http://localhost", "")
 	require.NoError(t, err)
 }
 
@@ -122,7 +122,7 @@ func TestStdioSessionManager_RemoveSession(t *testing.T) {
 	info := mcp.Implementation{Name: "test", Version: "1.0"}
 
 	// Create session
-	session, err := sm.GetOrCreateSession(context.Background(), key, config, info, "http://localhost")
+	session, err := sm.GetOrCreateSession(context.Background(), key, config, info, "http://localhost", "")
 	require.NoError(t, err)
 	require.NotNil(t, session)
 
@@ -161,7 +161,7 @@ func TestStdioSessionManager_Timeout(t *testing.T) {
 	info := mcp.Implementation{Name: "test", Version: "1.0"}
 
 	// Create session
-	session, err := sm.GetOrCreateSession(context.Background(), key, config, info, "http://localhost")
+	session, err := sm.GetOrCreateSession(context.Background(), key, config, info, "http://localhost", "")
 	require.NoError(t, err)
 	require.NotNil(t, session)
 
@@ -192,7 +192,7 @@ func TestStdioSessionManager_ConcurrentAccess(t *testing.T) {
 
 	// Run concurrent operations
 	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
@@ -204,7 +204,7 @@ func TestStdioSessionManager_ConcurrentAccess(t *testing.T) {
 			}
 
 			// Create session
-			_, err := sm.GetOrCreateSession(context.Background(), key, config, info, "http://localhost")
+			_, err := sm.GetOrCreateSession(context.Background(), key, config, info, "http://localhost", "")
 			assert.NoError(t, err)
 
 			// Get session
@@ -236,14 +236,14 @@ func TestStdioSessionManager_NoLimitsForAnonymous(t *testing.T) {
 	info := mcp.Implementation{Name: "test", Version: "1.0"}
 
 	// Create multiple anonymous sessions (empty userEmail)
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		key := SessionKey{
 			UserEmail:  "", // Anonymous
 			ServerName: "server",
 			SessionID:  fmt.Sprintf("session-%d", i),
 		}
 
-		_, err := sm.GetOrCreateSession(context.Background(), key, config, info, "http://localhost")
+		_, err := sm.GetOrCreateSession(context.Background(), key, config, info, "http://localhost", "")
 		require.NoError(t, err, "Anonymous session %d should succeed", i)
 	}
 }

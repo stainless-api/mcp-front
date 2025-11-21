@@ -2,6 +2,8 @@ package storage
 
 import (
 	"context"
+	"fmt"
+	"maps"
 	"strings"
 	"sync"
 	"time"
@@ -19,9 +21,9 @@ var _ fosite.Storage = (*MemoryStorage)(nil)
 // It extends the MemoryStore with thread-safe client management
 type MemoryStorage struct {
 	*storage.MemoryStore
-	stateCache      sync.Map          // map[string]fosite.AuthorizeRequester
-	clientsMutex    sync.RWMutex      // For thread-safe client access
-	userTokens      map[string]string // map["email:service"] = token
+	stateCache      sync.Map                // map[string]fosite.AuthorizeRequester
+	clientsMutex    sync.RWMutex            // For thread-safe client access
+	userTokens      map[string]*StoredToken // map["email:service"] = token
 	userTokensMutex sync.RWMutex
 	users           map[string]*UserInfo // map[email] = UserInfo
 	usersMutex      sync.RWMutex
@@ -33,7 +35,7 @@ type MemoryStorage struct {
 func NewMemoryStorage() *MemoryStorage {
 	return &MemoryStorage{
 		MemoryStore: storage.NewMemoryStore(),
-		userTokens:  make(map[string]string),
+		userTokens:  make(map[string]*StoredToken),
 		users:       make(map[string]*UserInfo),
 		sessions:    make(map[string]*ActiveSession),
 	}
@@ -121,9 +123,7 @@ func (s *MemoryStorage) GetAllClients() map[string]fosite.Client {
 	defer s.clientsMutex.RUnlock()
 
 	clients := make(map[string]fosite.Client, len(s.MemoryStore.Clients)) // Copy to avoid races
-	for id, client := range s.MemoryStore.Clients {
-		clients[id] = client
-	}
+	maps.Copy(clients, s.MemoryStore.Clients)
 	return clients
 }
 
@@ -140,20 +140,24 @@ func (s *MemoryStorage) makeUserTokenKey(userEmail, service string) string {
 }
 
 // GetUserToken retrieves a user's token for a specific service
-func (s *MemoryStorage) GetUserToken(ctx context.Context, userEmail, service string) (string, error) {
+func (s *MemoryStorage) GetUserToken(ctx context.Context, userEmail, service string) (*StoredToken, error) {
 	s.userTokensMutex.RLock()
 	defer s.userTokensMutex.RUnlock()
 
 	key := s.makeUserTokenKey(userEmail, service)
 	token, exists := s.userTokens[key]
 	if !exists {
-		return "", ErrUserTokenNotFound
+		return nil, ErrUserTokenNotFound
 	}
 	return token, nil
 }
 
 // SetUserToken stores or updates a user's token for a specific service
-func (s *MemoryStorage) SetUserToken(ctx context.Context, userEmail, service, token string) error {
+func (s *MemoryStorage) SetUserToken(ctx context.Context, userEmail, service string, token *StoredToken) error {
+	if token == nil {
+		return fmt.Errorf("token cannot be nil")
+	}
+
 	s.userTokensMutex.Lock()
 	defer s.userTokensMutex.Unlock()
 
@@ -180,8 +184,8 @@ func (s *MemoryStorage) ListUserServices(ctx context.Context, userEmail string) 
 	var services []string
 	prefix := userEmail + ":"
 	for key := range s.userTokens {
-		if strings.HasPrefix(key, prefix) {
-			service := strings.TrimPrefix(key, prefix)
+		if after, ok := strings.CutPrefix(key, prefix); ok {
+			service := after
 			services = append(services, service)
 		}
 	}

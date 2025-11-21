@@ -100,9 +100,9 @@ func TestSecurityScenarios(t *testing.T) {
 			// Testing SQL injection payload
 
 			// Try to inject via the query parameter
-			_, err := client.SendMCPRequest("tools/call", map[string]interface{}{
+			_, err := client.SendMCPRequest("tools/call", map[string]any{
 				"name": "query",
-				"arguments": map[string]interface{}{
+				"arguments": map[string]any{
 					"query": payload,
 				},
 			})
@@ -221,10 +221,11 @@ func TestSecurityScenarios(t *testing.T) {
 			}
 			resp.Body.Close()
 
-			if resp.StatusCode == 200 {
+			switch resp.StatusCode {
+			case 200:
 				t.Errorf("CRITICAL: Auth bypass! 'test-token' without Bearer returned 200")
-			} else if resp.StatusCode == 401 {
-			} else {
+			case 401:
+			default:
 				t.Logf("Unexpected status %d for malformed auth", resp.StatusCode)
 			}
 		})
@@ -275,7 +276,7 @@ func TestSecurityScenarios(t *testing.T) {
 		errorCount := 0
 
 		// Make rapid requests to see if there's any rate limiting
-		for i := 0; i < 10; i++ {
+		for range 10 {
 			err := client.ValidateBackendConnectivity()
 			if err != nil {
 				errorCount++

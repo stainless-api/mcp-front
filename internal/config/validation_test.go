@@ -79,7 +79,7 @@ func TestValidateFile(t *testing.T) {
 				},
 				"mcpServers": {}
 			}`,
-			wantErrors:   []string{"version field is required"},
+			wantErrors:   []string{"version field is required. Hint: Add \"version\": \"v0.0.1-DEV_EDITION\""},
 			wantErrCount: 1,
 		},
 		{
@@ -92,7 +92,7 @@ func TestValidateFile(t *testing.T) {
 				},
 				"mcpServers": {}
 			}`,
-			wantErrors:   []string{"unsupported version: v2.0.0"},
+			wantErrors:   []string{"unsupported version 'v2.0.0' - use 'v0.0.1-DEV_EDITION' or 'v0.0.1-DEV_EDITION-<variant>'"},
 			wantErrCount: 1,
 		},
 		{
@@ -112,8 +112,8 @@ func TestValidateFile(t *testing.T) {
 				"mcpServers": {}
 			}`,
 			wantErrors: []string{
-				"baseURL is required",
-				"addr is required",
+				"baseURL is required. Example: \"https://api.example.com\"",
+				"addr is required. Example: \":8080\" or \"0.0.0.0:8080\"",
 			},
 			wantErrCount: 2,
 		},
@@ -156,7 +156,7 @@ func TestValidateFile(t *testing.T) {
 					}
 				}
 			}`,
-			wantErrors:   []string{"transportType is required"},
+			wantErrors:   []string{"transportType is required. Options: stdio, sse, streamable-http, inline"},
 			wantErrCount: 1,
 		},
 		{
@@ -173,7 +173,7 @@ func TestValidateFile(t *testing.T) {
 					}
 				}
 			}`,
-			wantErrors:   []string{"command is required for stdio transport"},
+			wantErrors:   []string{"command is required for stdio transport. Example: [\"npx\", \"-y\", \"@your/mcp-server\"]"},
 			wantErrCount: 1,
 		},
 		{
@@ -211,7 +211,7 @@ func TestValidateFile(t *testing.T) {
 			}`,
 			wantErrors: []string{
 				"server requires user token but OAuth is not configured. Hint: User tokens require OAuth authentication - set proxy.auth.kind to 'oauth'",
-				"tokenSetup is required when requiresUserToken is true. Hint: Add tokenSetup with displayName and instructions for users to obtain their token",
+				"userAuthentication is required when requiresUserToken is true. Hint: Add userAuthentication with type, displayName and instructions",
 			},
 			wantErrCount: 2,
 		},
@@ -242,7 +242,7 @@ func TestValidateFile(t *testing.T) {
 					}
 				}
 			}`,
-			wantErrors:   []string{"tokenSetup is required when requiresUserToken is true. Hint: Add tokenSetup with displayName and instructions for users to obtain their token"},
+			wantErrors:   []string{"userAuthentication is required when requiresUserToken is true. Hint: Add userAuthentication with type, displayName and instructions"},
 			wantErrCount: 1,
 		},
 		{
@@ -269,6 +269,121 @@ func TestValidateFile(t *testing.T) {
 				"at least one allowed origin is required for OAuth (CORS configuration)",
 			},
 			wantErrCount: 8,
+		},
+		{
+			name: "valid_manual_user_authentication",
+			config: `{
+				"version": "v0.0.1-DEV_EDITION",
+				"proxy": {
+					"baseURL": "http://localhost:8080",
+					"addr": ":8080",
+					"auth": {
+						"kind": "oauth",
+						"issuer": "https://example.com",
+						"googleClientId": "id",
+						"googleClientSecret": "secret",
+						"googleRedirectUri": "https://example.com/callback",
+						"jwtSecret": "secret123456789012345678901234567890",
+						"encryptionKey": "key12345678901234567890123456789",
+						"allowedDomains": ["example.com"],
+						"allowedOrigins": ["https://claude.ai"]
+					}
+				},
+				"mcpServers": {
+					"notion": {
+						"transportType": "stdio",
+						"command": "docker",
+						"requiresUserToken": true,
+						"userAuthentication": {
+							"type": "manual",
+							"displayName": "Notion",
+							"instructions": "Get your token from Notion settings"
+						}
+					}
+				}
+			}`,
+			wantErrors:   []string{},
+			wantErrCount: 0,
+		},
+		{
+			name: "valid_oauth_user_authentication",
+			config: `{
+				"version": "v0.0.1-DEV_EDITION",
+				"proxy": {
+					"baseURL": "http://localhost:8080",
+					"addr": ":8080",
+					"auth": {
+						"kind": "oauth",
+						"issuer": "https://example.com",
+						"googleClientId": "id",
+						"googleClientSecret": "secret",
+						"googleRedirectUri": "https://example.com/callback",
+						"jwtSecret": "secret123456789012345678901234567890",
+						"encryptionKey": "key12345678901234567890123456789",
+						"allowedDomains": ["example.com"],
+						"allowedOrigins": ["https://claude.ai"]
+					}
+				},
+				"mcpServers": {
+					"linear": {
+						"transportType": "stdio",
+						"command": "npx",
+						"requiresUserToken": true,
+						"userAuthentication": {
+							"type": "oauth",
+							"displayName": "Linear",
+							"clientId": "client123",
+							"clientSecret": {"$env": "LINEAR_CLIENT_SECRET"},
+							"authorizationUrl": "https://linear.app/oauth/authorize",
+							"tokenUrl": "https://api.linear.app/oauth/token",
+							"scopes": ["read", "write"]
+						}
+					}
+				}
+			}`,
+			wantErrors:   []string{},
+			wantErrCount: 0,
+		},
+		{
+			name: "invalid_oauth_user_authentication_missing_fields",
+			config: `{
+				"version": "v0.0.1-DEV_EDITION",
+				"proxy": {
+					"baseURL": "http://localhost:8080",
+					"addr": ":8080",
+					"auth": {
+						"kind": "oauth",
+						"issuer": "https://example.com",
+						"googleClientId": "id",
+						"googleClientSecret": "secret",
+						"googleRedirectUri": "https://example.com/callback",
+						"jwtSecret": "secret123456789012345678901234567890",
+						"encryptionKey": "key12345678901234567890123456789",
+						"allowedDomains": ["example.com"],
+						"allowedOrigins": ["https://claude.ai"]
+					}
+				},
+				"mcpServers": {
+					"linear": {
+						"transportType": "stdio",
+						"command": "npx",
+						"requiresUserToken": true,
+						"userAuthentication": {
+							"type": "oauth",
+							"displayName": "Linear",
+							"clientId": "client123"
+						}
+					}
+				}
+			}`,
+			wantErrors: []string{
+				"authorizationUrl is required for OAuth configuration",
+				"tokenUrl is required for OAuth configuration",
+				"scopes is required for OAuth configuration",
+				"scopes must be an array",
+				"clientSecret is required for OAuth configuration",
+			},
+			wantErrCount: 5,
 		},
 	}
 
@@ -338,6 +453,149 @@ func TestValidateFile_FileNotFound(t *testing.T) {
 	assert.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "reading config file")
+}
+
+func TestValidateFile_ImprovedErrorMessages(t *testing.T) {
+	tests := []struct {
+		name         string
+		config       string
+		wantErrorMsg string
+	}{
+		{
+			name: "plain_text_password",
+			config: `{
+				"version": "v0.0.1-DEV_EDITION",
+				"proxy": {
+					"baseURL": "http://localhost:8080",
+					"addr": ":8080"
+				},
+				"mcpServers": {
+					"service": {
+						"transportType": "stdio",
+						"command": "test",
+						"serviceAuths": [{
+							"type": "basic",
+							"username": "user",
+							"password": "my-secret-password"
+						}]
+					}
+				}
+			}`,
+			wantErrorMsg: "password must use environment variable reference {\"$env\": \"YOUR_ENV_VAR\"} instead of plain text 'my-secret-password'",
+		},
+		{
+			name: "bash_style_password",
+			config: `{
+				"version": "v0.0.1-DEV_EDITION",
+				"proxy": {
+					"baseURL": "http://localhost:8080",
+					"addr": ":8080"
+				},
+				"mcpServers": {
+					"service": {
+						"transportType": "stdio",
+						"command": "test",
+						"serviceAuths": [{
+							"type": "basic",
+							"username": "user",
+							"password": "$DB_PASSWORD"
+						}]
+					}
+				}
+			}`,
+			wantErrorMsg: "found bash-style syntax '$DB_PASSWORD' - use {\"$env\": \"DB_PASSWORD\"} instead",
+		},
+		{
+			name: "plain_text_clientSecret",
+			config: `{
+				"version": "v0.0.1-DEV_EDITION",
+				"proxy": {
+					"baseURL": "http://localhost:8080",
+					"addr": ":8080",
+					"auth": {
+						"kind": "oauth",
+						"issuer": "https://example.com",
+						"googleClientId": "id",
+						"googleClientSecret": "secret",
+						"googleRedirectUri": "https://example.com/callback",
+						"jwtSecret": "secret123456789012345678901234567890",
+						"encryptionKey": "key12345678901234567890123456789",
+						"allowedDomains": ["example.com"],
+						"allowedOrigins": ["https://claude.ai"]
+					}
+				},
+				"mcpServers": {
+					"linear": {
+						"transportType": "stdio",
+						"command": "npx",
+						"requiresUserToken": true,
+						"userAuthentication": {
+							"type": "oauth",
+							"displayName": "Linear",
+							"clientId": "client123",
+							"clientSecret": "super-secret",
+							"authorizationUrl": "https://linear.app/oauth/authorize",
+							"tokenUrl": "https://api.linear.app/oauth/token",
+							"scopes": ["read"]
+						}
+					}
+				}
+			}`,
+			wantErrorMsg: "clientSecret must use environment variable reference {\"$env\": \"YOUR_ENV_VAR\"} instead of plain text 'super-secret'",
+		},
+		{
+			name: "bash_style_userToken",
+			config: `{
+				"version": "v0.0.1-DEV_EDITION",
+				"proxy": {
+					"baseURL": "http://localhost:8080",
+					"addr": ":8080"
+				},
+				"mcpServers": {
+					"service": {
+						"transportType": "stdio",
+						"command": "test",
+						"requiresUserToken": true,
+						"serviceAuths": [{
+							"type": "basic",
+							"username": "user",
+							"password": {"$env": "PASS"},
+							"userToken": "${USER_TOKEN}"
+						}]
+					}
+				}
+			}`,
+			wantErrorMsg: "userToken must use {\"$userToken\": \"{{token}}\"} format instead of plain text '${USER_TOKEN}'",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create temp file
+			tmpDir := t.TempDir()
+			configPath := filepath.Join(tmpDir, "config.json")
+			err := os.WriteFile(configPath, []byte(tt.config), 0644)
+			require.NoError(t, err)
+
+			// Validate
+			result, err := ValidateFile(configPath)
+			assert.NoError(t, err)
+			assert.NotNil(t, result)
+
+			// Check that we have at least one error
+			assert.GreaterOrEqual(t, len(result.Errors), 1, "Expected at least one validation error")
+
+			// Check that one of the errors contains our expected message
+			found := false
+			for _, e := range result.Errors {
+				if strings.Contains(e.Message, tt.wantErrorMsg) {
+					found = true
+					break
+				}
+			}
+			assert.True(t, found, "Expected error message containing '%s', but got errors: %v", tt.wantErrorMsg, result.Errors)
+		})
+	}
 }
 
 func contains(s, substr string) bool {

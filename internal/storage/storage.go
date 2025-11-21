@@ -27,6 +27,31 @@ type UserInfo struct {
 	IsAdmin   bool      `json:"is_admin"`
 }
 
+// TokenType represents the type of stored token
+type TokenType string
+
+const (
+	TokenTypeManual TokenType = "manual"
+	TokenTypeOAuth  TokenType = "oauth"
+)
+
+// OAuthTokenData represents OAuth token metadata
+type OAuthTokenData struct {
+	AccessToken  string    `json:"access_token"`
+	RefreshToken string    `json:"refresh_token,omitempty"`
+	TokenType    string    `json:"token_type,omitempty"`
+	ExpiresAt    time.Time `json:"expires_at,omitempty"`
+	Scopes       []string  `json:"scopes,omitempty"`
+}
+
+// StoredToken represents a token with its metadata
+type StoredToken struct {
+	Type      TokenType       `json:"type"`
+	Value     string          `json:"value,omitempty"` // For manual tokens
+	OAuthData *OAuthTokenData `json:"oauth,omitempty"` // For OAuth tokens
+	UpdatedAt time.Time       `json:"updated_at"`
+}
+
 // ActiveSession represents an active MCP session
 type ActiveSession struct {
 	SessionID  string    `json:"session_id"`
@@ -40,8 +65,8 @@ type ActiveSession struct {
 // This interface is used by handlers that need to access user-specific tokens
 // for external services (e.g., Notion, GitHub).
 type UserTokenStore interface {
-	GetUserToken(ctx context.Context, userEmail, service string) (string, error)
-	SetUserToken(ctx context.Context, userEmail, service, token string) error
+	GetUserToken(ctx context.Context, userEmail, service string) (*StoredToken, error)
+	SetUserToken(ctx context.Context, userEmail, service string, token *StoredToken) error
 	DeleteUserToken(ctx context.Context, userEmail, service string) error
 	ListUserServices(ctx context.Context, userEmail string) ([]string, error)
 }

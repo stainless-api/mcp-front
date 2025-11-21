@@ -53,21 +53,21 @@ func TestMain(m *testing.M) {
 		os.Exit(exitCode)
 	}()
 
-	// Start mock GCP server for OAuth
-	mockGCP := NewMockGCPServer("9090")
-	err := mockGCP.Start()
+	// Start fake GCP server for OAuth
+	fakeGCP := NewFakeGCPServer("9090")
+	err := fakeGCP.Start()
 	if err != nil {
-		fmt.Printf("Failed to start mock GCP server: %v\n", err)
+		fmt.Printf("Failed to start fake GCP server: %v\n", err)
 		exitCode = 1
 		return
 	}
 	defer func() {
-		_ = mockGCP.Stop()
+		_ = fakeGCP.Stop()
 	}()
 
 	// Wait for database to be ready
 	fmt.Println("Waiting for database to be ready...")
-	for i := 0; i < 30; i++ { // Wait up to 30 seconds
+	for i := range 30 { // Wait up to 30 seconds
 		checkCmd := exec.Command("docker", "compose", "exec", "-T", "test-postgres", "pg_isready", "-U", "testuser", "-d", "testdb")
 		if err := checkCmd.Run(); err == nil {
 			fmt.Println("Database is ready!")
@@ -83,7 +83,7 @@ func TestMain(m *testing.M) {
 
 	// Wait for SSE server to be ready
 	fmt.Println("Waiting for SSE server to be ready...")
-	for i := 0; i < 30; i++ { // Wait up to 30 seconds
+	for i := range 30 { // Wait up to 30 seconds
 		resp, err := http.Get("http://localhost:3001")
 		if err == nil {
 			resp.Body.Close()
@@ -102,7 +102,7 @@ func TestMain(m *testing.M) {
 
 	// Wait for Streamable server to be ready
 	fmt.Println("Waiting for Streamable server to be ready...")
-	for i := 0; i < 30; i++ { // Wait up to 30 seconds
+	for i := range 30 { // Wait up to 30 seconds
 		resp, err := http.Get("http://localhost:3002")
 		if err == nil {
 			resp.Body.Close()

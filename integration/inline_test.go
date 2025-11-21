@@ -36,9 +36,9 @@ func TestInlineMCPServer(t *testing.T) {
 
 	// Test 1: Basic echo tool (static args)
 	t.Run("echo tool", func(t *testing.T) {
-		params := map[string]interface{}{
+		params := map[string]any{
 			"name": "echo",
-			"arguments": map[string]interface{}{
+			"arguments": map[string]any{
 				"message": "Hello, inline MCP!",
 			},
 		}
@@ -47,18 +47,18 @@ func TestInlineMCPServer(t *testing.T) {
 		require.NoError(t, err, "Failed to call echo tool")
 
 		// Check for error in response
-		errorMap, hasError := result["error"].(map[string]interface{})
+		errorMap, hasError := result["error"].(map[string]any)
 		assert.False(t, hasError, "Echo tool returned error: %v", errorMap)
 
 		// Verify result
-		resultMap, ok := result["result"].(map[string]interface{})
+		resultMap, ok := result["result"].(map[string]any)
 		require.True(t, ok, "Expected result in response")
 
-		content, ok := resultMap["content"].([]interface{})
+		content, ok := resultMap["content"].([]any)
 		require.True(t, ok, "Expected content in result")
 		require.NotEmpty(t, content, "Expected content array")
 
-		firstContent, ok := content[0].(map[string]interface{})
+		firstContent, ok := content[0].(map[string]any)
 		require.True(t, ok, "Expected content item to be map")
 
 		text, ok := firstContent["text"].(string)
@@ -69,18 +69,18 @@ func TestInlineMCPServer(t *testing.T) {
 
 	// Test 2: Environment variables
 	t.Run("environment variables", func(t *testing.T) {
-		params := map[string]interface{}{
+		params := map[string]any{
 			"name":      "env_test",
-			"arguments": map[string]interface{}{},
+			"arguments": map[string]any{},
 		}
 
 		result, err := client.SendMCPRequest("tools/call", params)
 		require.NoError(t, err, "Failed to call env_test tool")
 
 		// Check result
-		resultMap, _ := result["result"].(map[string]interface{})
-		content, _ := resultMap["content"].([]interface{})
-		firstContent, _ := content[0].(map[string]interface{})
+		resultMap, _ := result["result"].(map[string]any)
+		content, _ := resultMap["content"].([]any)
+		firstContent, _ := content[0].(map[string]any)
 		text, _ := firstContent["text"].(string)
 
 		// printenv outputs all environment variables
@@ -90,18 +90,18 @@ func TestInlineMCPServer(t *testing.T) {
 
 	// Test 3: Static output test
 	t.Run("static output", func(t *testing.T) {
-		params := map[string]interface{}{
+		params := map[string]any{
 			"name":      "static_test",
-			"arguments": map[string]interface{}{},
+			"arguments": map[string]any{},
 		}
 
 		result, err := client.SendMCPRequest("tools/call", params)
 		require.NoError(t, err, "Failed to call static_test tool")
 
 		// Check result
-		resultMap, _ := result["result"].(map[string]interface{})
-		content, _ := resultMap["content"].([]interface{})
-		firstContent, _ := content[0].(map[string]interface{})
+		resultMap, _ := result["result"].(map[string]any)
+		content, _ := resultMap["content"].([]any)
+		firstContent, _ := content[0].(map[string]any)
 		text, _ := firstContent["text"].(string)
 
 		assert.Contains(t, text, "Static output: test")
@@ -109,9 +109,9 @@ func TestInlineMCPServer(t *testing.T) {
 
 	// Test 4: JSON output parsing
 	t.Run("JSON output", func(t *testing.T) {
-		params := map[string]interface{}{
+		params := map[string]any{
 			"name": "json_output",
-			"arguments": map[string]interface{}{
+			"arguments": map[string]any{
 				"value": "test-input",
 			},
 		}
@@ -120,9 +120,9 @@ func TestInlineMCPServer(t *testing.T) {
 		require.NoError(t, err, "Failed to call json_output tool")
 
 		// For JSON output, the content should be parsed as JSON
-		resultMap, _ := result["result"].(map[string]interface{})
-		content, _ := resultMap["content"].([]interface{})
-		firstContent, _ := content[0].(map[string]interface{})
+		resultMap, _ := result["result"].(map[string]any)
+		content, _ := resultMap["content"].([]any)
+		firstContent, _ := content[0].(map[string]any)
 
 		// The JSON output should be in the text field as a string
 		text, ok := firstContent["text"].(string)
@@ -135,16 +135,16 @@ func TestInlineMCPServer(t *testing.T) {
 
 	// Test 6: Error handling
 	t.Run("failing tool", func(t *testing.T) {
-		params := map[string]interface{}{
+		params := map[string]any{
 			"name":      "failing_tool",
-			"arguments": map[string]interface{}{},
+			"arguments": map[string]any{},
 		}
 
 		result, err := client.SendMCPRequest("tools/call", params)
 		require.NoError(t, err, "Request should succeed even if tool fails")
 
 		// Check for error in response
-		errorMap, hasError := result["error"].(map[string]interface{})
+		errorMap, hasError := result["error"].(map[string]any)
 		assert.True(t, hasError, "Expected error for failing tool")
 
 		if hasError {
@@ -158,21 +158,21 @@ func TestInlineMCPServer(t *testing.T) {
 
 	// Test 7: List tools
 	t.Run("list tools", func(t *testing.T) {
-		result, err := client.SendMCPRequest("tools/list", map[string]interface{}{})
+		result, err := client.SendMCPRequest("tools/list", map[string]any{})
 		require.NoError(t, err, "Failed to list tools")
 
 		// Check result
-		resultMap, ok := result["result"].(map[string]interface{})
+		resultMap, ok := result["result"].(map[string]any)
 		require.True(t, ok, "Expected result in response")
 
-		tools, ok := resultMap["tools"].([]interface{})
+		tools, ok := resultMap["tools"].([]any)
 		require.True(t, ok, "Expected tools array")
 		assert.Len(t, tools, 6, "Expected 6 tools")
 
 		// Verify tool names
 		toolNames := make([]string, 0)
 		for _, tool := range tools {
-			toolMap, _ := tool.(map[string]interface{})
+			toolMap, _ := tool.(map[string]any)
 			name, _ := toolMap["name"].(string)
 			toolNames = append(toolNames, name)
 		}

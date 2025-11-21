@@ -1,16 +1,24 @@
 package server
 
 import (
+	"context"
 	"encoding/base64"
+	"encoding/json"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
-	"github.com/dgellow/mcp-front/internal/auth"
+	"github.com/dgellow/mcp-front/internal/adminauth"
+	"github.com/dgellow/mcp-front/internal/browserauth"
 	"github.com/dgellow/mcp-front/internal/config"
+	"github.com/dgellow/mcp-front/internal/cookie"
+	"github.com/dgellow/mcp-front/internal/crypto"
+	"github.com/dgellow/mcp-front/internal/googleauth"
 	jsonwriter "github.com/dgellow/mcp-front/internal/json"
 	"github.com/dgellow/mcp-front/internal/log"
 	"github.com/dgellow/mcp-front/internal/oauth"
+	"github.com/dgellow/mcp-front/internal/servicecontext"
 	"github.com/dgellow/mcp-front/internal/storage"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -18,16 +26,16 @@ import (
 // MiddlewareFunc is a function that wraps an http.Handler
 type MiddlewareFunc func(http.Handler) http.Handler
 
-// chainMiddleware chains multiple middleware functions
-func chainMiddleware(h http.Handler, middlewares ...MiddlewareFunc) http.Handler {
+// ChainMiddleware chains multiple middleware functions
+func ChainMiddleware(h http.Handler, middlewares ...MiddlewareFunc) http.Handler {
 	for _, mw := range middlewares {
 		h = mw(h)
 	}
 	return h
 }
 
-// corsMiddleware adds CORS headers to responses
-func corsMiddleware(allowedOrigins []string) MiddlewareFunc {
+// NewCORSMiddleware adds CORS headers to responses
+func NewCORSMiddleware(allowedOrigins []string) MiddlewareFunc {
 	// Build a map for faster lookup
 	allowedMap := make(map[string]bool)
 	for _, origin := range allowedOrigins {
@@ -124,7 +132,7 @@ var _ http.ResponseWriter = (*responseWriterDelegator)(nil)
 var _ http.Flusher = (*responseWriterDelegator)(nil)
 
 // loggerMiddleware adds request/response logging
-func loggerMiddleware(prefix string) MiddlewareFunc {
+func NewLoggerMiddleware(prefix string) MiddlewareFunc {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
@@ -133,7 +141,7 @@ func loggerMiddleware(prefix string) MiddlewareFunc {
 			next.ServeHTTP(wrapped, r)
 
 			// Log request with response details
-			fields := map[string]interface{}{
+			fields := map[string]any{
 				"method":      r.Method,
 				"path":        r.URL.Path,
 				"status":      wrapped.Status(),
@@ -152,8 +160,8 @@ func loggerMiddleware(prefix string) MiddlewareFunc {
 	}
 }
 
-// recoverMiddleware recovers from panics
-func recoverMiddleware(prefix string) MiddlewareFunc {
+// NewRecoverMiddleware recovers from panics
+func NewRecoverMiddleware(prefix string) MiddlewareFunc {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			defer func() {
@@ -175,7 +183,7 @@ func newServiceAuthMiddleware(serviceAuths []config.ServiceAuth) MiddlewareFunc 
 
 			// Check if user context is already set — OAuth succeeded, no need for further auth
 			if userEmail, ok := oauth.GetUserFromContext(ctx); ok && userEmail != "" {
-				log.LogTraceWithFields("service_auth", "Skipping service auth, user already authenticated via OAuth", map[string]interface{}{
+				log.LogTraceWithFields("service_auth", "Skipping service auth, user already authenticated via OAuth", map[string]any{
 					"user": userEmail,
 				})
 				next.ServeHTTP(w, r)
@@ -197,16 +205,14 @@ func newServiceAuthMiddleware(serviceAuths []config.ServiceAuth) MiddlewareFunc 
 						continue
 					}
 
-					for _, allowedToken := range serviceAuth.Tokens {
-						if token == allowedToken {
-							// Auth succeeded
-							log.LogTraceWithFields("service_auth", "Bearer token service auth successful", map[string]interface{}{
-								"service_name": "service",
-							})
-							ctx := auth.WithServiceAuth(r.Context(), "service", serviceAuth.ResolvedUserToken)
-							next.ServeHTTP(w, r.WithContext(ctx))
-							return
-						}
+					if slices.Contains(serviceAuth.Tokens, token) {
+						// Auth succeeded
+						log.LogTraceWithFields("service_auth", "Bearer token service auth successful", map[string]any{
+							"service_name": "service",
+						})
+						ctx := servicecontext.WithAuthInfo(r.Context(), "service", string(serviceAuth.UserToken))
+						next.ServeHTTP(w, r.WithContext(ctx))
+						return
 					}
 				}
 				log.LogTraceWithFields("service_auth", "Bearer token service auth failed: invalid token", nil)
@@ -217,7 +223,7 @@ func newServiceAuthMiddleware(serviceAuths []config.ServiceAuth) MiddlewareFunc 
 				log.LogTraceWithFields("service_auth", "Attempting basic service auth", nil)
 				decoded, err := base64.StdEncoding.DecodeString(encoded)
 				if err != nil {
-					log.LogTraceWithFields("service_auth", "Basic service auth failed: invalid base64 encoding", map[string]interface{}{
+					log.LogTraceWithFields("service_auth", "Basic service auth failed: invalid base64 encoding", map[string]any{
 						"error": err.Error(),
 					})
 					w.Header().Set("WWW-Authenticate", `Basic realm="mcp-front"`)
@@ -243,12 +249,12 @@ func newServiceAuthMiddleware(serviceAuths []config.ServiceAuth) MiddlewareFunc 
 					}
 
 					if username == serviceAuth.Username {
-						if err := bcrypt.CompareHashAndPassword([]byte(serviceAuth.HashedPassword), []byte(password)); err == nil {
+						if err := bcrypt.CompareHashAndPassword([]byte(string(serviceAuth.HashedPassword)), []byte(password)); err == nil {
 							// Auth succeeded
-							log.LogTraceWithFields("service_auth", "Basic service auth successful", map[string]interface{}{
+							log.LogTraceWithFields("service_auth", "Basic service auth successful", map[string]any{
 								"username": username,
 							})
-							ctx := auth.WithServiceAuth(r.Context(), serviceAuth.Username, serviceAuth.ResolvedUserToken)
+							ctx := servicecontext.WithAuthInfo(r.Context(), serviceAuth.Username, string(serviceAuth.UserToken))
 							next.ServeHTTP(w, r.WithContext(ctx))
 							return
 						}
@@ -272,7 +278,7 @@ func adminMiddleware(adminConfig *config.AdminConfig, store storage.Storage) Mid
 				return
 			}
 
-			if !auth.IsAdmin(r.Context(), userEmail, adminConfig, store) {
+			if !adminauth.IsAdmin(r.Context(), userEmail, adminConfig, store) {
 				jsonwriter.WriteForbidden(w, "Forbidden - Admin access required")
 				return
 			}
@@ -280,4 +286,93 @@ func adminMiddleware(adminConfig *config.AdminConfig, store storage.Storage) Mid
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// NewBrowserSSOMiddleware creates middleware for browser-based SSO authentication
+func NewBrowserSSOMiddleware(authConfig config.OAuthAuthConfig, sessionEncryptor crypto.Encryptor, browserStateToken *crypto.TokenSigner) MiddlewareFunc {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Check for session cookie
+			sessionValue, err := cookie.GetSession(r)
+			if err != nil {
+				// No cookie, redirect directly to OAuth
+				state := generateBrowserState(browserStateToken, r.URL.String())
+				if state == "" {
+					jsonwriter.WriteInternalServerError(w, "Failed to generate authentication state")
+					return
+				}
+				googleURL := googleauth.GoogleAuthURL(authConfig, state)
+				http.Redirect(w, r, googleURL, http.StatusFound)
+				return
+			}
+
+			// Decrypt cookie
+			decrypted, err := sessionEncryptor.Decrypt(sessionValue)
+			if err != nil {
+				// Invalid cookie, redirect to OAuth
+				log.LogDebug("Invalid session cookie: %v", err)
+				cookie.ClearSession(w) // Clear bad cookie
+				state := generateBrowserState(browserStateToken, r.URL.String())
+				googleURL := googleauth.GoogleAuthURL(authConfig, state)
+				http.Redirect(w, r, googleURL, http.StatusFound)
+				return
+			}
+
+			// Parse session data
+			var sessionData browserauth.SessionCookie
+			if err := json.NewDecoder(strings.NewReader(decrypted)).Decode(&sessionData); err != nil {
+				// Invalid format
+				cookie.ClearSession(w)
+				jsonwriter.WriteUnauthorized(w, "Invalid session")
+				return
+			}
+
+			// Check expiration
+			if time.Now().After(sessionData.Expires) {
+				log.LogDebug("Session expired for user %s", sessionData.Email)
+				cookie.ClearSession(w)
+				// Redirect directly to Google OAuth
+				state := generateBrowserState(browserStateToken, r.URL.String())
+				if state == "" {
+					jsonwriter.WriteInternalServerError(w, "Failed to generate authentication state")
+					return
+				}
+				googleURL := googleauth.GoogleAuthURL(authConfig, state)
+				http.Redirect(w, r, googleURL, http.StatusFound)
+				return
+			}
+
+			// Valid session, set user in context
+			// Use oauth.WithUserContext to set user for OAuth-protected endpoints
+			// (token management, service selection page, etc.)
+			ctx := context.WithValue(r.Context(), oauth.GetUserContextKey(), sessionData.Email)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+
+// generateBrowserState creates a secure state parameter for browser SSO
+func generateBrowserState(browserStateToken *crypto.TokenSigner, returnURL string) string {
+	state := browserauth.AuthorizationState{
+		Nonce:     crypto.GenerateSecureToken(),
+		ReturnURL: returnURL,
+	}
+
+	token, err := browserStateToken.Sign(state)
+	if err != nil {
+		log.LogError("Failed to sign browser state: %v", err)
+		// Return empty string to trigger auth failure - middleware will handle it
+		return ""
+	}
+	return "browser:" + token
+}
+
+// NewServiceAuthMiddleware creates middleware for service-to-service authentication
+func NewServiceAuthMiddleware(serviceAuths []config.ServiceAuth) MiddlewareFunc {
+	return newServiceAuthMiddleware(serviceAuths)
+}
+
+// NewAdminMiddleware creates middleware for admin access control
+func NewAdminMiddleware(adminConfig *config.AdminConfig, store storage.Storage) MiddlewareFunc {
+	return adminMiddleware(adminConfig, store)
 }

@@ -34,9 +34,9 @@ func TestSSEServerIntegration(t *testing.T) {
 		t.Log("Connected to SSE MCP server")
 
 		// Let's list available tools first
-		params := map[string]interface{}{
+		params := map[string]any{
 			"method": "tools/list",
-			"params": map[string]interface{}{},
+			"params": map[string]any{},
 		}
 
 		result, err := client.SendMCPRequest("tools/list", params)
@@ -49,9 +49,9 @@ func TestSSEServerIntegration(t *testing.T) {
 
 	t.Run("SSE tool invocation", func(t *testing.T) {
 		// The mock server should provide echo_text tool
-		params := map[string]interface{}{
+		params := map[string]any{
 			"name": "echo_text",
-			"arguments": map[string]interface{}{
+			"arguments": map[string]any{
 				"text": "Hello from SSE test!",
 			},
 		}
@@ -60,7 +60,7 @@ func TestSSEServerIntegration(t *testing.T) {
 		require.NoError(t, err, "Failed to call echo_text tool")
 
 		// Check for successful response
-		if errorMap, hasError := result["error"].(map[string]interface{}); hasError {
+		if errorMap, hasError := result["error"].(map[string]any); hasError {
 			t.Fatalf("Got error response: %v", errorMap)
 		}
 
@@ -68,7 +68,7 @@ func TestSSEServerIntegration(t *testing.T) {
 		assert.NotNil(t, result["result"])
 
 		// Verify the echo result contains our text
-		if resultData, ok := result["result"].(map[string]interface{}); ok {
+		if resultData, ok := result["result"].(map[string]any); ok {
 			if toolResult, ok := resultData["toolResult"].(string); ok {
 				assert.Equal(t, "Hello from SSE test!", toolResult)
 			}
@@ -84,9 +84,9 @@ func TestSSEServerIntegration(t *testing.T) {
 		require.NoError(t, err, "Failed to reconnect to SSE server")
 
 		// Verify we can still make requests
-		params := map[string]interface{}{
+		params := map[string]any{
 			"method": "tools/list",
-			"params": map[string]interface{}{},
+			"params": map[string]any{},
 		}
 
 		result, err := client.SendMCPRequest("tools/list", params)
@@ -96,9 +96,9 @@ func TestSSEServerIntegration(t *testing.T) {
 
 	t.Run("SSE streaming functionality", func(t *testing.T) {
 		// Test that SSE streaming works by calling the sample_stream tool
-		params := map[string]interface{}{
+		params := map[string]any{
 			"name":      "sample_stream",
-			"arguments": map[string]interface{}{},
+			"arguments": map[string]any{},
 		}
 
 		// The mock server provides sample_stream tool
@@ -109,23 +109,23 @@ func TestSSEServerIntegration(t *testing.T) {
 
 		// Verify we got a successful result
 		assert.NotContains(t, result, "error", "Should not have error for sample_stream")
-		if resultData, ok := result["result"].(map[string]interface{}); ok {
+		if resultData, ok := result["result"].(map[string]any); ok {
 			assert.Equal(t, "Tool executed successfully", resultData["toolResult"])
 		}
 	})
 
 	t.Run("SSE error handling", func(t *testing.T) {
 		// Test calling a non-existent tool
-		params := map[string]interface{}{
+		params := map[string]any{
 			"name":      "non_existent_tool_xyz",
-			"arguments": map[string]interface{}{},
+			"arguments": map[string]any{},
 		}
 
 		result, err := client.SendMCPRequest("tools/call", params)
 		require.NoError(t, err, "Should not get connection error for non-existent tool")
 
 		// Should get an error in the response
-		errorMap, hasError := result["error"].(map[string]interface{})
+		errorMap, hasError := result["error"].(map[string]any)
 		assert.True(t, hasError, "Expected error for non-existent tool")
 		if hasError {
 			assert.NotEmpty(t, errorMap["message"], "Error should have a message")
@@ -138,13 +138,13 @@ func TestSSEServerIntegration(t *testing.T) {
 		// Test that we can handle multiple concurrent requests
 		done := make(chan bool, COUNT)
 
-		for i := 0; i < COUNT; i++ {
+		for i := range COUNT {
 			go func(index int) {
 				defer func() { done <- true }()
 
-				params := map[string]interface{}{
+				params := map[string]any{
 					"name": "echo_text",
-					"arguments": map[string]interface{}{
+					"arguments": map[string]any{
 						"text": string(rune('A' + index)),
 					},
 				}
@@ -157,7 +157,7 @@ func TestSSEServerIntegration(t *testing.T) {
 
 		// Wait for all requests to complete
 		timeout := time.After(10 * time.Second)
-		for i := 0; i < COUNT; i++ {
+		for range COUNT {
 			select {
 			case <-done:
 				// Good
@@ -186,9 +186,9 @@ func TestSSEServerRestart(t *testing.T) {
 	require.NoError(t, err, "Failed initial connection")
 
 	// Make a successful request
-	params := map[string]interface{}{
+	params := map[string]any{
 		"method": "tools/list",
-		"params": map[string]interface{}{},
+		"params": map[string]any{},
 	}
 
 	result, err := client.SendMCPRequest("tools/list", params)

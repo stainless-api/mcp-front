@@ -38,9 +38,9 @@ func TestStreamableServerIntegration(t *testing.T) {
 		t.Log("Connected to Streamable MCP server")
 
 		// List available tools
-		params := map[string]interface{}{
+		params := map[string]any{
 			"method": "tools/list",
-			"params": map[string]interface{}{},
+			"params": map[string]any{},
 		}
 
 		result, err := client.SendMCPRequest("tools/list", params)
@@ -51,8 +51,8 @@ func TestStreamableServerIntegration(t *testing.T) {
 		assert.NotContains(t, result, "error", "Expected no error in response")
 
 		// Verify tools are present
-		if resultData, ok := result["result"].(map[string]interface{}); ok {
-			if tools, ok := resultData["tools"].([]interface{}); ok {
+		if resultData, ok := result["result"].(map[string]any); ok {
+			if tools, ok := resultData["tools"].([]any); ok {
 				assert.Equal(t, 2, len(tools), "Expected 2 tools")
 			}
 		}
@@ -60,16 +60,16 @@ func TestStreamableServerIntegration(t *testing.T) {
 
 	t.Run("Streamable tool invocation with JSON response", func(t *testing.T) {
 		// Call the get_time tool
-		params := map[string]interface{}{
+		params := map[string]any{
 			"name":      "get_time",
-			"arguments": map[string]interface{}{},
+			"arguments": map[string]any{},
 		}
 
 		result, err := client.SendMCPRequest("tools/call", params)
 		require.NoError(t, err, "Failed to call get_time tool")
 
 		// Check for successful response
-		if errorMap, hasError := result["error"].(map[string]interface{}); hasError {
+		if errorMap, hasError := result["error"].(map[string]any); hasError {
 			t.Fatalf("Got error response: %v", errorMap)
 		}
 
@@ -77,7 +77,7 @@ func TestStreamableServerIntegration(t *testing.T) {
 		assert.NotNil(t, result["result"])
 
 		// Verify the time result
-		if resultData, ok := result["result"].(map[string]interface{}); ok {
+		if resultData, ok := result["result"].(map[string]any); ok {
 			if toolResult, ok := resultData["toolResult"].(string); ok {
 				assert.NotEmpty(t, toolResult, "Should have gotten a timestamp")
 				t.Logf("Got time: %s", toolResult)
@@ -88,13 +88,13 @@ func TestStreamableServerIntegration(t *testing.T) {
 	t.Run("Streamable POST with actual SSE response", func(t *testing.T) {
 		baseURL := "http://localhost:8080/test-streamable/sse"
 
-		request := map[string]interface{}{
+		request := map[string]any{
 			"jsonrpc": "2.0",
 			"id":      1,
 			"method":  "tools/call",
-			"params": map[string]interface{}{
+			"params": map[string]any{
 				"name": "echo_streamable",
-				"arguments": map[string]interface{}{
+				"arguments": map[string]any{
 					"text": "Hello SSE!",
 				},
 			},
@@ -119,13 +119,13 @@ func TestStreamableServerIntegration(t *testing.T) {
 		assert.Equal(t, "text/event-stream", resp.Header.Get("Content-Type"))
 
 		scanner := bufio.NewScanner(resp.Body)
-		var responses []map[string]interface{}
+		var responses []map[string]any
 
 		for scanner.Scan() {
 			line := scanner.Text()
-			if strings.HasPrefix(line, "data: ") {
-				data := strings.TrimPrefix(line, "data: ")
-				var msg map[string]interface{}
+			if after, ok := strings.CutPrefix(line, "data: "); ok {
+				data := after
+				var msg map[string]any
 				if err := json.Unmarshal([]byte(data), &msg); err == nil {
 					responses = append(responses, msg)
 				}
@@ -138,7 +138,7 @@ func TestStreamableServerIntegration(t *testing.T) {
 		found := false
 		for _, response := range responses {
 			if id, ok := response["id"]; ok && id == float64(1) {
-				if result, ok := response["result"].(map[string]interface{}); ok {
+				if result, ok := response["result"].(map[string]any); ok {
 					if toolResult, ok := result["toolResult"].(string); ok {
 						assert.Equal(t, "Echo: Hello SSE!", toolResult)
 						found = true
@@ -152,16 +152,16 @@ func TestStreamableServerIntegration(t *testing.T) {
 
 	t.Run("Streamable error handling", func(t *testing.T) {
 		// Test calling a non-existent tool
-		params := map[string]interface{}{
+		params := map[string]any{
 			"name":      "non_existent_tool",
-			"arguments": map[string]interface{}{},
+			"arguments": map[string]any{},
 		}
 
 		result, err := client.SendMCPRequest("tools/call", params)
 		require.NoError(t, err, "Should not get connection error for non-existent tool")
 
 		// Should get an error in the response
-		errorMap, hasError := result["error"].(map[string]interface{})
+		errorMap, hasError := result["error"].(map[string]any)
 		assert.True(t, hasError, "Expected error for non-existent tool")
 		if hasError {
 			assert.Equal(t, float64(-32601), errorMap["code"], "Expected method not found error code")

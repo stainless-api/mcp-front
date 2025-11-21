@@ -32,7 +32,8 @@
     "notion": {
       "transportType": "stdio",
       "requiresUserToken": true,
-      "tokenSetup": {
+      "userAuthentication": {
+        "type": "manual",
         "displayName": "Notion Integration Token",
         "instructions": "Create an integration at https://www.notion.so/my-integrations and copy the token",
         "helpUrl": "https://developers.notion.com/docs/create-a-notion-integration"
@@ -55,6 +56,24 @@
         "-v", "/repos:/repos:ro",
         "mcp/git:latest"
       ]
+    },
+    "stainless": {
+      "transportType": "stdio",
+      "command": "stainless",
+      "args": ["mcp"],
+      "requiresUserToken": true,
+      "userAuthentication": {
+        "type": "oauth",
+        "displayName": "Stainless",
+        "clientId": {"$env": "STAINLESS_OAUTH_CLIENT_ID"},
+        "clientSecret": {"$env": "STAINLESS_OAUTH_CLIENT_SECRET"},
+        "authorizationUrl": "https://api.stainless.com/oauth/authorize",
+        "tokenUrl": "https://api.stainless.com/oauth/token",
+        "scopes": ["mcp:read", "mcp:write"]
+      },
+      "env": {
+        "STAINLESS_API_TOKEN": {"$userToken": "{{token}}"}
+      }
     }
   }
 }

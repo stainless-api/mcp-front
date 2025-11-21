@@ -81,7 +81,7 @@ You should see the filesystem tools from your MCP server.
 
 ## What's next?
 
-Switch to [OAuth authentication](/examples/oauth-google/) for production. [Add more MCP servers](/configuration#mcp-servers) to your config.
+Switch to [OAuth authentication](/examples/oauth-google/) for production. [Add more MCP servers](/configuration#mcp-servers) to your config. Or, configure services that require per-user authentication by following the [Service Authentication Guide](/service-authentication/).
 
 ## Troubleshooting
 
