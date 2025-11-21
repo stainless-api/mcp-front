@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"github.com/dgellow/mcp-front/internal/config"
-	emailutil "github.com/dgellow/mcp-front/internal/email"
+	emailutil "github.com/dgellow/mcp-front/internal/emailutil"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 )

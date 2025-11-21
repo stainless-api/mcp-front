@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/dgellow/mcp-front/internal/config"
-	emailutil "github.com/dgellow/mcp-front/internal/email"
+	emailutil "github.com/dgellow/mcp-front/internal/emailutil"
 	"github.com/dgellow/mcp-front/internal/storage"
 )
 

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	emailutil "github.com/dgellow/mcp-front/internal/email"
+	emailutil "github.com/dgellow/mcp-front/internal/emailutil"
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/dgellow/mcp-front/internal/log"
