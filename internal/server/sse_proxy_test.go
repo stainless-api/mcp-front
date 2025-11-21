@@ -315,7 +315,11 @@ func TestForwardSSEToBackend(t *testing.T) {
 		rec := httptest.NewRecorder()
 
 		// Start streaming in background
-		go forwardSSEToBackend(ctx, rec, req, config)
+		done := make(chan struct{})
+		go func() {
+			forwardSSEToBackend(ctx, rec, req, config)
+			close(done)
+		}()
 
 		// Wait for stream to start
 		select {
@@ -338,6 +342,9 @@ func TestForwardSSEToBackend(t *testing.T) {
 		case <-time.After(1 * time.Second):
 			t.Fatal("Backend didn't stop streaming after client disconnect")
 		}
+
+		// Wait for goroutine to finish before reading buffer
+		<-done
 
 		// Verify we got some data before disconnect
 		body := rec.Body.String()
