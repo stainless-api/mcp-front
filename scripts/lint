@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+set -e
+
+cd "$(dirname "$0")/.."
+
+echo "==> Running go vet..."
+go vet ./...
+
+echo ""
+echo "==> Running staticcheck..."
+go run honnef.co/go/tools/cmd/staticcheck@2025.1.1 ./...
+
+echo ""
+echo "==> Running golangci-lint..."
+go run github.com/golangci/golangci-lint/cmd/golangci-lint@v1.59.1 run --timeout=5m
+
+echo ""
+echo "==> Validating configs..."
+./scripts/lint-configs
+
+echo ""
+echo "==> Checking docs formatting..."
+cd docs-site
+npm run format:check
+cd ..
+
+echo ""
+echo "==> Lint complete!"

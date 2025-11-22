@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -e
+
+cd "$(dirname "$0")/.."
+
+echo "==> Formatting Go code..."
+go fmt ./...
+
+echo "==> Running modernize..."
+go run golang.org/x/tools/gopls/internal/analysis/modernize/cmd/modernize@v0.19.1 -fix -test ./...
+
+echo ""
+echo "==> Formatting docs..."
+cd docs-site
+npm run format
+cd ..
+
+echo ""
+echo "==> Format complete!"

@@ -64,7 +64,7 @@ jobs:
       run: go test -v ./internal/... ./cmd/...
 
     - name: Validate config files
-      run: make lint-config
+      run: ./scripts/lint-configs
 
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3

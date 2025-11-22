@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -e
+
+cd "$(dirname "$0")/.."
+
+echo "==> Building mcp-front..."
+go build -o mcp-front ./cmd/mcp-front
+
+echo "==> Building docs..."
+cd docs-site
+npm run build
+cd ..
+
+echo ""
+echo "==> Build complete!"

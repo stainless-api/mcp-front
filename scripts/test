@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -e
+
+cd "$(dirname "$0")/.."
+
+echo "==> Running unit tests..."
+go test -v ./internal/... ./cmd/...
+
+echo ""
+echo "==> Running integration tests..."
+cd integration
+go test -v -timeout 5m
+cd ..
+
+echo ""
+echo "==> All tests passed!"
