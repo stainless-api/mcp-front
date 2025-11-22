@@ -2,7 +2,7 @@
   "name": "mcp-front-docs",
   "type": "module",
   "version": "1.0.0",
-  "description": "Documentation for MCP Front - OAuth 2.1 proxy for Model Context Protocol",
+  "description": "Documentation for mcp-front - Auth proxy for Model Context Protocol",
   "scripts": {
     "dev": "astro dev",
     "start": "astro dev",

@@ -13,6 +13,7 @@ import (
 	"github.com/dgellow/mcp-front/internal/storage"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	"golang.org/x/sync/singleflight"
 )
 
 const (
@@ -47,6 +48,7 @@ type StdioSessionManager struct {
 	stopCleanup     chan struct{}
 	createClient    func(name string, config *config.MCPClientConfig) (*Client, error)
 	wg              sync.WaitGroup
+	group           singleflight.Group // Deduplicates concurrent session creation
 }
 
 // SessionKey identifies a unique session
@@ -54,6 +56,11 @@ type SessionKey struct {
 	UserEmail  string // Empty for servers without requiresUserToken
 	ServerName string
 	SessionID  string
+}
+
+// String returns a string representation for use with singleflight
+func (k SessionKey) String() string {
+	return fmt.Sprintf("%s:%s:%s", k.UserEmail, k.ServerName, k.SessionID)
 }
 
 // StdioSession represents an active stdio process session
@@ -120,6 +127,9 @@ func NewStdioSessionManager(opts ...SessionManagerOption) *StdioSessionManager {
 }
 
 // GetOrCreateSession returns existing session or creates new one
+// Uses singleflight to ensure only one session is created even when multiple
+// concurrent requests arrive for the same key. This prevents orphaned subprocesses
+// and resource leaks while minimizing lock contention.
 func (sm *StdioSessionManager) GetOrCreateSession(
 	ctx context.Context,
 	key SessionKey,
@@ -128,16 +138,53 @@ func (sm *StdioSessionManager) GetOrCreateSession(
 	baseURL string,
 	userToken string,
 ) (*StdioSession, error) {
-	// Try to get existing session first
-	if session, ok := sm.GetSession(key); ok {
-		return session, nil
-	}
+	// singleflight ensures only ONE goroutine creates a session for this key
+	// All concurrent requests for the same key wait and receive the same result
+	v, err, _ := sm.group.Do(key.String(), func() (any, error) {
+		// Fast check with RLock
+		sm.mu.RLock()
+		session, ok := sm.sessions[key]
+		sm.mu.RUnlock()
 
-	if err := sm.checkUserLimits(key.UserEmail); err != nil {
+		if ok {
+			// Update last accessed time
+			now := time.Now()
+			session.lastAccessed.Store(&now)
+
+			// Check if session is still alive
+			select {
+			case <-session.ctx.Done():
+				// Process died, need to create new
+				log.LogTraceWithFields("session_manager", "Found dead session, will create new", map[string]any{
+					"sessionID": key.SessionID,
+					"server":    key.ServerName,
+					"user":      key.UserEmail,
+				})
+			default:
+				// Session is alive, return it
+				log.LogTraceWithFields("session_manager", "Reusing existing session", map[string]any{
+					"sessionID": key.SessionID,
+					"server":    key.ServerName,
+					"user":      key.UserEmail,
+				})
+				return session, nil
+			}
+		}
+
+		// Check user limits (acquires RLock internally)
+		if err := sm.checkUserLimits(key.UserEmail); err != nil {
+			return nil, err
+		}
+
+		// Create session (subprocess creation happens here, no lock held)
+		return sm.createSession(key, config, userToken)
+	})
+
+	if err != nil {
 		return nil, err
 	}
 
-	return sm.createSession(key, config, userToken)
+	return v.(*StdioSession), nil
 }
 
 // GetSession retrieves an existing session
@@ -167,7 +214,14 @@ func (sm *StdioSessionManager) GetSession(key SessionKey) (*StdioSession, bool) 
 				"server":    key.ServerName,
 				"user":      key.UserEmail,
 			})
-			sm.RemoveSession(key)
+			if err := sm.RemoveSession(key); err != nil {
+				log.LogErrorWithFields("session_manager", "Failed to remove dead session", map[string]any{
+					"sessionID": key.SessionID,
+					"server":    key.ServerName,
+					"user":      key.UserEmail,
+					"error":     err.Error(),
+				})
+			}
 			return nil, false
 		default:
 			return session, true
@@ -184,7 +238,8 @@ func (sm *StdioSessionManager) GetSession(key SessionKey) (*StdioSession, bool) 
 }
 
 // RemoveSession removes a session and cleans up its resources
-func (sm *StdioSessionManager) RemoveSession(key SessionKey) {
+// Returns error if session cleanup fails (e.g., subprocess won't terminate)
+func (sm *StdioSessionManager) RemoveSession(key SessionKey) error {
 	sm.mu.Lock()
 	session, ok := sm.sessions[key]
 	if ok {
@@ -198,36 +253,41 @@ func (sm *StdioSessionManager) RemoveSession(key SessionKey) {
 	remainingSessions := len(sm.sessions)
 	sm.mu.Unlock()
 
-	if ok {
-		// Cancel context to signal shutdown
-		session.cancel()
+	if !ok {
+		return nil
+	}
 
-		// Close the client
-		if err := session.client.Close(); err != nil {
-			log.LogErrorWithFields("session_manager", "Failed to close client", map[string]any{
-				"error":     err.Error(),
-				"sessionID": key.SessionID,
-				"server":    key.ServerName,
-				"user":      key.UserEmail,
-			})
-		}
+	// Cancel context to signal shutdown
+	session.cancel()
 
-		log.LogInfoWithFields("session_manager", "Removed session", map[string]any{
+	// Close the client
+	if err := session.client.Close(); err != nil {
+		log.LogErrorWithFields("session_manager", "Failed to close client", map[string]any{
+			"error":     err.Error(),
 			"sessionID": key.SessionID,
 			"server":    key.ServerName,
 			"user":      key.UserEmail,
 		})
-
-		log.LogTraceWithFields("session_manager", "Session removed with details", map[string]any{
-			"sessionID":         key.SessionID,
-			"server":            key.ServerName,
-			"user":              key.UserEmail,
-			"created":           session.created,
-			"duration":          time.Since(session.created).String(),
-			"lastAccessed":      session.lastAccessed.Load(),
-			"remainingSessions": remainingSessions,
-		})
+		return fmt.Errorf("failed to close session %s: %w", key.SessionID, err)
 	}
+
+	log.LogInfoWithFields("session_manager", "Removed session", map[string]any{
+		"sessionID": key.SessionID,
+		"server":    key.ServerName,
+		"user":      key.UserEmail,
+	})
+
+	log.LogTraceWithFields("session_manager", "Session removed with details", map[string]any{
+		"sessionID":         key.SessionID,
+		"server":            key.ServerName,
+		"user":              key.UserEmail,
+		"created":           session.created,
+		"duration":          time.Since(session.created).String(),
+		"lastAccessed":      session.lastAccessed.Load(),
+		"remainingSessions": remainingSessions,
+	})
+
+	return nil
 }
 
 // Shutdown gracefully shuts down the session manager
@@ -245,7 +305,14 @@ func (sm *StdioSessionManager) Shutdown() {
 
 	// Clean up all sessions
 	for _, session := range sessions {
-		sm.RemoveSession(session.key)
+		if err := sm.RemoveSession(session.key); err != nil {
+			log.LogErrorWithFields("shutdown", "Failed to remove session during shutdown", map[string]any{
+				"sessionID": session.key.SessionID,
+				"server":    session.key.ServerName,
+				"user":      session.key.UserEmail,
+				"error":     err.Error(),
+			})
+		}
 	}
 }
 
@@ -406,6 +473,7 @@ func (sm *StdioSessionManager) createSession(
 		config = config.ApplyUserToken(userToken)
 	}
 
+	// Subprocess creation happens without lock (can be slow)
 	client, err := sm.createClient(key.ServerName, config)
 	if err != nil {
 		cancel()
@@ -423,7 +491,7 @@ func (sm *StdioSessionManager) createSession(
 	}
 	session.lastAccessed.Store(&now)
 
-	// Store session
+	// Store session (short lock for map write)
 	sm.mu.Lock()
 	sm.sessions[key] = session
 	totalSessions := len(sm.sessions)
@@ -500,6 +568,13 @@ func (sm *StdioSessionManager) cleanupTimedOutSessions() {
 			"user":      key.UserEmail,
 			"timeout":   sm.defaultTimeout,
 		})
-		sm.RemoveSession(key)
+		if err := sm.RemoveSession(key); err != nil {
+			log.LogErrorWithFields("session_cleanup", "Failed to remove timed out session", map[string]any{
+				"sessionID": key.SessionID,
+				"server":    key.ServerName,
+				"user":      key.UserEmail,
+				"error":     err.Error(),
+			})
+		}
 	}
 }

@@ -408,7 +408,14 @@ func (h *AdminHandlers) SessionActionHandler(w http.ResponseWriter, r *http.Requ
 						ServerName: s.ServerName,
 						SessionID:  s.SessionID,
 					}
-					h.sessionManager.RemoveSession(key)
+					if err := h.sessionManager.RemoveSession(key); err != nil {
+						log.LogErrorWithFields("admin", "Failed to remove session", map[string]any{
+							"sessionID": s.SessionID,
+							"server":    s.ServerName,
+							"user":      s.UserEmail,
+							"error":     err.Error(),
+						})
+					}
 					break
 				}
 			}

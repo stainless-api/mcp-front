@@ -12,9 +12,11 @@ import (
 	"github.com/dgellow/mcp-front/internal/config"
 	"github.com/dgellow/mcp-front/internal/crypto"
 	"github.com/dgellow/mcp-front/internal/envutil"
+	jsonwriter "github.com/dgellow/mcp-front/internal/json"
 	"github.com/dgellow/mcp-front/internal/log"
 	"github.com/dgellow/mcp-front/internal/oauthsession"
 	"github.com/dgellow/mcp-front/internal/storage"
+	"github.com/dgellow/mcp-front/internal/urlutil"
 	"github.com/ory/fosite"
 	"github.com/ory/fosite/compose"
 )
@@ -33,7 +35,6 @@ func GetUserContextKey() contextKey {
 	return userContextKey
 }
 
-// NewOAuthProvider creates a new OAuth 2.1 provider with clean dependency injection
 func NewOAuthProvider(oauthConfig config.OAuthAuthConfig, store storage.Storage, jwtSecret []byte) (fosite.OAuth2Provider, error) {
 	// Use TTL duration from config
 	tokenTTL := oauthConfig.TokenTTL
@@ -54,7 +55,7 @@ func NewOAuthProvider(oauthConfig config.OAuthAuthConfig, store storage.Storage,
 	}
 
 	// Configure fosite
-	fositeConfig := &compose.Config{
+	fositeConfig := &fosite.Config{
 		AccessTokenLifespan:            tokenTTL,
 		RefreshTokenLifespan:           tokenTTL * 2,
 		AuthorizeCodeLifespan:          10 * time.Minute,
@@ -64,16 +65,14 @@ func NewOAuthProvider(oauthConfig config.OAuthAuthConfig, store storage.Storage,
 		EnforcePKCEForPublicClients:    true,
 		EnablePKCEPlainChallengeMethod: false,
 		MinParameterEntropy:            minEntropy,
+		GlobalSecret:                   jwtSecret,
 	}
 
 	// Create provider using compose with specific factories
 	provider := compose.Compose(
 		fositeConfig,
 		store,
-		&compose.CommonStrategy{
-			CoreStrategy: compose.NewOAuth2HMACStrategy(fositeConfig, jwtSecret, nil),
-		},
-		nil, // hasher
+		compose.NewOAuth2HMACStrategy(fositeConfig),
 		compose.OAuth2AuthorizeExplicitFactory,
 		compose.OAuth2ClientCredentialsGrantFactory,
 		compose.OAuth2PKCEFactory,
@@ -114,8 +113,15 @@ func GenerateJWTSecret(providedSecret string) ([]byte, error) {
 	return secret, nil
 }
 
-// NewValidateTokenMiddleware creates middleware that validates OAuth tokens using dependency injection
-func NewValidateTokenMiddleware(provider fosite.OAuth2Provider) func(http.Handler) http.Handler {
+// NewValidateTokenMiddleware creates middleware that validates OAuth tokens per RFC 9728
+func NewValidateTokenMiddleware(provider fosite.OAuth2Provider, issuer string) func(http.Handler) http.Handler {
+	// Build protected resource metadata URI once at middleware creation (per RFC 9728)
+	metadataURI, err := ProtectedResourceMetadataURI(issuer)
+	if err != nil {
+		log.LogError("Failed to build protected resource metadata URI: %v", err)
+		metadataURI = "" // Fallback to empty, will skip WWW-Authenticate header
+	}
+
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ctx := r.Context()
@@ -123,13 +129,13 @@ func NewValidateTokenMiddleware(provider fosite.OAuth2Provider) func(http.Handle
 			// Extract token from Authorization header
 			auth := r.Header.Get("Authorization")
 			if auth == "" {
-				http.Error(w, "Missing authorization header", http.StatusUnauthorized)
+				jsonwriter.WriteUnauthorizedRFC9728(w, "Missing authorization header", metadataURI)
 				return
 			}
 
 			parts := strings.Split(auth, " ")
 			if len(parts) != 2 || parts[0] != "Bearer" {
-				http.Error(w, "Invalid authorization header format", http.StatusUnauthorized)
+				jsonwriter.WriteUnauthorizedRFC9728(w, "Invalid authorization header format", metadataURI)
 				return
 			}
 
@@ -144,7 +150,18 @@ func NewValidateTokenMiddleware(provider fosite.OAuth2Provider) func(http.Handle
 			session := &oauthsession.Session{DefaultSession: &fosite.DefaultSession{}}
 			_, accessRequest, err := provider.IntrospectToken(ctx, token, fosite.AccessToken, session)
 			if err != nil {
-				http.Error(w, "Invalid or expired token", http.StatusUnauthorized)
+				jsonwriter.WriteUnauthorizedRFC9728(w, "Invalid or expired token", metadataURI)
+				return
+			}
+
+			// Validate audience claim matches requested service (RFC 8707)
+			if err := ValidateAudienceForService(r.URL.Path, accessRequest.GetGrantedAudience(), issuer); err != nil {
+				log.LogErrorWithFields("oauth", "Audience validation failed", map[string]any{
+					"path":     r.URL.Path,
+					"audience": accessRequest.GetGrantedAudience(),
+					"error":    err.Error(),
+				})
+				jsonwriter.WriteUnauthorizedRFC9728(w, "Token audience does not match requested service", metadataURI)
 				return
 			}
 
@@ -168,4 +185,10 @@ func NewValidateTokenMiddleware(provider fosite.OAuth2Provider) func(http.Handle
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// ProtectedResourceMetadataURI builds the URI for the protected resource metadata endpoint
+// Per RFC 9728, this URI is used in WWW-Authenticate headers as the resource_metadata parameter
+func ProtectedResourceMetadataURI(issuer string) (string, error) {
+	return urlutil.JoinPath(issuer, ".well-known", "oauth-protected-resource")
 }

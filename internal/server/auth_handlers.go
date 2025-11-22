@@ -17,6 +17,7 @@ import (
 	"github.com/dgellow/mcp-front/internal/googleauth"
 	jsonwriter "github.com/dgellow/mcp-front/internal/json"
 	"github.com/dgellow/mcp-front/internal/log"
+	"github.com/dgellow/mcp-front/internal/oauth"
 	"github.com/dgellow/mcp-front/internal/oauthsession"
 	"github.com/dgellow/mcp-front/internal/storage"
 	"github.com/ory/fosite"
@@ -63,40 +64,39 @@ func NewAuthHandlers(
 	}
 }
 
-// WellKnownHandler serves OAuth 2.0 metadata
+// WellKnownHandler serves OAuth 2.0 Authorization Server Metadata (RFC 8414)
 func (h *AuthHandlers) WellKnownHandler(w http.ResponseWriter, r *http.Request) {
 	log.Logf("Well-known handler called: %s %s", r.Method, r.URL.Path)
 
-	metadata := map[string]any{
-		"issuer":                 h.authConfig.Issuer,
-		"authorization_endpoint": fmt.Sprintf("%s/authorize", h.authConfig.Issuer),
-		"token_endpoint":         fmt.Sprintf("%s/token", h.authConfig.Issuer),
-		"registration_endpoint":  fmt.Sprintf("%s/register", h.authConfig.Issuer),
-		"response_types_supported": []string{
-			"code",
-		},
-		"grant_types_supported": []string{
-			"authorization_code",
-			"refresh_token",
-		},
-		"code_challenge_methods_supported": []string{
-			"S256",
-		},
-		"token_endpoint_auth_methods_supported": []string{
-			"none",
-			"client_secret_post",
-		},
-		"scopes_supported": []string{
-			"openid",
-			"profile",
-			"email",
-			"offline_access",
-		},
+	metadata, err := oauth.AuthorizationServerMetadata(h.authConfig.Issuer)
+	if err != nil {
+		log.LogError("Failed to build authorization server metadata: %v", err)
+		jsonwriter.WriteInternalServerError(w, "Internal server error")
+		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(metadata); err != nil {
 		log.LogError("Failed to encode well-known metadata: %v", err)
+		jsonwriter.WriteInternalServerError(w, "Internal server error")
+	}
+}
+
+// ProtectedResourceMetadataHandler serves OAuth 2.0 Protected Resource Metadata (RFC 9728)
+// This endpoint helps clients discover which authorization servers this resource server trusts
+func (h *AuthHandlers) ProtectedResourceMetadataHandler(w http.ResponseWriter, r *http.Request) {
+	log.Logf("Protected resource metadata handler called: %s %s", r.Method, r.URL.Path)
+
+	metadata, err := oauth.ProtectedResourceMetadata(h.authConfig.Issuer)
+	if err != nil {
+		log.LogError("Failed to build protected resource metadata: %v", err)
+		jsonwriter.WriteInternalServerError(w, "Internal server error")
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(metadata); err != nil {
+		log.LogError("Failed to encode protected resource metadata: %v", err)
 		jsonwriter.WriteInternalServerError(w, "Internal server error")
 	}
 }
@@ -126,8 +126,38 @@ func (h *AuthHandlers) AuthorizeHandler(w http.ResponseWriter, r *http.Request) 
 	ar, err := h.oauthProvider.NewAuthorizeRequest(ctx, r)
 	if err != nil {
 		log.LogError("Authorize request error: %v", err)
-		h.oauthProvider.WriteAuthorizeError(w, ar, err)
+		h.oauthProvider.WriteAuthorizeError(ctx, w, ar, err)
 		return
+	}
+
+	// Extract and validate resource parameters (RFC 8707)
+	resources, err := oauth.ExtractResourceParameters(r)
+	if err != nil {
+		log.LogError("Failed to extract resource parameters: %v", err)
+		h.oauthProvider.WriteAuthorizeError(ctx, w, ar, fosite.ErrInvalidRequest.WithHint("Invalid resource parameter"))
+		return
+	}
+
+	// Validate each resource URI per RFC 8707
+	for _, resource := range resources {
+		if err := oauth.ValidateResourceURI(resource, h.authConfig.Issuer); err != nil {
+			log.LogErrorWithFields("auth", "Invalid resource URI in authorization request", map[string]any{
+				"resource": resource,
+				"error":    err.Error(),
+			})
+			h.oauthProvider.WriteAuthorizeError(ctx, w, ar, fosite.ErrInvalidRequest.WithHintf("Invalid resource: %v", err))
+			return
+		}
+	}
+
+	// Grant audiences for requested resources (RFC 8707)
+	// These audience claims will be included in issued tokens
+	for _, resource := range resources {
+		ar.GrantAudience(resource)
+		log.LogInfoWithFields("auth", "Granted audience for resource", map[string]any{
+			"resource": resource,
+			"client":   ar.GetClient().GetID(),
+		})
 	}
 
 	state := ar.GetState()
@@ -191,7 +221,7 @@ func (h *AuthHandlers) GoogleCallbackHandler(w http.ResponseWriter, r *http.Requ
 	if err != nil {
 		log.LogError("Failed to exchange code: %v", err)
 		if !isBrowserFlow && ar != nil {
-			h.oauthProvider.WriteAuthorizeError(w, ar, fosite.ErrServerError.WithHint("Failed to exchange authorization code"))
+			h.oauthProvider.WriteAuthorizeError(ctx, w, ar, fosite.ErrServerError.WithHint("Failed to exchange authorization code"))
 		} else {
 			jsonwriter.WriteInternalServerError(w, "Authentication failed")
 		}
@@ -203,7 +233,7 @@ func (h *AuthHandlers) GoogleCallbackHandler(w http.ResponseWriter, r *http.Requ
 	if err != nil {
 		log.LogError("User validation failed: %v", err)
 		if !isBrowserFlow && ar != nil {
-			h.oauthProvider.WriteAuthorizeError(w, ar, fosite.ErrAccessDenied.WithHint(err.Error()))
+			h.oauthProvider.WriteAuthorizeError(ctx, w, ar, fosite.ErrAccessDenied.WithHint(err.Error()))
 		} else {
 			jsonwriter.WriteForbidden(w, "Access denied")
 		}
@@ -283,7 +313,7 @@ func (h *AuthHandlers) GoogleCallbackHandler(w http.ResponseWriter, r *http.Requ
 		stateData, err := h.signUpstreamOAuthState(ar, userInfo)
 		if err != nil {
 			log.LogError("Failed to sign OAuth state: %v", err)
-			h.oauthProvider.WriteAuthorizeError(w, ar, fosite.ErrServerError.WithHint("Failed to prepare service authentication"))
+			h.oauthProvider.WriteAuthorizeError(ctx, w, ar, fosite.ErrServerError.WithHint("Failed to prepare service authentication"))
 			return
 		}
 
@@ -291,6 +321,9 @@ func (h *AuthHandlers) GoogleCallbackHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	// Create session for token issuance
+	// Note: Audience claims are stored in the authorize request (ar.GetGrantedAudience())
+	// and will be automatically propagated to access tokens by fosite
 	session := &oauthsession.Session{
 		DefaultSession: &fosite.DefaultSession{
 			ExpiresAt: map[fosite.TokenType]time.Time{
@@ -305,11 +338,11 @@ func (h *AuthHandlers) GoogleCallbackHandler(w http.ResponseWriter, r *http.Requ
 	response, err := h.oauthProvider.NewAuthorizeResponse(ctx, ar, session)
 	if err != nil {
 		log.LogError("Authorize response error: %v", err)
-		h.oauthProvider.WriteAuthorizeError(w, ar, err)
+		h.oauthProvider.WriteAuthorizeError(ctx, w, ar, err)
 		return
 	}
 
-	h.oauthProvider.WriteAuthorizeResponse(w, ar, response)
+	h.oauthProvider.WriteAuthorizeResponse(ctx, w, ar, response)
 }
 
 // TokenHandler handles OAuth 2.0 token requests
@@ -326,7 +359,7 @@ func (h *AuthHandlers) TokenHandler(w http.ResponseWriter, r *http.Request) {
 	accessRequest, err := h.oauthProvider.NewAccessRequest(ctx, r, session)
 	if err != nil {
 		log.LogError("Access request error: %v", err)
-		h.oauthProvider.WriteAccessError(w, accessRequest, err)
+		h.oauthProvider.WriteAccessError(ctx, w, accessRequest, err)
 		return
 	}
 
@@ -338,11 +371,11 @@ func (h *AuthHandlers) TokenHandler(w http.ResponseWriter, r *http.Request) {
 	response, err := h.oauthProvider.NewAccessResponse(ctx, accessRequest)
 	if err != nil {
 		log.LogError("Access response error: %v", err)
-		h.oauthProvider.WriteAccessError(w, accessRequest, err)
+		h.oauthProvider.WriteAccessError(ctx, w, accessRequest, err)
 		return
 	}
 
-	h.oauthProvider.WriteAccessResponse(w, accessRequest, response)
+	h.oauthProvider.WriteAccessResponse(ctx, w, accessRequest, response)
 }
 
 // buildClientRegistrationResponse creates the registration response for a client
@@ -612,10 +645,10 @@ func (h *AuthHandlers) CompleteOAuthHandler(w http.ResponseWriter, r *http.Reque
 	response, err := h.oauthProvider.NewAuthorizeResponse(ctx, ar, session)
 	if err != nil {
 		log.LogError("Authorize response error: %v", err)
-		h.oauthProvider.WriteAuthorizeError(w, ar, err)
+		h.oauthProvider.WriteAuthorizeError(ctx, w, ar, err)
 		return
 	}
 
 	// Write the response (redirects to Claude)
-	h.oauthProvider.WriteAuthorizeResponse(w, ar, response)
+	h.oauthProvider.WriteAuthorizeResponse(ctx, w, ar, response)
 }

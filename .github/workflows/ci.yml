@@ -2,14 +2,54 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Cache Node modules
+        uses: actions/cache@v4
+        with:
+          path: docs-site/node_modules
+          key: ${{ runner.os }}-node-${{ hashFiles('docs-site/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
+
+      - name: Bootstrap
+        run: ./scripts/bootstrap
+
+      - name: Run linters
+        run: ./scripts/lint
+
   test:
     runs-on: ubuntu-latest
-    
+
     services:
       postgres:
         image: postgres:15
@@ -26,71 +66,35 @@ jobs:
           - 5432:5432
 
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Set up Go
-      uses: actions/setup-go@v5
-      with:
-        go-version: '1.23'
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
 
-    - name: Cache Go modules
-      uses: actions/cache@v4
-      with:
-        path: |
-          ~/.cache/go-build
-          ~/go/pkg/mod
-        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-        restore-keys: |
-          ${{ runner.os }}-go-
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
 
-    - name: Download dependencies
-      run: go mod download
+      - name: Bootstrap
+        run: ./scripts/bootstrap
 
-    - name: Run go vet
-      run: go vet ./...
-
-    - name: Run staticcheck
-      uses: dominikh/staticcheck-action@v1.3.1
-      with:
-        version: "2025.1.1"
-
-    - name: Run golangci-lint
-      uses: golangci/golangci-lint-action@v6
-      with:
-        version: latest
-        args: --timeout=5m
-
-    - name: Run unit tests
-      run: go test -v ./internal/... ./cmd/...
-
-    - name: Validate config files
-      run: ./scripts/lint-configs
-
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
-
-    - name: Build Docker image for testing
-      run: docker build -t mcp-front:test .
-
-    - name: Verify Docker Compose
-      run: |
-        docker --version
-        docker compose version || echo "Docker Compose v2 not available"
-        which docker-compose || echo "docker-compose command not found"
-
-    - name: Run integration tests
-      env:
-        GOOGLE_CLIENT_ID: test-client-id
-        GOOGLE_CLIENT_SECRET: test-client-secret
-        JWT_SECRET: test-jwt-secret-that-is-32-bytes!
-        DATABASE_URL: postgres://testuser:testpass@localhost:5432/testdb?sslmode=disable
-        # Shorter timeouts for CI environment
-        SESSION_TIMEOUT: 5s
-        SESSION_CLEANUP_INTERVAL: 1s
-        TEST_CLEANUP_WAIT_TIME: 15s
-        TEST_TIMER_RESET_WAIT_TIME: 15s
-        TEST_MULTI_USER_WAIT_TIME: 15s
-      run: |
-        cd integration
-        go test -v -timeout 5m
-
+      - name: Run tests
+        env:
+          GOOGLE_CLIENT_ID: test-client-id
+          GOOGLE_CLIENT_SECRET: test-client-secret
+          JWT_SECRET: test-jwt-secret-that-is-32-bytes!
+          DATABASE_URL: postgres://testuser:testpass@localhost:5432/testdb?sslmode=disable
+          SESSION_TIMEOUT: 5s
+          SESSION_CLEANUP_INTERVAL: 1s
+          TEST_CLEANUP_WAIT_TIME: 15s
+          TEST_TIMER_RESET_WAIT_TIME: 15s
+          TEST_MULTI_USER_WAIT_TIME: 15s
+        run: ./scripts/test

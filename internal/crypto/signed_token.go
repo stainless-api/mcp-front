@@ -25,7 +25,7 @@ func NewTokenSigner(signingKey []byte, ttl time.Duration) TokenSigner {
 // TokenData wraps user data with metadata
 type TokenData struct {
 	Data      json.RawMessage `json:"data"`
-	ExpiresAt time.Time       `json:"expires_at,omitempty"`
+	ExpiresAt time.Time       `json:"expires_at"`
 }
 
 // Sign marshals data to JSON, signs it with HMAC, and returns a base64-encoded token

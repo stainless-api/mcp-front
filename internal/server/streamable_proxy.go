@@ -33,8 +33,10 @@ func forwardStreamablePostToBackend(ctx context.Context, w http.ResponseWriter, 
 		return
 	}
 
-	req.Header.Set("Content-Type", r.Header.Get("Content-Type"))
+	// Copy relevant headers from original request, excluding hop-by-hop and sensitive headers
+	copyRequestHeaders(req.Header, r.Header)
 
+	// Add configured headers (e.g., auth headers)
 	for k, v := range config.Headers {
 		req.Header.Set(k, v)
 	}

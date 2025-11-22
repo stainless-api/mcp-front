@@ -3,11 +3,11 @@ title: OAuth with Google
 description: Google Workspace SSO
 ---
 
-OAuth 2.1 authentication lets you control access based on company email domains. Claude redirects users to Google for authentication, and MCP Front verifies they're from your company.
+OAuth 2.0 authentication with PKCE lets you control access based on company email domains. Claude redirects users to Google for authentication, and MCP Front verifies they're from your company.
 
 ## How OAuth works with MCP Front
 
-![OAuth 2.1 Authentication Flow](/mcp-front/oauth-flow.svg)
+![OAuth Authentication Flow](/mcp-front/oauth-flow.svg)
 
 ## Prerequisites
 
@@ -144,7 +144,7 @@ Firestore stores:
 
 ### HTTPS is mandatory
 
-OAuth 2.1 requires HTTPS in production:
+OAuth requires HTTPS in production:
 
 ```json
 {

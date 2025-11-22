@@ -20,19 +20,19 @@ Create `config.json` with a basic MCP server:
   "version": "v0.0.1-DEV_EDITION_EXPECT_CHANGES",
   "proxy": {
     "name": "My MCP Proxy",
-    "addr": ":8080",
-    "auth": {
-      "kind": "bearerToken",
-      "tokens": {
-        "filesystem": ["my-secret-token"]
-      }
-    }
+    "addr": ":8080"
   },
   "mcpServers": {
     "filesystem": {
       "transportType": "stdio",
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
+      "serviceAuths": [
+        {
+          "type": "bearer",
+          "tokens": ["my-secret-token"]
+        }
+      ]
     }
   }
 }
@@ -71,7 +71,9 @@ go build -o mcp-front ./cmd/mcp-front
 
 ## 3. Connect from Claude
 
-Open Claude Desktop settings and add a new MCP server. Set the URL to `http://localhost:8080/sse`, auth type to Bearer Token, and token to `my-secret-token`. Save and restart Claude.
+Open Claude Desktop settings and add a new MCP server. Set the URL to `http://localhost:8080/filesystem/sse`, auth type to Bearer Token, and token to `my-secret-token`. Save and restart Claude.
+
+The URL path `/filesystem/sse` must match the server name from your config.
 
 ## 4. Test it
 
@@ -97,13 +99,18 @@ If not running, check the process is actually running. Verify port 8080 isn't al
 
 ### Authentication failed
 
-The token in Claude must be in the list for that server:
+The token in Claude must be in the `serviceAuths` array for that server:
 
 ```json
 {
-  "auth": {
-    "tokens": {
-      "filesystem": ["my-secret-token"] // <- Token must be in this array
+  "mcpServers": {
+    "filesystem": {
+      "serviceAuths": [
+        {
+          "type": "bearer",
+          "tokens": ["my-secret-token"] // <- Token must be in this array
+        }
+      ]
     }
   }
 }

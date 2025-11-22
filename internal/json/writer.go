@@ -2,7 +2,9 @@ package json
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/dgellow/mcp-front/internal/log"
 )
@@ -46,6 +48,30 @@ func WriteError(w http.ResponseWriter, statusCode int, error string, message str
 // Common error responses
 func WriteUnauthorized(w http.ResponseWriter, message string) {
 	WriteError(w, http.StatusUnauthorized, "unauthorized", message)
+}
+
+// WriteUnauthorizedRFC9728 writes a 401 Unauthorized response with WWW-Authenticate header
+// per RFC 9728 Section 5.1 "WWW-Authenticate Response"
+//
+// The header format is: Bearer resource_metadata="<uri>"
+// where <uri> points to the protected resource metadata endpoint
+func WriteUnauthorizedRFC9728(w http.ResponseWriter, message string, protectedResourceMetadataURI string) {
+	if protectedResourceMetadataURI != "" {
+		// Format per RFC 9728: Bearer resource_metadata="https://example.com/.well-known/oauth-protected-resource"
+		// Escape URI according to RFC 9110 quoted-string rules
+		escapedURI := escapeQuotedString(protectedResourceMetadataURI)
+		challenge := fmt.Sprintf(`Bearer resource_metadata="%s"`, escapedURI)
+		w.Header().Set("WWW-Authenticate", challenge)
+	}
+	WriteError(w, http.StatusUnauthorized, "unauthorized", message)
+}
+
+// escapeQuotedString escapes a string for use in an RFC 9110 quoted-string
+// It escapes backslash and double-quote characters
+func escapeQuotedString(s string) string {
+	s = strings.ReplaceAll(s, "\\", "\\\\")
+	s = strings.ReplaceAll(s, "\"", "\\\"")
+	return s
 }
 
 func WriteInternalServerError(w http.ResponseWriter, message string) {

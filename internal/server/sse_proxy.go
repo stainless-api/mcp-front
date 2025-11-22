@@ -26,14 +26,8 @@ func forwardSSEToBackend(ctx context.Context, w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	// Copy relevant headers from original request
-	for k, v := range r.Header {
-		// Skip hop-by-hop headers
-		if k == "Connection" || k == "Upgrade" || k == "Host" {
-			continue
-		}
-		req.Header[k] = v
-	}
+	// Copy relevant headers from original request, excluding hop-by-hop and sensitive headers
+	copyRequestHeaders(req.Header, r.Header)
 
 	// Add configured headers (e.g., auth headers)
 	for k, v := range config.Headers {

@@ -288,7 +288,14 @@ func HandleSessionRegistration(
 			"server":    handler.h.serverName,
 			"user":      handler.userEmail,
 		})
-		sessionManager.RemoveSession(key)
+		if err := sessionManager.RemoveSession(key); err != nil {
+			log.LogErrorWithFields("server", "Failed to remove session on capability failure", map[string]any{
+				"sessionID": session.SessionID(),
+				"server":    handler.h.serverName,
+				"user":      handler.userEmail,
+				"error":     err.Error(),
+			})
+		}
 		return
 	}
 

@@ -127,7 +127,8 @@ func TestStdioSessionManager_RemoveSession(t *testing.T) {
 	require.NotNil(t, session)
 
 	// Remove session
-	sm.RemoveSession(key)
+	err = sm.RemoveSession(key)
+	require.NoError(t, err)
 
 	// Session should not exist
 	_, ok := sm.GetSession(key)
@@ -212,7 +213,8 @@ func TestStdioSessionManager_ConcurrentAccess(t *testing.T) {
 			assert.True(t, ok)
 
 			// Remove session
-			sm.RemoveSession(key)
+			err = sm.RemoveSession(key)
+			assert.NoError(t, err)
 		}(i)
 	}
 
