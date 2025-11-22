@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -e
+
+cd "$(dirname "$0")/.."
+
+echo "==> Installing Go dependencies..."
+go mod download
+
+echo "==> Installing Node.js dependencies..."
+cd docs-site
+npm ci
+cd ..
+
+echo ""
+echo "==> Bootstrap complete!"

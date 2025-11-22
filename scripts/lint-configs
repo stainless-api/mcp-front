@@ -1,5 +1,10 @@
-#!/bin/bash
+#!/usr/bin/env bash
 set -e
+
+cd "$(dirname "$0")/.."
+
+echo "Building binary for config validation..."
+go build -o mcp-front ./cmd/mcp-front
 
 echo "Validating all config files in the repository..."
 failed=0
@@ -8,7 +13,7 @@ failed=0
 for config in *.json; do
   if [[ -f "$config" ]]; then
     echo "Checking $config..."
-    if ! ./cmd/mcp-front/mcp-front -validate -config "$config"; then
+    if ! ./mcp-front -validate -config "$config"; then
       failed=1
     fi
   fi
@@ -18,7 +23,7 @@ done
 for config in integration/config/*.json; do
   if [[ -f "$config" ]]; then
     echo "Checking $config..."
-    if ! ./cmd/mcp-front/mcp-front -validate -config "$config"; then
+    if ! ./mcp-front -validate -config "$config"; then
       failed=1
     fi
   fi

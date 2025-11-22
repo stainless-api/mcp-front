@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -e
+
+cd "$(dirname "$0")/.."
+
+echo "==> Starting docs development server..."
+cd docs-site
+npm run dev
