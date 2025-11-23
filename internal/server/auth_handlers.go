@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -101,7 +102,6 @@ func (h *AuthHandlers) ProtectedResourceMetadataHandler(w http.ResponseWriter, r
 	}
 }
 
-// ClientMetadataHandler serves OAuth 2.0 Client Metadata for dynamic discovery
 func (h *AuthHandlers) ClientMetadataHandler(w http.ResponseWriter, r *http.Request) {
 	clientID := r.PathValue("client_id")
 	if clientID == "" {
@@ -111,26 +111,30 @@ func (h *AuthHandlers) ClientMetadataHandler(w http.ResponseWriter, r *http.Requ
 
 	log.Logf("Client metadata handler called for client: %s", clientID)
 
-	client, err := h.storage.GetClient(r.Context(), clientID)
+	client, err := h.storage.GetClientWithMetadata(r.Context(), clientID)
 	if err != nil {
 		log.LogError("Failed to get client %s: %v", clientID, err)
-		jsonwriter.WriteNotFound(w, "Client not found")
+		if errors.Is(err, fosite.ErrNotFound) {
+			jsonwriter.WriteNotFound(w, "Client not found")
+		} else {
+			jsonwriter.WriteInternalServerError(w, "Failed to retrieve client")
+		}
 		return
 	}
 
 	tokenEndpointAuthMethod := "none"
-	if len(client.GetHashedSecret()) > 0 {
+	if len(client.Secret) > 0 {
 		tokenEndpointAuthMethod = "client_secret_post"
 	}
 
 	metadata := oauth.BuildClientMetadata(
-		client.GetID(),
-		client.GetRedirectURIs(),
-		client.GetGrantTypes(),
-		client.GetResponseTypes(),
-		client.GetScopes(),
+		client.ID,
+		client.RedirectURIs,
+		client.GrantTypes,
+		client.ResponseTypes,
+		client.Scopes,
 		tokenEndpointAuthMethod,
-		0,
+		client.CreatedAt,
 	)
 
 	w.Header().Set("Content-Type", "application/json")
@@ -417,19 +421,17 @@ func (h *AuthHandlers) TokenHandler(w http.ResponseWriter, r *http.Request) {
 	h.oauthProvider.WriteAccessResponse(ctx, w, accessRequest, response)
 }
 
-// buildClientRegistrationResponse creates the registration response for a client
-func (h *AuthHandlers) buildClientRegistrationResponse(client *fosite.DefaultClient, tokenEndpointAuthMethod string, clientSecret string) map[string]any {
+func (h *AuthHandlers) buildClientRegistrationResponse(client *storage.Client, tokenEndpointAuthMethod string, clientSecret string) map[string]any {
 	response := map[string]any{
-		"client_id":                  client.GetID(),
-		"client_id_issued_at":        time.Now().Unix(),
-		"redirect_uris":              client.GetRedirectURIs(),
-		"grant_types":                client.GetGrantTypes(),
-		"response_types":             client.GetResponseTypes(),
-		"scope":                      strings.Join(client.GetScopes(), " "), // Space-separated string
+		"client_id":                  client.ID,
+		"client_id_issued_at":        client.CreatedAt,
+		"redirect_uris":              client.RedirectURIs,
+		"grant_types":                client.GrantTypes,
+		"response_types":             client.ResponseTypes,
+		"scope":                      strings.Join(client.Scopes, " "),
 		"token_endpoint_auth_method": tokenEndpointAuthMethod,
 	}
 
-	// Include client_secret only for confidential clients
 	if clientSecret != "" {
 		response["client_secret"] = clientSecret
 	}
@@ -461,14 +463,12 @@ func (h *AuthHandlers) RegisterHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check if client requests client_secret_post authentication
 	tokenEndpointAuthMethod := "none"
-	var client *fosite.DefaultClient
+	var client *storage.Client
 	var plaintextSecret string
 	clientID := crypto.GenerateSecureToken()
 
 	if authMethod, ok := metadata["token_endpoint_auth_method"].(string); ok && authMethod == "client_secret_post" {
-		// Create confidential client with a secret
 		plaintextSecret = crypto.GenerateSecureToken()
 		hashedSecret, err := crypto.HashClientSecret(plaintextSecret)
 		if err != nil {
@@ -476,12 +476,21 @@ func (h *AuthHandlers) RegisterHandler(w http.ResponseWriter, r *http.Request) {
 			jsonwriter.WriteInternalServerError(w, "Failed to create client")
 			return
 		}
-		client = h.storage.CreateConfidentialClient(clientID, hashedSecret, redirectURIs, scopes, h.authConfig.Issuer)
+		client, err = h.storage.CreateConfidentialClient(r.Context(), clientID, hashedSecret, redirectURIs, scopes, h.authConfig.Issuer)
+		if err != nil {
+			log.LogError("Failed to create confidential client: %v", err)
+			jsonwriter.WriteInternalServerError(w, "Failed to create client")
+			return
+		}
 		tokenEndpointAuthMethod = "client_secret_post"
 		log.Logf("Creating confidential client %s with client_secret_post authentication", clientID)
 	} else {
-		// Create public client (no secret)
-		client = h.storage.CreateClient(clientID, redirectURIs, scopes, h.authConfig.Issuer)
+		client, err = h.storage.CreateClient(r.Context(), clientID, redirectURIs, scopes, h.authConfig.Issuer)
+		if err != nil {
+			log.LogError("Failed to create client: %v", err)
+			jsonwriter.WriteInternalServerError(w, "Failed to create client")
+			return
+		}
 		log.Logf("Creating public client %s with no authentication", clientID)
 	}
 
@@ -640,7 +649,11 @@ func (h *AuthHandlers) CompleteOAuthHandler(w http.ResponseWriter, r *http.Reque
 	client, err := h.storage.GetClient(ctx, upstreamOAuthState.ClientID)
 	if err != nil {
 		log.LogError("Failed to get client: %v", err)
-		jsonwriter.WriteInternalServerError(w, "Client not found")
+		if errors.Is(err, fosite.ErrNotFound) {
+			jsonwriter.WriteNotFound(w, "Client not found")
+		} else {
+			jsonwriter.WriteInternalServerError(w, "Failed to retrieve client")
+		}
 		return
 	}
 

@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/ory/fosite"
-	fosite_storage "github.com/ory/fosite/storage"
 )
 
 // ErrUserTokenNotFound is returned when a user token doesn't exist
@@ -81,10 +80,9 @@ type Storage interface {
 	GetAuthorizeRequest(state string) (fosite.AuthorizeRequester, bool)
 
 	// OAuth client management
-	CreateClient(clientID string, redirectURIs []string, scopes []string, issuer string) *fosite.DefaultClient
-	CreateConfidentialClient(clientID string, hashedSecret []byte, redirectURIs []string, scopes []string, issuer string) *fosite.DefaultClient
-	GetAllClients() map[string]fosite.Client
-	GetMemoryStore() *fosite_storage.MemoryStore
+	CreateClient(ctx context.Context, clientID string, redirectURIs []string, scopes []string, issuer string) (*Client, error)
+	CreateConfidentialClient(ctx context.Context, clientID string, hashedSecret []byte, redirectURIs []string, scopes []string, issuer string) (*Client, error)
+	GetClientWithMetadata(ctx context.Context, clientID string) (*Client, error)
 
 	// User token storage
 	UserTokenStore

@@ -128,7 +128,7 @@ func (h *Handler) handleMessage(w http.ResponseWriter, r *http.Request) {
 	case "tools/list":
 		h.handleToolsList(w, &request)
 	case "tools/call":
-		h.handleToolCall(w, &request)
+		h.handleToolCall(r.Context(), w, &request)
 	default:
 		jsonrpc.WriteError(w, request.ID, jsonrpc.MethodNotFound, "Method not found")
 	}
@@ -173,7 +173,7 @@ func (h *Handler) handleToolsList(w http.ResponseWriter, req *jsonrpc.Request) {
 }
 
 // handleToolCall handles tool execution requests
-func (h *Handler) handleToolCall(w http.ResponseWriter, req *jsonrpc.Request) {
+func (h *Handler) handleToolCall(ctx context.Context, w http.ResponseWriter, req *jsonrpc.Request) {
 	var params struct {
 		Name      string         `json:"name"`
 		Arguments map[string]any `json:"arguments"`
@@ -184,8 +184,7 @@ func (h *Handler) handleToolCall(w http.ResponseWriter, req *jsonrpc.Request) {
 		return
 	}
 
-	// Execute the tool
-	result, err := h.server.HandleToolCall(context.Background(), params.Name, params.Arguments)
+	result, err := h.server.HandleToolCall(ctx, params.Name, params.Arguments)
 	if err != nil {
 		jsonrpc.WriteError(w, req.ID, jsonrpc.InternalError, err.Error())
 		return

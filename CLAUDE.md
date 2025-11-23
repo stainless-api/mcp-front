@@ -418,6 +418,29 @@ Remember: The mascot is an easter egg, not a distraction. Subtle movements creat
 
 3. **Don't bring patterns from other systems** - Understand THIS system's design choices.
 
+### Approaching Problems
+
+**Never rush.** There is no time pressure. Approach every question with curiosity and investigation, not urgency.
+
+When faced with a problem or decision:
+
+1. **Seek the complete picture first** - Don't jump to solutions
+2. **Investigate thoroughly** - Read the code, understand the architecture, trace the data flow
+3. **Ask clarifying questions** - What's the actual use case? What's the value? What are the tradeoffs?
+4. **Think architecturally** - What's the right abstraction? Where do concerns belong?
+5. **Expand the solution space** - Don't settle on the first approach. Be creative. What if we ignored time and complexity? Would a larger refactoring lead to a fundamentally better design?
+6. **Consider future needs** - What might we want later? Does this approach scale to those needs?
+7. **Only then decide** - After exploring fully, choose the approach
+
+The question is never "what's the quick fix?" The question is "what's the right design given what we now understand?"
+
+**Example progression:**
+- ❌ "Here are three options, which one do you want?"
+- ✅ "Let me investigate how this works... [reads code]... I see we already store timestamps in Firestore but lose them during conversion. The core issue is fosite.DefaultClient can't hold metadata. What's the actual value of exposing this timestamp?"
+- ✅✅ "One approach is adding GetClientMetadata() alongside GetClient(). But let me think bigger - what if we stopped being constrained by fosite's storage interface? We could build our own Client type with metadata and use fosite as an implementation detail. Larger refactoring, but natural place for future metadata needs. What's your instinct on likely future requirements?"
+
+Don't get anchored on the first solution. Explore the design space. Sometimes the right answer is a bigger change that solves the problem more fundamentally.
+
 ### When You're Stuck
 
 - **ASK QUESTIONS** - Even "dumb" questions are better than wrong assumptions

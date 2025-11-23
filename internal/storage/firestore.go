@@ -3,7 +3,6 @@ package storage
 import (
 	"context"
 	"fmt"
-	"maps"
 	"sync"
 	"time"
 
@@ -21,15 +20,17 @@ import (
 //
 // Error handling strategy:
 // - Read operations: Return errors (data must be available for auth to work)
-// - Write operations: Log and continue (fallback to memory cache is acceptable)
+// - Critical writes (client creation): Return errors (must be durable)
+// - Ephemeral writes (session tracking): Log and continue (acceptable to lose)
 //
-// This allows the system to function even if Firestore has transient issues,
-// while ensuring that missing data causes explicit failures.
+// This ensures critical data is properly persisted while allowing the system
+// to function during transient Firestore issues for non-critical operations.
 type FirestoreStorage struct {
 	*storage.MemoryStore
 	client          *firestore.Client
-	stateCache      sync.Map     // In-memory cache for authorize requests (short-lived)
-	clientsMutex    sync.RWMutex // For thread-safe client access
+	stateCache      sync.Map           // In-memory cache for authorize requests (short-lived)
+	clients         map[string]*Client // Client cache with metadata
+	clientsMutex    sync.RWMutex       // For thread-safe client access
 	projectID       string
 	collection      string
 	encryptor       crypto.Encryptor
@@ -63,11 +64,9 @@ type OAuthClientEntity struct {
 	CreatedAt     int64    `firestore:"created_at"`
 }
 
-// ToFositeClient converts the Firestore entity to a fosite client
-func (e *OAuthClientEntity) ToFositeClient(encryptor crypto.Encryptor) (*fosite.DefaultClient, error) {
+func (e *OAuthClientEntity) ToClient(encryptor crypto.Encryptor) (*Client, error) {
 	var secret []byte
 	if e.Secret != nil {
-		// Decrypt the secret
 		decrypted, err := encryptor.Decrypt(*e.Secret)
 		if err != nil {
 			return nil, fmt.Errorf("decrypting client secret: %w", err)
@@ -75,7 +74,7 @@ func (e *OAuthClientEntity) ToFositeClient(encryptor crypto.Encryptor) (*fosite.
 		secret = []byte(decrypted)
 	}
 
-	return &fosite.DefaultClient{
+	return &Client{
 		ID:            e.ID,
 		Secret:        secret,
 		RedirectURIs:  e.RedirectURIs,
@@ -84,15 +83,14 @@ func (e *OAuthClientEntity) ToFositeClient(encryptor crypto.Encryptor) (*fosite.
 		ResponseTypes: e.ResponseTypes,
 		Audience:      e.Audience,
 		Public:        e.Public,
+		CreatedAt:     e.CreatedAt,
 	}, nil
 }
 
-// FromFositeClient converts a fosite client to a Firestore entity
-func FromFositeClient(client fosite.Client, encryptor crypto.Encryptor, createdAt int64) (*OAuthClientEntity, error) {
+func ClientToEntity(client *Client, encryptor crypto.Encryptor) (*OAuthClientEntity, error) {
 	var secret *string
-	if clientSecret := client.GetHashedSecret(); len(clientSecret) > 0 {
-		// Encrypt the secret before storing
-		encrypted, err := encryptor.Encrypt(string(clientSecret))
+	if len(client.Secret) > 0 {
+		encrypted, err := encryptor.Encrypt(string(client.Secret))
 		if err != nil {
 			return nil, fmt.Errorf("encrypting client secret: %w", err)
 		}
@@ -100,15 +98,15 @@ func FromFositeClient(client fosite.Client, encryptor crypto.Encryptor, createdA
 	}
 
 	return &OAuthClientEntity{
-		ID:            client.GetID(),
+		ID:            client.ID,
 		Secret:        secret,
-		RedirectURIs:  client.GetRedirectURIs(),
-		Scopes:        client.GetScopes(),
-		GrantTypes:    client.GetGrantTypes(),
-		ResponseTypes: client.GetResponseTypes(),
-		Audience:      client.GetAudience(),
-		Public:        client.IsPublic(),
-		CreatedAt:     createdAt,
+		RedirectURIs:  client.RedirectURIs,
+		Scopes:        client.Scopes,
+		GrantTypes:    client.GrantTypes,
+		ResponseTypes: client.ResponseTypes,
+		Audience:      client.Audience,
+		Public:        client.Public,
+		CreatedAt:     client.CreatedAt,
 	}, nil
 }
 
@@ -143,6 +141,7 @@ func NewFirestoreStorage(ctx context.Context, projectID, database, collection st
 	storage := &FirestoreStorage{
 		MemoryStore:     storage.NewMemoryStore(),
 		client:          client,
+		clients:         make(map[string]*Client),
 		projectID:       projectID,
 		collection:      collection,
 		encryptor:       encryptor,
@@ -182,13 +181,12 @@ func (s *FirestoreStorage) loadClientsFromFirestore(ctx context.Context) error {
 			continue
 		}
 
-		// Store in memory for fast access
-		client, err := entity.ToFositeClient(s.encryptor)
+		client, err := entity.ToClient(s.encryptor)
 		if err != nil {
 			log.LogError("Failed to decrypt client secret (client_id: %s): %v", entity.ID, err)
 			continue
 		}
-		s.MemoryStore.Clients[entity.ID] = client
+		s.clients[entity.ID] = client
 		loadedCount++
 	}
 
@@ -210,31 +208,35 @@ func (s *FirestoreStorage) GetAuthorizeRequest(state string) (fosite.AuthorizeRe
 	return nil, false
 }
 
-// GetClient retrieves a client from memory cache, loading from Firestore on miss.
-// Concurrent cache misses may load the same client multiple times from Firestore.
-// This is acceptable because: (1) clients are loaded once at startup via loadAllClients,
-// so misses only occur for newly registered clients, and (2) duplicate Firestore reads
-// are safe (idempotent) and cost-negligible at mcp-front's scale.
 func (s *FirestoreStorage) GetClient(ctx context.Context, id string) (fosite.Client, error) {
 	s.clientsMutex.RLock()
-	cl, ok := s.MemoryStore.Clients[id]
+	client, ok := s.clients[id]
 	s.clientsMutex.RUnlock()
 
 	if ok {
-		return cl, nil
+		return client.ToFositeClient(), nil
 	}
 
-	// Cache miss - load from Firestore
-	// Multiple threads might load simultaneously, but this is rare and safe
 	client, err := s.loadClientFromFirestore(ctx, id)
 	if err != nil {
-		return nil, fosite.ErrNotFound
+		return nil, err
 	}
-	return client, nil
+	return client.ToFositeClient(), nil
 }
 
-// loadClientFromFirestore loads a single client from Firestore
-func (s *FirestoreStorage) loadClientFromFirestore(ctx context.Context, clientID string) (fosite.Client, error) {
+func (s *FirestoreStorage) GetClientWithMetadata(ctx context.Context, clientID string) (*Client, error) {
+	s.clientsMutex.RLock()
+	client, ok := s.clients[clientID]
+	s.clientsMutex.RUnlock()
+
+	if ok {
+		return client, nil
+	}
+
+	return s.loadClientFromFirestore(ctx, clientID)
+}
+
+func (s *FirestoreStorage) loadClientFromFirestore(ctx context.Context, clientID string) (*Client, error) {
 	doc, err := s.client.Collection(s.collection).Doc(clientID).Get(ctx)
 	if err != nil {
 		if status.Code(err) == codes.NotFound {
@@ -248,115 +250,88 @@ func (s *FirestoreStorage) loadClientFromFirestore(ctx context.Context, clientID
 		return nil, fmt.Errorf("failed to unmarshal client: %w", err)
 	}
 
-	client, err := entity.ToFositeClient(s.encryptor)
+	client, err := entity.ToClient(s.encryptor)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt client secret: %w", err)
 	}
 
-	// Store in memory for future fast access
 	s.clientsMutex.Lock()
-	s.MemoryStore.Clients[clientID] = client
+	s.clients[clientID] = client
 	s.clientsMutex.Unlock()
 
 	return client, nil
 }
 
-// CreateClient creates a dynamic client and stores it in both memory and Firestore
-func (s *FirestoreStorage) CreateClient(clientID string, redirectURIs []string, scopes []string, issuer string) *fosite.DefaultClient {
-	// Create as public client (no secret) since MCP Inspector is a public client
-	client := &fosite.DefaultClient{
+func (s *FirestoreStorage) CreateClient(ctx context.Context, clientID string, redirectURIs []string, scopes []string, issuer string) (*Client, error) {
+	client := &Client{
 		ID:            clientID,
-		Secret:        nil, // Public client - no secret
+		Secret:        nil,
 		RedirectURIs:  redirectURIs,
 		Scopes:        scopes,
 		GrantTypes:    []string{"authorization_code", "refresh_token"},
 		ResponseTypes: []string{"code"},
 		Audience:      []string{issuer},
-		Public:        true, // Mark as public client
+		Public:        true,
+		CreatedAt:     time.Now().Unix(),
 	}
 
-	// Store in Firestore
-	ctx := context.Background()
-	entity, err := FromFositeClient(client, s.encryptor, time.Now().Unix())
+	entity, err := ClientToEntity(client, s.encryptor)
 	if err != nil {
 		log.LogError("Failed to encrypt client for Firestore (client_id: %s): %v", clientID, err)
-		// Continue with in-memory storage even if encryption fails
-	} else {
-		_, err := s.client.Collection(s.collection).Doc(clientID).Set(ctx, entity)
-		if err != nil {
-			log.LogError("Failed to store client in Firestore (client_id: %s): %v", clientID, err)
-			// Continue with in-memory storage even if Firestore fails
-		} else {
-			log.Logf("Stored client %s in Firestore", clientID)
-		}
+		return nil, fmt.Errorf("failed to encrypt client: %w", err)
 	}
 
-	// Thread-safe client storage in memory
+	if _, err := s.client.Collection(s.collection).Doc(clientID).Set(ctx, entity); err != nil {
+		log.LogError("Failed to store client in Firestore (client_id: %s): %v", clientID, err)
+		return nil, fmt.Errorf("failed to store client in Firestore: %w", err)
+	}
+
+	log.Logf("Stored client %s in Firestore", clientID)
+
 	s.clientsMutex.Lock()
-	s.MemoryStore.Clients[clientID] = client
-	clientCount := len(s.MemoryStore.Clients)
+	s.clients[clientID] = client
+	clientCount := len(s.clients)
 	s.clientsMutex.Unlock()
 
 	log.Logf("Created client %s, redirect_uris: %v, scopes: %v", clientID, redirectURIs, scopes)
 	log.Logf("Total clients in storage: %d", clientCount)
-	return client
+	return client, nil
 }
 
-// CreateConfidentialClient creates a dynamic confidential client with a secret and stores it in both memory and Firestore
-func (s *FirestoreStorage) CreateConfidentialClient(clientID string, hashedSecret []byte, redirectURIs []string, scopes []string, issuer string) *fosite.DefaultClient {
-	// Create as confidential client (with secret)
-	client := &fosite.DefaultClient{
+func (s *FirestoreStorage) CreateConfidentialClient(ctx context.Context, clientID string, hashedSecret []byte, redirectURIs []string, scopes []string, issuer string) (*Client, error) {
+	client := &Client{
 		ID:            clientID,
-		Secret:        hashedSecret, // Already hashed
+		Secret:        hashedSecret,
 		RedirectURIs:  redirectURIs,
 		Scopes:        scopes,
 		GrantTypes:    []string{"authorization_code", "refresh_token"},
 		ResponseTypes: []string{"code"},
 		Audience:      []string{issuer},
-		Public:        false, // Mark as confidential client
+		Public:        false,
+		CreatedAt:     time.Now().Unix(),
 	}
 
-	// Store in Firestore
-	ctx := context.Background()
-	entity, err := FromFositeClient(client, s.encryptor, time.Now().Unix())
+	entity, err := ClientToEntity(client, s.encryptor)
 	if err != nil {
 		log.LogError("Failed to encrypt client for Firestore (client_id: %s): %v", clientID, err)
-		// Continue with in-memory storage even if encryption fails
-	} else {
-		_, err := s.client.Collection(s.collection).Doc(clientID).Set(ctx, entity)
-		if err != nil {
-			log.LogError("Failed to store client in Firestore (client_id: %s): %v", clientID, err)
-			// Continue with in-memory storage even if Firestore fails
-		} else {
-			log.Logf("Stored confidential client %s in Firestore", clientID)
-		}
+		return nil, fmt.Errorf("failed to encrypt client: %w", err)
 	}
 
-	// Thread-safe client storage in memory
+	if _, err := s.client.Collection(s.collection).Doc(clientID).Set(ctx, entity); err != nil {
+		log.LogError("Failed to store client in Firestore (client_id: %s): %v", clientID, err)
+		return nil, fmt.Errorf("failed to store client in Firestore: %w", err)
+	}
+
+	log.Logf("Stored confidential client %s in Firestore", clientID)
+
 	s.clientsMutex.Lock()
-	s.MemoryStore.Clients[clientID] = client
-	clientCount := len(s.MemoryStore.Clients)
+	s.clients[clientID] = client
+	clientCount := len(s.clients)
 	s.clientsMutex.Unlock()
 
 	log.Logf("Created confidential client %s, redirect_uris: %v, scopes: %v", clientID, redirectURIs, scopes)
 	log.Logf("Total clients in storage: %d", clientCount)
-	return client
-}
-
-// GetAllClients returns all clients thread-safely (for debugging)
-func (s *FirestoreStorage) GetAllClients() map[string]fosite.Client {
-	s.clientsMutex.RLock()
-	defer s.clientsMutex.RUnlock()
-
-	// Create a copy to avoid race conditions
-	clients := make(map[string]fosite.Client, len(s.MemoryStore.Clients))
-	maps.Copy(clients, s.MemoryStore.Clients)
-	return clients
-}
-
-// GetMemoryStore returns the underlying MemoryStore for fosite
-func (s *FirestoreStorage) GetMemoryStore() *storage.MemoryStore {
-	return s.MemoryStore
+	return client, nil
 }
 
 // Close closes the Firestore client

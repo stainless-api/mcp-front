@@ -12,7 +12,6 @@ import (
 func TestMemoryStorageConfidentialClient(t *testing.T) {
 	storage := NewMemoryStorage()
 
-	// Generate test data
 	clientID := "test-client-123"
 	secret, err := crypto.GenerateClientSecret()
 	assert.NoError(t, err)
@@ -23,18 +22,16 @@ func TestMemoryStorageConfidentialClient(t *testing.T) {
 	scopes := []string{"read", "write"}
 	issuer := "https://issuer.example.com"
 
-	// Create confidential client
-	client := storage.CreateConfidentialClient(clientID, hashedSecret, redirectURIs, scopes, issuer)
+	client, err := storage.CreateConfidentialClient(context.Background(), clientID, hashedSecret, redirectURIs, scopes, issuer)
+	assert.NoError(t, err)
 
-	// Verify client properties
-	assert.Equal(t, clientID, client.GetID())
-	assert.Equal(t, hashedSecret, client.GetHashedSecret())
-	assert.Equal(t, redirectURIs, client.GetRedirectURIs())
-	assert.ElementsMatch(t, scopes, client.GetScopes())
-	assert.ElementsMatch(t, []string{issuer}, client.GetAudience())
-	assert.False(t, client.IsPublic(), "Confidential client should not be public")
+	assert.Equal(t, clientID, client.ID)
+	assert.Equal(t, hashedSecret, client.Secret)
+	assert.Equal(t, redirectURIs, client.RedirectURIs)
+	assert.ElementsMatch(t, scopes, client.Scopes)
+	assert.ElementsMatch(t, []string{issuer}, client.Audience)
+	assert.False(t, client.Public)
 
-	// Verify client is stored
 	ctx := context.Background()
 	storedClient, err := storage.GetClient(ctx, clientID)
 	assert.NoError(t, err)
@@ -42,7 +39,6 @@ func TestMemoryStorageConfidentialClient(t *testing.T) {
 	assert.Equal(t, clientID, storedClient.GetID())
 	assert.False(t, storedClient.IsPublic())
 
-	// Verify the stored secret can be used for authentication
 	err = bcrypt.CompareHashAndPassword(storedClient.GetHashedSecret(), []byte(secret))
 	assert.NoError(t, err, "Original secret should verify against stored hash")
 }
@@ -50,15 +46,15 @@ func TestMemoryStorageConfidentialClient(t *testing.T) {
 func TestMemoryStoragePublicVsConfidential(t *testing.T) {
 	storage := NewMemoryStorage()
 
-	// Create public client
-	publicClient := storage.CreateClient("public-123", []string{"https://public.com/callback"}, []string{"read"}, "https://issuer.com")
-	assert.True(t, publicClient.IsPublic())
-	assert.Nil(t, publicClient.GetHashedSecret())
+	publicClient, err := storage.CreateClient(context.Background(), "public-123", []string{"https://public.com/callback"}, []string{"read"}, "https://issuer.com")
+	assert.NoError(t, err)
+	assert.True(t, publicClient.Public)
+	assert.Nil(t, publicClient.Secret)
 
-	// Create confidential client
 	hashedSecret := []byte("hashed-secret")
-	confidentialClient := storage.CreateConfidentialClient("confidential-123", hashedSecret, []string{"https://confidential.com/callback"}, []string{"read"}, "https://issuer.com")
-	assert.False(t, confidentialClient.IsPublic())
-	assert.NotNil(t, confidentialClient.GetHashedSecret())
-	assert.Equal(t, hashedSecret, confidentialClient.GetHashedSecret())
+	confidentialClient, err := storage.CreateConfidentialClient(context.Background(), "confidential-123", hashedSecret, []string{"https://confidential.com/callback"}, []string{"read"}, "https://issuer.com")
+	assert.NoError(t, err)
+	assert.False(t, confidentialClient.Public)
+	assert.NotNil(t, confidentialClient.Secret)
+	assert.Equal(t, hashedSecret, confidentialClient.Secret)
 }
