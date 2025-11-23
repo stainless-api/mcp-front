@@ -101,6 +101,45 @@ func (h *AuthHandlers) ProtectedResourceMetadataHandler(w http.ResponseWriter, r
 	}
 }
 
+// ClientMetadataHandler serves OAuth 2.0 Client Metadata for dynamic discovery
+func (h *AuthHandlers) ClientMetadataHandler(w http.ResponseWriter, r *http.Request) {
+	clientID := r.PathValue("client_id")
+	if clientID == "" {
+		jsonwriter.WriteBadRequest(w, "Missing client_id")
+		return
+	}
+
+	log.Logf("Client metadata handler called for client: %s", clientID)
+
+	client, err := h.storage.GetClient(r.Context(), clientID)
+	if err != nil {
+		log.LogError("Failed to get client %s: %v", clientID, err)
+		jsonwriter.WriteNotFound(w, "Client not found")
+		return
+	}
+
+	tokenEndpointAuthMethod := "none"
+	if len(client.GetHashedSecret()) > 0 {
+		tokenEndpointAuthMethod = "client_secret_post"
+	}
+
+	metadata := oauth.BuildClientMetadata(
+		client.GetID(),
+		client.GetRedirectURIs(),
+		client.GetGrantTypes(),
+		client.GetResponseTypes(),
+		client.GetScopes(),
+		tokenEndpointAuthMethod,
+		0,
+	)
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(metadata); err != nil {
+		log.LogError("Failed to encode client metadata: %v", err)
+		jsonwriter.WriteInternalServerError(w, "Internal server error")
+	}
+}
+
 // AuthorizeHandler handles OAuth 2.0 authorization requests
 func (h *AuthHandlers) AuthorizeHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()

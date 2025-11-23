@@ -107,7 +107,7 @@ func TestHandler_Message_Initialize(t *testing.T) {
 	result, ok := response.Result.(map[string]any)
 	require.True(t, ok)
 
-	assert.Equal(t, "2024-11-05", result["protocolVersion"])
+	assert.Equal(t, "2025-11-25", result["protocolVersion"])
 	assert.Contains(t, result, "capabilities")
 	assert.Contains(t, result, "serverInfo")
 }

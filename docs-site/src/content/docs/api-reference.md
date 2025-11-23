@@ -75,6 +75,12 @@ GET /.well-known/oauth-protected-resource
 
 OAuth 2.0 Protected Resource Metadata (RFC 9728). Describes which authorization servers can issue tokens for this resource server.
 
+```
+GET /clients/{client_id}
+```
+
+OAuth 2.0 Client Metadata. Retrieves public metadata for a registered client. Returns client configuration including redirect URIs, grant types, response types, scopes, and authentication method. Useful for OAuth client discovery and verification.
+
 ### Authorization
 
 ```

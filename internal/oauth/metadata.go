@@ -1,6 +1,8 @@
 package oauth
 
 import (
+	"strings"
+
 	"github.com/dgellow/mcp-front/internal/urlutil"
 )
 
@@ -70,4 +72,28 @@ func ProtectedResourceMetadata(issuer string) (map[string]any, error) {
 			},
 		},
 	}, nil
+}
+
+// ClientMetadata represents OAuth 2.0 client metadata
+type ClientMetadata struct {
+	ClientID                string   `json:"client_id"`
+	ClientIDIssuedAt        int64    `json:"client_id_issued_at,omitempty"`
+	RedirectURIs            []string `json:"redirect_uris"`
+	GrantTypes              []string `json:"grant_types"`
+	ResponseTypes           []string `json:"response_types"`
+	Scope                   string   `json:"scope"`
+	TokenEndpointAuthMethod string   `json:"token_endpoint_auth_method"`
+}
+
+// BuildClientMetadata creates client metadata for public discovery
+func BuildClientMetadata(clientID string, redirectURIs []string, grantTypes []string, responseTypes []string, scopes []string, tokenEndpointAuthMethod string, issuedAt int64) ClientMetadata {
+	return ClientMetadata{
+		ClientID:                clientID,
+		ClientIDIssuedAt:        issuedAt,
+		RedirectURIs:            redirectURIs,
+		GrantTypes:              grantTypes,
+		ResponseTypes:           responseTypes,
+		Scope:                   strings.Join(scopes, " "),
+		TokenEndpointAuthMethod: tokenEndpointAuthMethod,
+	}
 }

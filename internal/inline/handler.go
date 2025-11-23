@@ -137,7 +137,7 @@ func (h *Handler) handleMessage(w http.ResponseWriter, r *http.Request) {
 // handleInitialize handles the initialize request
 func (h *Handler) handleInitialize(w http.ResponseWriter, req *jsonrpc.Request) {
 	result := map[string]any{
-		"protocolVersion": "2024-11-05",
+		"protocolVersion": "2025-11-25",
 		"capabilities":    h.server.GetCapabilities(),
 		"serverInfo": map[string]any{
 			"name":    h.name,
