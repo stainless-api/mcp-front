@@ -66,8 +66,9 @@ func (m *mockSessionManager) GetOrCreateSession(ctx context.Context, key client.
 	return args.Get(0).(*client.StdioSession), args.Error(1)
 }
 
-func (m *mockSessionManager) RemoveSession(key client.SessionKey) {
-	m.Called(key)
+func (m *mockSessionManager) RemoveSession(key client.SessionKey) error {
+	args := m.Called(key)
+	return args.Error(0)
 }
 
 func (m *mockSessionManager) Shutdown() {
@@ -403,8 +404,8 @@ func TestForwardMessageToBackend_HeaderHandling(t *testing.T) {
 	assert.Equal(t, "application/json; charset=utf-8", capturedHeaders.Get("Content-Type"))
 	assert.Equal(t, "Bearer config-token", capturedHeaders.Get("Authorization"))
 	assert.Equal(t, "custom-value", capturedHeaders.Get("X-Custom"))
-	// Original request headers should not be forwarded (except Content-Type)
-	assert.Empty(t, capturedHeaders.Get("X-Request-Header"))
+	// Original request headers should be forwarded (except sensitive ones)
+	assert.Equal(t, "request-value", capturedHeaders.Get("X-Request-Header"))
 
 	// Verify response
 	assert.Equal(t, http.StatusCreated, rec.Code)

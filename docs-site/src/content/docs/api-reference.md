@@ -27,14 +27,13 @@ Returns service health status. Use this for monitoring and load balancer health 
 ### SSE endpoint
 
 ```
-GET /sse
 GET /{server}/sse
 
 Authorization: Bearer <token>
 Accept: text/event-stream
 ```
 
-Main endpoint for MCP protocol communication over Server-Sent Events.
+Main endpoint for MCP protocol communication over Server-Sent Events. The `{server}` path segment must match an MCP server name from your configuration.
 
 **Request routing:**
 
@@ -42,16 +41,11 @@ Main endpoint for MCP protocol communication over Server-Sent Events.
 
 The request flow:
 
-1. Claude connects via SSE
-2. MCP Front validates auth token
-3. MCP Front connects to MCP server
-4. Bidirectional message streaming
-
-**Server selection:**
-
-- `/sse` - Uses first server in config
-- `/{server}/sse` - Uses named server
-- `/sse?server={name}` - Alternative syntax
+1. Claude connects via SSE to `/{server}/sse`
+2. MCP Front validates auth token (OAuth or bearer)
+3. MCP Front validates token audience matches requested server (RFC 8707)
+4. MCP Front connects to configured MCP server
+5. Bidirectional message streaming between Claude and MCP server
 
 **Example stream:**
 
@@ -73,7 +67,13 @@ Only available when using OAuth auth:
 GET /.well-known/oauth-authorization-server
 ```
 
-OAuth 2.1 metadata for client configuration.
+OAuth 2.0 Authorization Server Metadata (RFC 8414). Describes supported endpoints, grant types, and features.
+
+```
+GET /.well-known/oauth-protected-resource
+```
+
+OAuth 2.0 Protected Resource Metadata (RFC 9728). Describes which authorization servers can issue tokens for this resource server.
 
 ### Authorization
 
@@ -84,10 +84,21 @@ GET /authorize?
   redirect_uri={uri}&
   state={state}&
   code_challenge={challenge}&
-  code_challenge_method=S256
+  code_challenge_method=S256&
+  resource={service_uri}
 ```
 
-Redirects to Google for authentication.
+Initiates OAuth authorization flow. Redirects to Google for authentication.
+
+**Resource parameter (RFC 8707):**
+
+The optional `resource` parameter requests per-service audience claims in the issued token. Pass the full URI of the target service:
+
+```
+resource=https://your-domain.com/postgres
+```
+
+Tokens with audience claims only work for the specified service. This provides defense-in-depth by preventing token reuse across services.
 
 ### Token exchange
 
@@ -168,23 +179,27 @@ OAuth callback. Set as redirect URI in service OAuth config.
 
 ## Authentication
 
+MCP Front supports two authentication methods:
+
 ### Bearer token
 
 ```
 Authorization: Bearer your-token-here
 ```
 
-Token must match one configured in `auth.tokens`.
+Per-service bearer tokens configured in each MCP server's `serviceAuths` array. Useful for development and alternative MCP clients.
 
-### OAuth 2.1
+### OAuth 2.0 with PKCE
+
+Claude.ai uses this flow:
 
 1. Register client via `/register`
-2. Direct user to `/authorize`
+2. Direct user to `/authorize` (optionally with `resource` parameter)
 3. Exchange code for token at `/token`
-4. Use token in Authorization header
+4. Use access token in Authorization header for `/{server}/sse` requests
 
-PKCE is required for all OAuth flows.
+PKCE is required for all OAuth flows. Tokens include audience claims scoped to specific services per RFC 8707.
 
 ## Errors
 
-OAuth 2.1 format with `error` and `error_description` fields. Common codes: `invalid_request` (bad parameters), `invalid_client` (unknown client), `invalid_grant` (bad auth code), `unauthorized_client` (client can't use grant type), `server_error` (internal error).
+OAuth format with `error` and `error_description` fields. Common codes: `invalid_request` (bad parameters), `invalid_client` (unknown client), `invalid_grant` (bad auth code), `unauthorized_client` (client can't use grant type), `server_error` (internal error).

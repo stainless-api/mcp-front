@@ -1,15 +1,15 @@
 // @ts-check
-import { defineConfig } from 'astro/config';
-import starlight from '@astrojs/starlight';
+import { defineConfig } from 'astro/config'
+import starlight from '@astrojs/starlight'
 
 // https://astro.build/config
 export default defineConfig({
-	site: 'https://dgellow.github.io',
+	site: 'https://stainless-api.github.io',
 	base: '/mcp-front',
 	integrations: [
 		starlight({
 			title: '',
-			description: 'OAuth 2.1 authenticated proxy for Model Context Protocol servers',
+			description: 'Auth proxy for MCP servers',
 			logo: {
 				alt: 'MCP Front Logo',
 				light: './src/assets/logo-light.svg',
@@ -38,4 +38,4 @@ export default defineConfig({
 			},
 		}),
 	],
-});
+})

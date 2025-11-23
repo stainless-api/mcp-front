@@ -25,7 +25,7 @@ import (
 type SessionManager interface {
 	GetSession(key client.SessionKey) (*client.StdioSession, bool)
 	GetOrCreateSession(ctx context.Context, key client.SessionKey, config *config.MCPClientConfig, info mcp.Implementation, setupBaseURL string, userToken string) (*client.StdioSession, error)
-	RemoveSession(key client.SessionKey)
+	RemoveSession(key client.SessionKey) error
 	Shutdown()
 }
 
@@ -353,13 +353,15 @@ func (h *MCPHandler) forwardMessageToBackend(ctx context.Context, w http.Respons
 		return
 	}
 
-	req.Header.Set("Content-Type", r.Header.Get("Content-Type"))
-	if ct := r.Header.Get("Content-Type"); ct != "" {
-		req.Header.Set("Content-Type", ct)
-	} else {
+	// Copy relevant headers from original request, excluding hop-by-hop and sensitive headers
+	copyRequestHeaders(req.Header, r.Header)
+
+	// Ensure Content-Type is set
+	if req.Header.Get("Content-Type") == "" {
 		req.Header.Set("Content-Type", "application/json")
 	}
 
+	// Add configured headers (e.g., auth headers)
 	for k, v := range config.Headers {
 		req.Header.Set(k, v)
 	}

@@ -1,0 +1,32 @@
+{
+  "version": "v0.0.1-DEV_EDITION_EXPECT_CHANGES",
+  "proxy": {
+    "baseURL": "http://localhost:8080",
+    "addr": ":8080",
+    "name": "mcp-front-rfc8707-test",
+    "auth": {
+      "kind": "oauth",
+      "issuer": "http://localhost:8080",
+      "gcpProject": "test-project",
+      "allowedDomains": ["test.com"],
+      "allowedOrigins": ["https://claude.ai"],
+      "tokenTtl": "1h",
+      "storage": "memory",
+      "googleClientId": {"$env": "GOOGLE_CLIENT_ID"},
+      "googleClientSecret": {"$env": "GOOGLE_CLIENT_SECRET"},
+      "googleRedirectUri": "http://localhost:8080/oauth/callback",
+      "jwtSecret": {"$env": "JWT_SECRET"},
+      "encryptionKey": {"$env": "ENCRYPTION_KEY"}
+    }
+  },
+  "mcpServers": {
+    "test-sse": {
+      "transportType": "sse",
+      "url": "http://localhost:3001/sse"
+    },
+    "test-streamable": {
+      "transportType": "streamable-http",
+      "url": "http://localhost:3002"
+    }
+  }
+}

@@ -12,7 +12,7 @@ go run honnef.co/go/tools/cmd/staticcheck@2025.1.1 ./...
 
 echo ""
 echo "==> Running golangci-lint..."
-go run github.com/golangci/golangci-lint/cmd/golangci-lint@v1.59.1 run --timeout=5m
+go run github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8 run --timeout=5m
 
 echo ""
 echo "==> Validating configs..."

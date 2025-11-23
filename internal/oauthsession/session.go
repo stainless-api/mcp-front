@@ -10,7 +10,7 @@ import (
 // Session extends DefaultSession with user information
 type Session struct {
 	*fosite.DefaultSession
-	UserInfo googleauth.UserInfo `json:"user_info,omitempty"`
+	UserInfo googleauth.UserInfo `json:"user_info"`
 }
 
 // NewSession creates a new session with user info

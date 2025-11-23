@@ -200,7 +200,7 @@ type AdminConfig struct {
 	AdminEmails []string `json:"adminEmails"`
 }
 
-// OAuthAuthConfig represents OAuth 2.1 configuration with resolved values
+// OAuthAuthConfig represents OAuth 2.0 configuration with resolved values
 type OAuthAuthConfig struct {
 	Kind                AuthKind      `json:"kind"`
 	Issuer              string        `json:"issuer"`

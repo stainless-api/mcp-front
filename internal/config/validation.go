@@ -6,6 +6,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // ValidationResult holds validation errors and warnings
@@ -97,6 +98,11 @@ func validateProxyStructure(rawConfig map[string]any, result *ValidationResult) 
 	// Check auth if present
 	if auth, ok := proxy["auth"].(map[string]any); ok {
 		validateAuthStructure(auth, result)
+	}
+
+	// Check sessions configuration if present
+	if sessions, ok := proxy["sessions"].(map[string]any); ok {
+		validateSessionsConfig(sessions, result)
 	}
 
 	// Check admin if present
@@ -595,6 +601,41 @@ func checkBashStyleSyntax(value any, path string, result *ValidationResult) {
 		for i, item := range v {
 			newPath := fmt.Sprintf("%s[%d]", path, i)
 			checkBashStyleSyntax(item, newPath, result)
+		}
+	}
+}
+
+// validateSessionsConfig checks session management configuration
+func validateSessionsConfig(sessions map[string]any, result *ValidationResult) {
+	// Parse timeout and cleanupInterval if both present
+	var timeoutStr, cleanupStr string
+	var hasTimeout, hasCleanup bool
+
+	if t, ok := sessions["timeout"].(string); ok {
+		timeoutStr = t
+		hasTimeout = true
+	}
+
+	if c, ok := sessions["cleanupInterval"].(string); ok {
+		cleanupStr = c
+		hasCleanup = true
+	}
+
+	// Only validate if both are present
+	if hasTimeout && hasCleanup {
+		timeoutDur, err1 := time.ParseDuration(timeoutStr)
+		cleanupDur, err2 := time.ParseDuration(cleanupStr)
+
+		if err1 == nil && err2 == nil {
+			if cleanupDur > timeoutDur {
+				result.Warnings = append(result.Warnings, ValidationError{
+					Path: "proxy.sessions",
+					Message: fmt.Sprintf(
+						"cleanupInterval (%s) is longer than timeout (%s). Expired sessions will remain in memory until cleanup runs.",
+						cleanupStr, timeoutStr,
+					),
+				})
+			}
 		}
 	}
 }

@@ -234,7 +234,7 @@ func setupAuthentication(ctx context.Context, cfg config.Config, store storage.S
 		return nil, nil, config.OAuthAuthConfig{}, nil, nil
 	}
 
-	log.LogDebug("initializing OAuth 2.1 components with clean constructors")
+	log.LogDebug("initializing OAuth components")
 
 	// Generate or validate JWT secret using clean constructor
 	jwtSecret, err := oauth.GenerateJWTSecret(string(oauthAuth.JWTSecret))
@@ -338,6 +338,7 @@ func buildHTTPHandler(
 
 		// Register OAuth endpoints
 		mux.Handle("/.well-known/oauth-authorization-server", server.ChainMiddleware(http.HandlerFunc(authHandlers.WellKnownHandler), oauthMiddleware...))
+		mux.Handle("/.well-known/oauth-protected-resource", server.ChainMiddleware(http.HandlerFunc(authHandlers.ProtectedResourceMetadataHandler), oauthMiddleware...))
 		mux.Handle("/authorize", server.ChainMiddleware(http.HandlerFunc(authHandlers.AuthorizeHandler), oauthMiddleware...))
 		mux.Handle("/oauth/callback", server.ChainMiddleware(http.HandlerFunc(authHandlers.GoogleCallbackHandler), oauthMiddleware...))
 		mux.Handle("/token", server.ChainMiddleware(http.HandlerFunc(authHandlers.TokenHandler), oauthMiddleware...))
@@ -423,7 +424,7 @@ func buildHTTPHandler(
 
 		// Add OAuth validation if OAuth is enabled
 		if oauthProvider != nil {
-			mcpMiddlewares = append(mcpMiddlewares, oauth.NewValidateTokenMiddleware(oauthProvider))
+			mcpMiddlewares = append(mcpMiddlewares, oauth.NewValidateTokenMiddleware(oauthProvider, authConfig.Issuer))
 		}
 
 		// Add service auth middleware if configured
@@ -535,7 +536,13 @@ func buildStdioSSEServer(serverName, baseURL string, sessionManager *client.Stdi
 				ServerName: handler.GetServerName(),
 				SessionID:  session.SessionID(),
 			}
-			sessionManager.RemoveSession(key)
+			if err := sessionManager.RemoveSession(key); err != nil {
+				log.LogErrorWithFields("server", "Failed to remove session on unregister", map[string]any{
+					"sessionID": session.SessionID(),
+					"user":      handler.GetUserEmail(),
+					"error":     err.Error(),
+				})
+			}
 
 			if storage := handler.GetStorage(); storage != nil {
 				if err := storage.RevokeSession(sessionCtx, session.SessionID()); err != nil {

@@ -1,8 +1,8 @@
-# mcp-front: Agent Instructions for OAuth 2.1 Authenticated MCP Proxy
+# mcp-front: Agent Instructions for OAuth Authenticated MCP Proxy
 
 ## Project Overview
 
-mcp-front is a Go-based OAuth 2.1 proxy server for MCP (Model Context Protocol) servers. It provides authentication and authorization for Claude.ai to access company resources.
+mcp-front is a Go-based OAuth proxy server for MCP (Model Context Protocol) servers. It provides authentication and authorization for Claude.ai to access company resources.
 
 ## Critical Rules for Agents
 
@@ -79,11 +79,41 @@ mcp-front is a Go-based OAuth 2.1 proxy server for MCP (Model Context Protocol) 
 
 ### OAuth Implementation
 
-- Uses fosite library for OAuth 2.1
+- Uses fosite library for OAuth
 - PKCE required for all flows
 - Supports both public and confidential clients
 - JWT secrets must be 32+ bytes for HMAC-SHA512/256
 - State parameter entropy varies by environment (0 for dev, 8 for prod)
+
+### Architecture: Per-Service Audience Validation (RFC 8707)
+
+mcp-front implements per-service audience claims per RFC 8707 and MCP Specification 2025-06-18. Each internal service (postgres, linear, gong) gets tokens scoped specifically to it.
+
+**Design rationale:**
+- mcp-front acts as unified OAuth server for internal MCP infrastructure
+- mcp-front validates tokens with per-service audience claims (satisfies "MCP servers MUST validate" requirement)
+- Backend MCP servers trust mcp-front implicitly (they're internal/private, not exposed to internet)
+- No JWKs published - backends don't validate JWT signatures (mcp-front does all validation)
+- HMAC signing is sufficient (mcp-front validates its own tokens)
+
+**Token flow:**
+1. Claude requests token with resource=https://mcp-integrations.stainless.com/postgres
+2. mcp-front issues token with aud=["https://mcp-integrations.stainless.com/postgres"]
+3. Claude sends token to /postgres/sse
+4. mcp-front validates audience claim matches "/postgres" path
+5. Proxies to postgres backend (trusted, no further validation needed)
+
+**Why per-service audience matters:**
+- Defense in depth: compromised postgres service can't reuse token for linear
+- Spec compliance: RFC 8707 requires audience-based token binding
+- Audit trail: tokens prove which services user accessed
+- Future-proof: aligns with MCP ecosystem expectations
+
+**Why NOT distributed JWT validation:**
+- Internal services shouldn't be exposed to internet (security boundary at mcp-front)
+- Don't trust N different services to implement auth correctly (centralized policy)
+- stdio servers physically can't validate tokens (no network endpoint)
+- Simpler operations (no key management, rotation, JWKs publishing)
 
 ### Storage Options
 
@@ -132,7 +162,7 @@ LOG_FORMAT="text"           # json or text
 ```
 internal/
 ├── config/         # Configuration parsing and validation
-├── oauth/          # OAuth 2.1 provider, JWT, middleware
+├── oauth/          # OAuth provider, JWT, middleware
 ├── googleauth/     # Google OAuth integration (pure functions)
 ├── adminauth/      # Admin authorization logic
 ├── browserauth/    # Browser session types (SessionCookie, AuthorizationState)

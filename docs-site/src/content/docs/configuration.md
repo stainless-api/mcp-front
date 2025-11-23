@@ -32,27 +32,15 @@ The `auth` section defines how users authenticate. The `mcpServers` section list
 
 ## Authentication configuration
 
-You have two options: bearer tokens or OAuth. Choose based on your security needs.
+MCP Front has three authentication layers:
 
-### Bearer tokens
+1. **User-to-proxy auth** (`proxy.auth`) - How users authenticate to MCP Front (OAuth with Google)
+2. **Proxy-to-server auth** (`serviceAuths`) - How MCP Front authenticates to backend MCP servers (bearer tokens or basic auth)
+3. **Per-service user tokens** (`userAuthentication`) - When backend services need individual user OAuth tokens (Linear, Notion, etc.)
 
-Map MCP server names to lists of valid tokens. The client's token must be in that server's list.
+### User authentication (proxy.auth)
 
-```json
-{
-  "auth": {
-    "kind": "bearerToken",
-    "tokens": {
-      "filesystem": ["dev-token-123", "prod-token-456"],
-      "database": [{ "$env": "DB_TOKEN" }]
-    }
-  }
-}
-```
-
-Each key matches an MCP server name from your `mcpServers` section. The value is an array of valid tokens. You can mix hardcoded strings and environment variables using `{"$env": "VAR_NAME"}`.
-
-### OAuth 2.1
+#### OAuth 2.0 with PKCE
 
 For production, use OAuth with Google. Claude redirects users to Google for authentication, and MCP Front validates their domain. All sensitive fields must use environment variables for security.
 
@@ -173,9 +161,42 @@ For simple servers defined directly in the config (advanced use case):
 
 Additional configuration via `options` field.
 
-#### Per-User Authentication
+#### Proxy-to-Server Authentication (serviceAuths)
 
-Services like Notion or Linear need individual user auth. Set `requiresUserToken: true` and add `userAuthentication` object.
+Backend MCP servers may require authentication. The `serviceAuths` array configures how MCP Front authenticates when connecting to each backend server. This is separate from how users authenticate to MCP Front itself.
+
+**Bearer tokens:**
+
+```json
+"postgres": {
+  "transportType": "sse",
+  "url": "http://postgres-mcp:3000/sse",
+  "serviceAuths": [
+    {
+      "type": "bearer",
+      "tokens": ["dev-token-postgres-1", "dev-token-postgres-2"]
+    }
+  ]
+}
+```
+
+MCP Front will accept any request using any token from this list and forward it to the backend server. This is per-server authentication - tokens for `postgres` don't work for `linear`.
+
+**Basic authentication:**
+
+```json
+"serviceAuths": [
+  {
+    "type": "basic",
+    "username": "admin",
+    "password": {"$env": "ADMIN_PASSWORD"}
+  }
+]
+```
+
+#### Per-User Authentication (userAuthentication)
+
+Services like Notion or Linear need individual user OAuth tokens or API keys. Set `requiresUserToken: true` and add `userAuthentication` object. Users connect their accounts through the interstitial page after Google login.
 
 ##### Type: `manual`
 
@@ -219,19 +240,17 @@ Services with OAuth 2.0 support. Handles flow and token refresh.
 
 #### Other Options
 
-You can also configure other options like `timeout`, `headers` for proxied requests, and `authTokens` for server-level bearer token validation (distinct from the main `proxy.auth` block).
+Configure timeouts, custom headers, and other transport-specific options:
 
 ```json
 {
   "database": {
     "transportType": "sse",
     "url": "http://postgres-mcp:3000/sse",
-    "options": {
-      "authTokens": ["server-specific-token"],
-      "timeout": "30s",
-      "headers": {
-        "X-API-Key": { "$env": "DB_API_KEY" }
-      }
+    "timeout": "30s",
+    "headers": {
+      "X-Custom-Header": "value",
+      "X-API-Key": { "$env": "DB_API_KEY" }
     }
   }
 }
