@@ -185,6 +185,17 @@ type MCPClientConfig struct {
 
 	// Inline MCP server configuration
 	InlineConfig json.RawMessage `json:"inline,omitempty"`
+
+	// Execution proxy configuration
+	Proxy *ProxyServiceConfig `json:"proxy,omitempty"`
+}
+
+// ProxyServiceConfig represents execution proxy configuration for a service
+type ProxyServiceConfig struct {
+	Enabled             bool     `json:"enabled"`
+	BaseURL             string   `json:"baseURL"`
+	Timeout             int      `json:"timeout"` // seconds, defaults to 30
+	DefaultAllowedPaths []string `json:"defaultAllowedPaths,omitempty"`
 }
 
 // SessionConfig represents session management configuration

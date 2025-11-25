@@ -1,0 +1,57 @@
+{
+  "version": "v0.0.1",
+  "proxy": {
+    "baseURL": "http://localhost:8080",
+    "addr": ":8080",
+    "name": "mcp-front-test",
+    "auth": {
+      "kind": "oauth",
+      "issuer": "http://localhost:8080",
+      "allowedDomains": ["test.com"],
+      "allowedOrigins": ["http://localhost:8080"],
+      "tokenTtl": "1h",
+      "storage": "memory",
+      "googleClientId": {"$env": "GOOGLE_CLIENT_ID"},
+      "googleClientSecret": {"$env": "GOOGLE_CLIENT_SECRET"},
+      "googleRedirectUri": "http://localhost:8080/oauth/callback",
+      "jwtSecret": {"$env": "JWT_SECRET"},
+      "encryptionKey": {"$env": "ENCRYPTION_KEY"}
+    }
+  },
+  "mcpServers": {
+    "datadog": {
+      "transportType": "inline",
+      "requiresUserToken": true,
+      "userAuthentication": {
+        "type": "oauth",
+        "displayName": "Datadog (Test)",
+        "clientId": {"$env": "DATADOG_CLIENT_ID"},
+        "clientSecret": {"$env": "DATADOG_CLIENT_SECRET"},
+        "authorizationUrl": "http://localhost:9092/oauth/authorize",
+        "tokenUrl": "http://localhost:9092/oauth/token",
+        "scopes": ["metrics_read", "logs_read"]
+      },
+      "proxy": {
+        "enabled": true,
+        "baseURL": "http://localhost:9091",
+        "timeout": 30,
+        "defaultAllowedPaths": ["/api/v1/**", "/api/v2/**"]
+      },
+      "inline": {
+        "tools": [
+          {
+            "name": "query_metrics",
+            "description": "Query Datadog metrics",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "query": {"type": "string"}
+              },
+              "required": ["query"]
+            }
+          }
+        ]
+      }
+    }
+  }
+}

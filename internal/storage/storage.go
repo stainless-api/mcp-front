@@ -61,6 +61,61 @@ type ActiveSession struct {
 	LastActive time.Time `json:"last_active"`
 }
 
+// ExecutionSession represents an execution proxy session with lifecycle management
+type ExecutionSession struct {
+	SessionID     string        `json:"session_id"`
+	ExecutionID   string        `json:"execution_id"`   // For logging/tracing
+	UserEmail     string        `json:"user_email"`
+	TargetService string        `json:"target_service"`
+	AllowedPaths  []string      `json:"allowed_paths"`
+	CreatedAt     time.Time     `json:"created_at"`
+	LastHeartbeat time.Time     `json:"last_heartbeat"`
+	ExpiresAt     time.Time     `json:"expires_at"`      // LastHeartbeat + IdleTimeout
+	IdleTimeout   time.Duration `json:"idle_timeout"`    // e.g., 30s
+	MaxTTL        time.Duration `json:"max_ttl"`         // e.g., 15 min (absolute max)
+	MaxRequests   int           `json:"max_requests"`    // e.g., 1000
+	RequestCount  int           `json:"request_count"`
+}
+
+// IsExpired returns true if the session has expired
+func (s *ExecutionSession) IsExpired() bool {
+	now := time.Now()
+
+	// Expired due to inactivity
+	if now.After(s.ExpiresAt) {
+		return true
+	}
+
+	// Expired due to absolute max TTL
+	if now.After(s.CreatedAt.Add(s.MaxTTL)) {
+		return true
+	}
+
+	// Expired due to request limit
+	if s.MaxRequests > 0 && s.RequestCount >= s.MaxRequests {
+		return true
+	}
+
+	return false
+}
+
+// TimeUntilExpiry returns the duration until the session expires
+func (s *ExecutionSession) TimeUntilExpiry() time.Duration {
+	now := time.Now()
+
+	// Check inactivity expiration
+	idleExpiry := s.ExpiresAt.Sub(now)
+
+	// Check absolute TTL expiration
+	absoluteExpiry := s.CreatedAt.Add(s.MaxTTL).Sub(now)
+
+	// Return whichever comes first
+	if idleExpiry < absoluteExpiry {
+		return idleExpiry
+	}
+	return absoluteExpiry
+}
+
 // UserTokenStore defines methods for managing user tokens.
 // This interface is used by handlers that need to access user-specific tokens
 // for external services (e.g., Notion, GitHub).
@@ -69,6 +124,18 @@ type UserTokenStore interface {
 	SetUserToken(ctx context.Context, userEmail, service string, token *StoredToken) error
 	DeleteUserToken(ctx context.Context, userEmail, service string) error
 	ListUserServices(ctx context.Context, userEmail string) ([]string, error)
+}
+
+// ExecutionSessionStore defines methods for managing execution proxy sessions
+type ExecutionSessionStore interface {
+	CreateExecutionSession(ctx context.Context, session *ExecutionSession) error
+	GetExecutionSession(ctx context.Context, sessionID string) (*ExecutionSession, error)
+	UpdateExecutionSession(ctx context.Context, session *ExecutionSession) error
+	DeleteExecutionSession(ctx context.Context, sessionID string) error
+	RecordSessionActivity(ctx context.Context, sessionID string) error
+	ListUserExecutionSessions(ctx context.Context, userEmail string) ([]*ExecutionSession, error)
+	ListAllExecutionSessions(ctx context.Context) ([]*ExecutionSession, error)
+	CleanupExpiredSessions(ctx context.Context) (int, error)
 }
 
 // Storage combines all storage capabilities needed by mcp-front
@@ -88,6 +155,9 @@ type Storage interface {
 
 	// User token storage
 	UserTokenStore
+
+	// Execution session storage
+	ExecutionSessionStore
 
 	// User tracking (upserted when users access MCP endpoints)
 	UpsertUser(ctx context.Context, email string) error

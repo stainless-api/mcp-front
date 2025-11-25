@@ -11,6 +11,7 @@ import (
 	"github.com/dgellow/mcp-front/internal/log"
 	"github.com/ory/fosite"
 	"github.com/ory/fosite/storage"
+	"golang.org/x/sync/singleflight"
 )
 
 // Ensure MemoryStorage implements required interfaces
@@ -25,19 +26,23 @@ type MemoryStorage struct {
 	clientsMutex    sync.RWMutex            // For thread-safe client access
 	userTokens      map[string]*StoredToken // map["email:service"] = token
 	userTokensMutex sync.RWMutex
-	users           map[string]*UserInfo // map[email] = UserInfo
-	usersMutex      sync.RWMutex
-	sessions        map[string]*ActiveSession // map[sessionID] = ActiveSession
-	sessionsMutex   sync.RWMutex
+	users              map[string]*UserInfo       // map[email] = UserInfo
+	usersMutex         sync.RWMutex
+	sessions           map[string]*ActiveSession  // map[sessionID] = ActiveSession
+	sessionsMutex      sync.RWMutex
+	executionSessions  map[string]*ExecutionSession // map[sessionID] = ExecutionSession
+	executionSessionsMutex sync.RWMutex
+	sessionActivityGroup singleflight.Group // Deduplicates concurrent session activity updates
 }
 
 // NewMemoryStorage creates a new storage instance
 func NewMemoryStorage() *MemoryStorage {
 	return &MemoryStorage{
-		MemoryStore: storage.NewMemoryStore(),
-		userTokens:  make(map[string]*StoredToken),
-		users:       make(map[string]*UserInfo),
-		sessions:    make(map[string]*ActiveSession),
+		MemoryStore:       storage.NewMemoryStore(),
+		userTokens:        make(map[string]*StoredToken),
+		users:             make(map[string]*UserInfo),
+		sessions:          make(map[string]*ActiveSession),
+		executionSessions: make(map[string]*ExecutionSession),
 	}
 }
 
@@ -311,4 +316,129 @@ func (s *MemoryStorage) RevokeSession(ctx context.Context, sessionID string) err
 
 	delete(s.sessions, sessionID)
 	return nil
+}
+
+// ExecutionSessionStore implementation
+
+// CreateExecutionSession creates a new execution session
+func (s *MemoryStorage) CreateExecutionSession(ctx context.Context, session *ExecutionSession) error {
+	s.executionSessionsMutex.Lock()
+	defer s.executionSessionsMutex.Unlock()
+
+	if _, exists := s.executionSessions[session.SessionID]; exists {
+		return fmt.Errorf("session %s already exists", session.SessionID)
+	}
+
+	sessionCopy := *session
+	s.executionSessions[session.SessionID] = &sessionCopy
+	return nil
+}
+
+// GetExecutionSession retrieves an execution session by ID
+func (s *MemoryStorage) GetExecutionSession(ctx context.Context, sessionID string) (*ExecutionSession, error) {
+	s.executionSessionsMutex.RLock()
+	defer s.executionSessionsMutex.RUnlock()
+
+	session, exists := s.executionSessions[sessionID]
+	if !exists {
+		return nil, ErrSessionNotFound
+	}
+
+	// Return a copy to avoid race conditions
+	sessionCopy := *session
+	return &sessionCopy, nil
+}
+
+// UpdateExecutionSession updates an existing execution session
+func (s *MemoryStorage) UpdateExecutionSession(ctx context.Context, session *ExecutionSession) error {
+	s.executionSessionsMutex.Lock()
+	defer s.executionSessionsMutex.Unlock()
+
+	if _, exists := s.executionSessions[session.SessionID]; !exists {
+		return ErrSessionNotFound
+	}
+
+	sessionCopy := *session
+	s.executionSessions[session.SessionID] = &sessionCopy
+	return nil
+}
+
+// DeleteExecutionSession deletes an execution session
+func (s *MemoryStorage) DeleteExecutionSession(ctx context.Context, sessionID string) error {
+	s.executionSessionsMutex.Lock()
+	defer s.executionSessionsMutex.Unlock()
+
+	delete(s.executionSessions, sessionID)
+	return nil
+}
+
+// RecordSessionActivity updates the last heartbeat and extends expiration
+// Uses singleflight to deduplicate concurrent updates to the same session
+func (s *MemoryStorage) RecordSessionActivity(ctx context.Context, sessionID string) error {
+	// Use singleflight to prevent stampede if many requests hit same session concurrently
+	// Only one goroutine will do the update, others will wait and get the same result
+	_, err, _ := s.sessionActivityGroup.Do(sessionID, func() (interface{}, error) {
+		s.executionSessionsMutex.Lock()
+		defer s.executionSessionsMutex.Unlock()
+
+		session, exists := s.executionSessions[sessionID]
+		if !exists {
+			return nil, ErrSessionNotFound
+		}
+
+		// Update session activity
+		now := time.Now()
+		session.LastHeartbeat = now
+		session.ExpiresAt = now.Add(session.IdleTimeout)
+		session.RequestCount++
+
+		return nil, nil
+	})
+
+	return err
+}
+
+// ListUserExecutionSessions returns all execution sessions for a user
+func (s *MemoryStorage) ListUserExecutionSessions(ctx context.Context, userEmail string) ([]*ExecutionSession, error) {
+	s.executionSessionsMutex.RLock()
+	defer s.executionSessionsMutex.RUnlock()
+
+	sessions := make([]*ExecutionSession, 0)
+	for _, session := range s.executionSessions {
+		if session.UserEmail == userEmail && !session.IsExpired() {
+			sessionCopy := *session
+			sessions = append(sessions, &sessionCopy)
+		}
+	}
+	return sessions, nil
+}
+
+// ListAllExecutionSessions returns all active execution sessions (admin only)
+func (s *MemoryStorage) ListAllExecutionSessions(ctx context.Context) ([]*ExecutionSession, error) {
+	s.executionSessionsMutex.RLock()
+	defer s.executionSessionsMutex.RUnlock()
+
+	sessions := make([]*ExecutionSession, 0)
+	for _, session := range s.executionSessions {
+		if !session.IsExpired() {
+			sessionCopy := *session
+			sessions = append(sessions, &sessionCopy)
+		}
+	}
+	return sessions, nil
+}
+
+// CleanupExpiredSessions removes all expired execution sessions
+func (s *MemoryStorage) CleanupExpiredSessions(ctx context.Context) (int, error) {
+	s.executionSessionsMutex.Lock()
+	defer s.executionSessionsMutex.Unlock()
+
+	count := 0
+	for sessionID, session := range s.executionSessions {
+		if session.IsExpired() {
+			delete(s.executionSessions, sessionID)
+			count++
+		}
+	}
+	return count, nil
 }
