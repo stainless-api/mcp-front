@@ -15,7 +15,6 @@ import (
 	"github.com/dgellow/mcp-front/internal/log"
 	"github.com/dgellow/mcp-front/internal/oauth"
 	"github.com/dgellow/mcp-front/internal/storage"
-	"github.com/gorilla/mux"
 )
 
 // Execution session configuration constants
@@ -257,8 +256,7 @@ func (h *ExecutionHandlers) HeartbeatHandler(w http.ResponseWriter, r *http.Requ
 	}
 
 	ctx := r.Context()
-	vars := mux.Vars(r)
-	sessionID := vars["session_id"]
+	sessionID := r.PathValue("session_id")
 
 	// Get session
 	session, err := h.storage.GetExecutionSession(ctx, sessionID)
@@ -372,8 +370,7 @@ func (h *ExecutionHandlers) DeleteSessionHandler(w http.ResponseWriter, r *http.
 	}
 
 	ctx := r.Context()
-	vars := mux.Vars(r)
-	sessionID := vars["session_id"]
+	sessionID := r.PathValue("session_id")
 
 	// Get session
 	session, err := h.storage.GetExecutionSession(ctx, sessionID)
