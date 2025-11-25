@@ -974,6 +974,9 @@ func (s *FirestoreStorage) CleanupExpiredSessions(ctx context.Context) (int, err
 	bulkWriter := s.client.BulkWriter(ctx)
 	defer bulkWriter.End()
 
+	// Track jobs for result checking
+	var jobs []*firestore.BulkWriterJob
+
 	for {
 		doc, err := iter.Next()
 		if err == iterator.Done {
@@ -983,16 +986,29 @@ func (s *FirestoreStorage) CleanupExpiredSessions(ctx context.Context) (int, err
 			return count, fmt.Errorf("failed to iterate expired sessions: %w", err)
 		}
 
-		// Delete using bulk writer
-		_, err = bulkWriter.Delete(doc.Ref)
+		// Queue delete operation
+		job, err := bulkWriter.Delete(doc.Ref)
 		if err != nil {
 			return count, fmt.Errorf("failed to queue delete: %w", err)
 		}
-		count++
+		jobs = append(jobs, job)
 	}
 
 	// Flush all pending operations
 	bulkWriter.Flush()
+
+	// Wait for all jobs to complete and count successes
+	for _, job := range jobs {
+		_, err := job.Results()
+		if err != nil {
+			// Log individual failures but continue
+			log.LogErrorWithFields("firestore", "Failed to delete expired session", map[string]any{
+				"error": err.Error(),
+			})
+		} else {
+			count++
+		}
+	}
 
 	if count > 0 {
 		log.LogInfoWithFields("firestore", "Cleaned up expired execution sessions", map[string]any{
