@@ -98,7 +98,10 @@ func matchGlobPattern(pattern, requestPath string) bool {
 		// Match each segment
 		for i, patternPart := range patternParts {
 			if patternPart == "*" {
-				// * matches any single segment
+				// * matches any single non-empty segment
+				if pathParts[i] == "" {
+					return false
+				}
 				continue
 			}
 
