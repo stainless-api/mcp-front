@@ -42,6 +42,7 @@ type ExecutionHandlers struct {
 	tokenGenerator *executiontoken.Generator
 	proxyBaseURL   string
 	mcpServers     map[string]*config.MCPClientConfig
+	adminConfig    *config.AdminConfig
 }
 
 // NewExecutionHandlers creates execution handlers with dependency injection
@@ -50,12 +51,14 @@ func NewExecutionHandlers(
 	tokenGenerator *executiontoken.Generator,
 	proxyBaseURL string,
 	mcpServers map[string]*config.MCPClientConfig,
+	adminConfig *config.AdminConfig,
 ) *ExecutionHandlers {
 	return &ExecutionHandlers{
 		storage:        storage,
 		tokenGenerator: tokenGenerator,
 		proxyBaseURL:   proxyBaseURL,
 		mcpServers:     mcpServers,
+		adminConfig:    adminConfig,
 	}
 }
 
@@ -276,7 +279,7 @@ func (h *ExecutionHandlers) HeartbeatHandler(w http.ResponseWriter, r *http.Requ
 
 	// Verify user owns this session (or is admin)
 	userEmail, ok := oauth.GetUserFromContext(ctx)
-	isAdmin := adminauth.IsAdmin(ctx)
+	isAdmin := h.adminConfig != nil && adminauth.IsAdmin(ctx, userEmail, h.adminConfig, h.storage)
 	if !ok || (session.UserEmail != userEmail && !isAdmin) {
 		jsonwriter.WriteForbidden(w, "Cannot access another user's session")
 		return
@@ -324,7 +327,7 @@ func (h *ExecutionHandlers) ListSessionsHandler(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	isAdmin := adminauth.IsAdmin(ctx)
+	isAdmin := h.adminConfig != nil && adminauth.IsAdmin(ctx, userEmail, h.adminConfig, h.storage)
 
 	var sessions []*storage.ExecutionSession
 	var err error
@@ -385,7 +388,7 @@ func (h *ExecutionHandlers) DeleteSessionHandler(w http.ResponseWriter, r *http.
 
 	// Verify user owns this session (or is admin)
 	userEmail, ok := oauth.GetUserFromContext(ctx)
-	isAdmin := adminauth.IsAdmin(ctx)
+	isAdmin := h.adminConfig != nil && adminauth.IsAdmin(ctx, userEmail, h.adminConfig, h.storage)
 	if !ok || (session.UserEmail != userEmail && !isAdmin) {
 		jsonwriter.WriteForbidden(w, "Cannot delete another user's session")
 		return

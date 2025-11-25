@@ -398,6 +398,7 @@ func buildHTTPHandler(
 			tokenGenerator,
 			baseURL,
 			cfg.MCPServers,
+			cfg.Proxy.Admin,
 		)
 
 		// OAuth-authenticated middleware for execution session endpoints
