@@ -36,10 +36,10 @@ func (cm *CleanupManager) Start(ctx context.Context) {
 
 // Stop gracefully stops the cleanup loop
 func (cm *CleanupManager) Stop() {
-	log.LogInfo("Stopping execution session cleanup manager...")
+	log.Logf("Stopping execution session cleanup manager...")
 	close(cm.stopChan)
 	<-cm.doneChan // Wait for cleanup loop to finish
-	log.LogInfo("Execution session cleanup manager stopped")
+	log.Logf("Execution session cleanup manager stopped")
 }
 
 // run is the main cleanup loop
