@@ -93,3 +93,7 @@ func WriteForbidden(w http.ResponseWriter, message string) {
 func WriteServiceUnavailable(w http.ResponseWriter, message string) {
 	WriteError(w, http.StatusServiceUnavailable, "service_unavailable", message)
 }
+
+func WriteMethodNotAllowed(w http.ResponseWriter, message string) {
+	WriteError(w, http.StatusMethodNotAllowed, "method_not_allowed", message)
+}

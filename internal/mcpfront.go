@@ -14,9 +14,11 @@ import (
 	"github.com/dgellow/mcp-front/internal/client"
 	"github.com/dgellow/mcp-front/internal/config"
 	"github.com/dgellow/mcp-front/internal/crypto"
+	"github.com/dgellow/mcp-front/internal/executiontoken"
 	"github.com/dgellow/mcp-front/internal/inline"
 	"github.com/dgellow/mcp-front/internal/log"
 	"github.com/dgellow/mcp-front/internal/oauth"
+	"github.com/dgellow/mcp-front/internal/proxy"
 	"github.com/dgellow/mcp-front/internal/server"
 	"github.com/dgellow/mcp-front/internal/storage"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -30,6 +32,7 @@ type MCPFront struct {
 	httpServer     *server.HTTPServer
 	sessionManager *client.StdioSessionManager
 	storage        storage.Storage
+	cleanupManager *storage.CleanupManager
 }
 
 // NewMCPFront creates a new MCP proxy application with all dependencies built
@@ -113,11 +116,15 @@ func NewMCPFront(ctx context.Context, cfg config.Config) (*MCPFront, error) {
 	// Create clean HTTP server with just the handler and address
 	httpServer := server.NewHTTPServer(mux, cfg.Proxy.Addr)
 
+	// Create cleanup manager for execution sessions (runs every minute)
+	cleanupManager := storage.NewCleanupManager(store, 1*time.Minute)
+
 	return &MCPFront{
 		config:         cfg,
 		httpServer:     httpServer,
 		sessionManager: sessionManager,
 		storage:        store,
+		cleanupManager: cleanupManager,
 	}, nil
 }
 
@@ -140,9 +147,8 @@ func (m *MCPFront) Run() error {
 		}
 	}()
 
-	// Start session manager cleanup (if needed)
-	// The session manager already starts its cleanup goroutine internally,
-	// but this is where we could start other background services
+	// Start cleanup manager for expired execution sessions
+	m.cleanupManager.Start(ctx)
 
 	// Handle graceful shutdown
 	sigChan := make(chan os.Signal, 1)
@@ -172,6 +178,11 @@ func (m *MCPFront) Run() error {
 	})
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer shutdownCancel()
+
+	// Stop cleanup manager
+	if m.cleanupManager != nil {
+		m.cleanupManager.Stop()
+	}
 
 	// Stop HTTP server
 	if err := m.httpServer.Stop(shutdownCtx); err != nil {
@@ -369,6 +380,74 @@ func buildHTTPHandler(
 		mux.HandleFunc("/oauth/callback/", serviceAuthHandlers.CallbackHandler)
 		mux.Handle("/oauth/connect", server.ChainMiddleware(http.HandlerFunc(serviceAuthHandlers.ConnectHandler), tokenMiddleware...))
 		mux.Handle("/oauth/disconnect", server.ChainMiddleware(http.HandlerFunc(serviceAuthHandlers.DisconnectHandler), tokenMiddleware...))
+
+		// Setup execution proxy components
+		jwtSecret := []byte(authConfig.JWTSecret)
+		defaultExecutionTTL := 5 * time.Minute
+
+		// Create execution token generator and validator
+		tokenGenerator := executiontoken.NewGenerator(jwtSecret, defaultExecutionTTL)
+		tokenValidator := executiontoken.NewValidator(jwtSecret, defaultExecutionTTL)
+
+		// Build proxy configs from mcpServers with proxy enabled
+		proxyConfigs := buildProxyConfigs(cfg.MCPServers)
+
+		// Create execution handlers for session management
+		executionHandlers := server.NewExecutionHandlers(
+			storage,
+			tokenGenerator,
+			baseURL,
+			cfg.MCPServers,
+		)
+
+		// OAuth-authenticated middleware for execution session endpoints
+		executionSessionMiddleware := []server.MiddlewareFunc{
+			corsMiddleware,
+			tokenLogger,
+			oauth.NewValidateTokenMiddleware(oauthProvider, authConfig.Issuer),
+			mcpRecover,
+		}
+
+		// Register execution session endpoints (require OAuth authentication)
+		mux.Handle("/api/execution-session", server.ChainMiddleware(
+			http.HandlerFunc(executionHandlers.CreateSessionHandler),
+			executionSessionMiddleware...,
+		))
+		mux.Handle("/api/execution-session/{session_id}/heartbeat", server.ChainMiddleware(
+			http.HandlerFunc(executionHandlers.HeartbeatHandler),
+			executionSessionMiddleware...,
+		))
+		mux.Handle("/api/execution-sessions", server.ChainMiddleware(
+			http.HandlerFunc(executionHandlers.ListSessionsHandler),
+			executionSessionMiddleware...,
+		))
+		mux.Handle("/api/execution-session/{session_id}", server.ChainMiddleware(
+			http.HandlerFunc(executionHandlers.DeleteSessionHandler),
+			executionSessionMiddleware...,
+		))
+
+		// Create HTTP proxy (validates execution tokens, not OAuth tokens)
+		if len(proxyConfigs) > 0 {
+			defaultProxyTimeout := 30 * time.Second
+			httpProxy := proxy.NewHTTPProxy(
+				storage,
+				tokenValidator,
+				proxyConfigs,
+				defaultProxyTimeout,
+			)
+
+			// Register proxy endpoint (uses execution token authentication)
+			proxyMiddleware := []server.MiddlewareFunc{
+				corsMiddleware,
+				mcpLogger,
+				mcpRecover,
+			}
+			mux.Handle("/proxy/", server.ChainMiddleware(httpProxy, proxyMiddleware...))
+
+			log.LogInfoWithFields("server", "Execution proxy enabled", map[string]any{
+				"services": len(proxyConfigs),
+			})
+		}
 	}
 
 	// Setup MCP server endpoints
@@ -583,4 +662,46 @@ func buildStdioSSEServer(serverName, baseURL string, sessionManager *client.Stdi
 // isStdioServer checks if this is a stdio-based server
 func isStdioServer(cfg *config.MCPClientConfig) bool {
 	return cfg.TransportType == config.MCPClientTypeStdio
+}
+
+// buildProxyConfigs builds proxy configurations from MCP server configs
+func buildProxyConfigs(mcpServers map[string]*config.MCPClientConfig) map[string]*proxy.Config {
+	proxyConfigs := make(map[string]*proxy.Config)
+
+	for serviceName, serviceConfig := range mcpServers {
+		// Only include services with proxy enabled
+		if serviceConfig.Proxy == nil || !serviceConfig.Proxy.Enabled {
+			continue
+		}
+
+		// Validate required fields
+		if serviceConfig.Proxy.BaseURL == "" {
+			log.LogWarnWithFields("mcpfront", "Service proxy missing baseURL, skipping", map[string]any{
+				"service": serviceName,
+			})
+			continue
+		}
+
+		// Default timeout to 30 seconds if not specified
+		timeout := time.Duration(serviceConfig.Proxy.Timeout) * time.Second
+		if timeout == 0 {
+			timeout = 30 * time.Second
+		}
+
+		proxyConfigs[serviceName] = &proxy.Config{
+			ServiceName:  serviceName,
+			BaseURL:      serviceConfig.Proxy.BaseURL,
+			Timeout:      timeout,
+			DefaultPaths: serviceConfig.Proxy.DefaultAllowedPaths,
+		}
+
+		log.LogInfoWithFields("mcpfront", "Configured execution proxy for service", map[string]any{
+			"service":       serviceName,
+			"base_url":      serviceConfig.Proxy.BaseURL,
+			"timeout":       timeout,
+			"default_paths": serviceConfig.Proxy.DefaultAllowedPaths,
+		})
+	}
+
+	return proxyConfigs
 }

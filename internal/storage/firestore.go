@@ -724,3 +724,292 @@ func (s *FirestoreStorage) RevokeSession(ctx context.Context, sessionID string) 
 	}
 	return nil
 }
+
+// ExecutionSession storage implementation
+
+// ExecutionSessionDoc represents an execution session document in Firestore
+type ExecutionSessionDoc struct {
+	SessionID     string   `firestore:"session_id"`
+	ExecutionID   string   `firestore:"execution_id"`
+	UserEmail     string   `firestore:"user_email"`
+	TargetService string   `firestore:"target_service"`
+	AllowedPaths  []string `firestore:"allowed_paths"`
+	CreatedAt     int64    `firestore:"created_at"`      // Unix timestamp
+	LastHeartbeat int64    `firestore:"last_heartbeat"`  // Unix timestamp
+	ExpiresAt     int64    `firestore:"expires_at"`      // Unix timestamp
+	IdleTimeout   int64    `firestore:"idle_timeout"`    // Seconds
+	MaxTTL        int64    `firestore:"max_ttl"`         // Seconds
+	MaxRequests   int      `firestore:"max_requests"`
+	RequestCount  int      `firestore:"request_count"`
+}
+
+// ToExecutionSession converts Firestore document to ExecutionSession
+func (d *ExecutionSessionDoc) ToExecutionSession() *ExecutionSession {
+	return &ExecutionSession{
+		SessionID:     d.SessionID,
+		ExecutionID:   d.ExecutionID,
+		UserEmail:     d.UserEmail,
+		TargetService: d.TargetService,
+		AllowedPaths:  d.AllowedPaths,
+		CreatedAt:     time.Unix(d.CreatedAt, 0),
+		LastHeartbeat: time.Unix(d.LastHeartbeat, 0),
+		ExpiresAt:     time.Unix(d.ExpiresAt, 0),
+		IdleTimeout:   time.Duration(d.IdleTimeout) * time.Second,
+		MaxTTL:        time.Duration(d.MaxTTL) * time.Second,
+		MaxRequests:   d.MaxRequests,
+		RequestCount:  d.RequestCount,
+	}
+}
+
+// FromExecutionSession converts ExecutionSession to Firestore document
+func FromExecutionSession(s *ExecutionSession) *ExecutionSessionDoc {
+	return &ExecutionSessionDoc{
+		SessionID:     s.SessionID,
+		ExecutionID:   s.ExecutionID,
+		UserEmail:     s.UserEmail,
+		TargetService: s.TargetService,
+		AllowedPaths:  s.AllowedPaths,
+		CreatedAt:     s.CreatedAt.Unix(),
+		LastHeartbeat: s.LastHeartbeat.Unix(),
+		ExpiresAt:     s.ExpiresAt.Unix(),
+		IdleTimeout:   int64(s.IdleTimeout.Seconds()),
+		MaxTTL:        int64(s.MaxTTL.Seconds()),
+		MaxRequests:   s.MaxRequests,
+		RequestCount:  s.RequestCount,
+	}
+}
+
+// CreateExecutionSession creates a new execution session in Firestore
+func (s *FirestoreStorage) CreateExecutionSession(ctx context.Context, session *ExecutionSession) error {
+	doc := FromExecutionSession(session)
+
+	// Check if session already exists
+	_, err := s.client.Collection("mcp_front_execution_sessions").Doc(session.SessionID).Get(ctx)
+	if err == nil {
+		return fmt.Errorf("session %s already exists", session.SessionID)
+	}
+	if status.Code(err) != codes.NotFound {
+		return fmt.Errorf("failed to check session existence: %w", err)
+	}
+
+	// Create session document
+	_, err = s.client.Collection("mcp_front_execution_sessions").Doc(session.SessionID).Set(ctx, doc)
+	if err != nil {
+		return fmt.Errorf("failed to create session: %w", err)
+	}
+
+	return nil
+}
+
+// GetExecutionSession retrieves an execution session from Firestore
+func (s *FirestoreStorage) GetExecutionSession(ctx context.Context, sessionID string) (*ExecutionSession, error) {
+	doc, err := s.client.Collection("mcp_front_execution_sessions").Doc(sessionID).Get(ctx)
+	if err != nil {
+		if status.Code(err) == codes.NotFound {
+			return nil, ErrSessionNotFound
+		}
+		return nil, fmt.Errorf("failed to get session: %w", err)
+	}
+
+	var sessionDoc ExecutionSessionDoc
+	if err := doc.DataTo(&sessionDoc); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal session: %w", err)
+	}
+
+	return sessionDoc.ToExecutionSession(), nil
+}
+
+// UpdateExecutionSession updates an existing execution session in Firestore
+func (s *FirestoreStorage) UpdateExecutionSession(ctx context.Context, session *ExecutionSession) error {
+	doc := FromExecutionSession(session)
+
+	_, err := s.client.Collection("mcp_front_execution_sessions").Doc(session.SessionID).Set(ctx, doc)
+	if err != nil {
+		return fmt.Errorf("failed to update session: %w", err)
+	}
+
+	return nil
+}
+
+// DeleteExecutionSession deletes an execution session from Firestore
+func (s *FirestoreStorage) DeleteExecutionSession(ctx context.Context, sessionID string) error {
+	_, err := s.client.Collection("mcp_front_execution_sessions").Doc(sessionID).Delete(ctx)
+	if err != nil && status.Code(err) != codes.NotFound {
+		return fmt.Errorf("failed to delete session: %w", err)
+	}
+	return nil
+}
+
+// RecordSessionActivity updates the last heartbeat and extends expiration
+// Uses a Firestore transaction to prevent race conditions when multiple
+// concurrent requests update the same session
+func (s *FirestoreStorage) RecordSessionActivity(ctx context.Context, sessionID string) error {
+	ref := s.client.Collection("mcp_front_execution_sessions").Doc(sessionID)
+
+	// Use transaction to ensure atomic read-modify-write
+	err := s.client.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+		// Read current session within transaction
+		doc, err := tx.Get(ref)
+		if err != nil {
+			if status.Code(err) == codes.NotFound {
+				return ErrSessionNotFound
+			}
+			return fmt.Errorf("failed to get session: %w", err)
+		}
+
+		var sessionDoc ExecutionSessionDoc
+		if err := doc.DataTo(&sessionDoc); err != nil {
+			return fmt.Errorf("failed to unmarshal session: %w", err)
+		}
+
+		// Calculate new values
+		now := time.Now()
+		newExpiry := now.Add(time.Duration(sessionDoc.IdleTimeout) * time.Second)
+
+		// Update within transaction (atomic with the read above)
+		return tx.Update(ref, []firestore.Update{
+			{Path: "last_heartbeat", Value: now.Unix()},
+			{Path: "expires_at", Value: newExpiry.Unix()},
+			{Path: "request_count", Value: firestore.Increment(1)},
+		})
+	})
+
+	if err != nil {
+		if errors.Is(err, ErrSessionNotFound) {
+			return err
+		}
+		if status.Code(err) == codes.NotFound {
+			return ErrSessionNotFound
+		}
+		return fmt.Errorf("failed to record activity: %w", err)
+	}
+
+	return nil
+}
+
+// ListUserExecutionSessions returns all active execution sessions for a user
+func (s *FirestoreStorage) ListUserExecutionSessions(ctx context.Context, userEmail string) ([]*ExecutionSession, error) {
+	// Query sessions for user that haven't expired yet
+	now := time.Now().Unix()
+	iter := s.client.Collection("mcp_front_execution_sessions").
+		Where("user_email", "==", userEmail).
+		Where("expires_at", ">", now).
+		Documents(ctx)
+	defer iter.Stop()
+
+	var sessions []*ExecutionSession
+	for {
+		doc, err := iter.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("failed to iterate sessions: %w", err)
+		}
+
+		var sessionDoc ExecutionSessionDoc
+		if err := doc.DataTo(&sessionDoc); err != nil {
+			log.LogError("Failed to unmarshal execution session: %v", err)
+			continue
+		}
+
+		session := sessionDoc.ToExecutionSession()
+
+		// Double-check expiration (includes all expiry conditions)
+		if !session.IsExpired() {
+			sessions = append(sessions, session)
+		}
+	}
+
+	return sessions, nil
+}
+
+// ListAllExecutionSessions returns all active execution sessions (admin only)
+func (s *FirestoreStorage) ListAllExecutionSessions(ctx context.Context) ([]*ExecutionSession, error) {
+	// Query sessions that haven't expired yet
+	now := time.Now().Unix()
+	iter := s.client.Collection("mcp_front_execution_sessions").
+		Where("expires_at", ">", now).
+		Documents(ctx)
+	defer iter.Stop()
+
+	var sessions []*ExecutionSession
+	for {
+		doc, err := iter.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("failed to iterate sessions: %w", err)
+		}
+
+		var sessionDoc ExecutionSessionDoc
+		if err := doc.DataTo(&sessionDoc); err != nil {
+			log.LogError("Failed to unmarshal execution session: %v", err)
+			continue
+		}
+
+		session := sessionDoc.ToExecutionSession()
+
+		// Double-check expiration (includes all expiry conditions)
+		if !session.IsExpired() {
+			sessions = append(sessions, session)
+		}
+	}
+
+	return sessions, nil
+}
+
+// CleanupExpiredSessions removes all expired execution sessions
+func (s *FirestoreStorage) CleanupExpiredSessions(ctx context.Context) (int, error) {
+	// Query sessions that have expired (by inactivity - simplest check)
+	now := time.Now().Unix()
+	iter := s.client.Collection("mcp_front_execution_sessions").
+		Where("expires_at", "<=", now).
+		Documents(ctx)
+	defer iter.Stop()
+
+	count := 0
+	batch := s.client.Batch()
+	batchSize := 0
+	const maxBatchSize = 500 // Firestore batch write limit
+
+	for {
+		doc, err := iter.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return count, fmt.Errorf("failed to iterate expired sessions: %w", err)
+		}
+
+		// Delete in batch for efficiency
+		batch.Delete(doc.Ref)
+		batchSize++
+		count++
+
+		// Commit batch if we hit the limit
+		if batchSize >= maxBatchSize {
+			if _, err := batch.Commit(ctx); err != nil {
+				return count, fmt.Errorf("failed to commit batch: %w", err)
+			}
+			batch = s.client.Batch()
+			batchSize = 0
+		}
+	}
+
+	// Commit remaining deletes
+	if batchSize > 0 {
+		if _, err := batch.Commit(ctx); err != nil {
+			return count, fmt.Errorf("failed to commit final batch: %w", err)
+		}
+	}
+
+	if count > 0 {
+		log.LogInfoWithFields("firestore", "Cleaned up expired execution sessions", map[string]any{
+			"count": count,
+		})
+	}
+
+	return count, nil
+}
