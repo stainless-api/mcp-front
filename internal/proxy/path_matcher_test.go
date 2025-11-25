@@ -135,7 +135,7 @@ func TestPathMatcherMultiplePatterns(t *testing.T) {
 func TestPathMatcherNoPatterns(t *testing.T) {
 	pm := NewPathMatcher([]string{})
 
-	// Empty patterns should allow everything
+	// Empty patterns should deny everything (fail-closed)
 	tests := []string{
 		"/api/v1/metrics",
 		"/api/v2/logs",
@@ -145,8 +145,8 @@ func TestPathMatcherNoPatterns(t *testing.T) {
 
 	for _, path := range tests {
 		t.Run(path, func(t *testing.T) {
-			if !pm.IsAllowed(path) {
-				t.Errorf("IsAllowed(%s) = false, want true (empty patterns should allow all)", path)
+			if pm.IsAllowed(path) {
+				t.Errorf("IsAllowed(%s) = true, want false (empty patterns should deny all - fail-closed)", path)
 			}
 		})
 	}

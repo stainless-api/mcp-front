@@ -248,16 +248,17 @@ func TestExecutionProxyPathRestrictions(t *testing.T) {
 	oauthToken := performOAuthFlow(t)
 	connectUserToService(t, "datadog", oauthToken)
 
-	// Request execution token with specific allowed paths
-	t.Log("Requesting execution token with path restrictions...")
+	// Create execution session with specific allowed paths
+	t.Log("Creating execution session with path restrictions...")
 	reqBody, _ := json.Marshal(map[string]any{
-		"execution_id":   "exec-path-test",
-		"target_service": "datadog",
-		"ttl_seconds":    300,
-		"allowed_paths":  []string{"/api/v1/metrics"},
+		"execution_id":         "exec-path-test",
+		"target_service":       "datadog",
+		"max_ttl_seconds":      300,
+		"idle_timeout_seconds": 30,
+		"allowed_paths":        []string{"/api/v1/metrics"},
 	})
 
-	req, _ := http.NewRequest("POST", "http://localhost:8080/api/execution-token", bytes.NewReader(reqBody))
+	req, _ := http.NewRequest("POST", "http://localhost:8080/api/execution-session", bytes.NewReader(reqBody))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+oauthToken)
 
@@ -324,15 +325,16 @@ func TestExecutionProxyTokenExpiration(t *testing.T) {
 	oauthToken := performOAuthFlow(t)
 	connectUserToService(t, "datadog", oauthToken)
 
-	// Request execution token with very short TTL (2 seconds)
-	t.Log("Requesting execution token with 2-second TTL...")
+	// Create execution session with very short idle timeout (2 seconds)
+	t.Log("Creating execution session with 2-second idle timeout...")
 	reqBody, _ := json.Marshal(map[string]any{
-		"execution_id":   "exec-expiry-test",
-		"target_service": "datadog",
-		"ttl_seconds":    2,
+		"execution_id":         "exec-expiry-test",
+		"target_service":       "datadog",
+		"max_ttl_seconds":      300,
+		"idle_timeout_seconds": 2,
 	})
 
-	req, _ := http.NewRequest("POST", "http://localhost:8080/api/execution-token", bytes.NewReader(reqBody))
+	req, _ := http.NewRequest("POST", "http://localhost:8080/api/execution-session", bytes.NewReader(reqBody))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+oauthToken)
 
@@ -424,11 +426,15 @@ func TestExecutionProxyServiceIsolation(t *testing.T) {
 
 // Helper functions
 
-// ExecutionTokenResponse represents the response from token issuance
+// ExecutionTokenResponse represents the response from session creation
 type ExecutionTokenResponse struct {
-	Token     string    `json:"token"`
-	ProxyURL  string    `json:"proxy_url"`
-	ExpiresAt time.Time `json:"expires_at"`
+	SessionID       string    `json:"session_id"`
+	Token           string    `json:"token"`
+	ProxyURL        string    `json:"proxy_url"`
+	IdleTimeout     int       `json:"idle_timeout"`
+	MaxTTL          int       `json:"max_ttl"`
+	ExpiresAt       time.Time `json:"expires_at"`
+	MaxTTLExpiresAt time.Time `json:"max_ttl_expires_at"`
 }
 
 // performOAuthFlow simulates the OAuth flow and returns an OAuth token
@@ -504,29 +510,30 @@ func connectUserToService(t *testing.T, serviceName, oauthToken string) {
 	callbackResp.Body.Close()
 }
 
-// requestExecutionToken requests an execution token
+// requestExecutionToken creates an execution session and returns the response
 func requestExecutionToken(t *testing.T, oauthToken, serviceName, executionID string) ExecutionTokenResponse {
 	t.Helper()
 
 	reqBody, _ := json.Marshal(map[string]any{
-		"execution_id":   executionID,
-		"target_service": serviceName,
-		"ttl_seconds":    300,
+		"execution_id":         executionID,
+		"target_service":       serviceName,
+		"max_ttl_seconds":      300,
+		"idle_timeout_seconds": 30,
 	})
 
-	req, _ := http.NewRequest("POST", "http://localhost:8080/api/execution-token", bytes.NewReader(reqBody))
+	req, _ := http.NewRequest("POST", "http://localhost:8080/api/execution-session", bytes.NewReader(reqBody))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+oauthToken)
 
 	resp, err := http.DefaultClient.Do(req)
-	require.NoError(t, err, "Failed to request execution token")
+	require.NoError(t, err, "Failed to create execution session")
 	defer resp.Body.Close()
 
-	require.Equal(t, 200, resp.StatusCode, "Token request should succeed")
+	require.Equal(t, 200, resp.StatusCode, "Session creation should succeed")
 
 	var tokenResp ExecutionTokenResponse
 	err = json.NewDecoder(resp.Body).Decode(&tokenResp)
-	require.NoError(t, err, "Failed to decode token response")
+	require.NoError(t, err, "Failed to decode session response")
 
 	return tokenResp
 }

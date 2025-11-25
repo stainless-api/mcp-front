@@ -12,13 +12,8 @@ func TestTokenGenerationAndValidation(t *testing.T) {
 	generator := NewGenerator(signingKey, ttl)
 	validator := NewValidator(signingKey, ttl)
 
-	token, err := generator.Generate(
-		"user@example.com",
-		"exec-123",
-		"datadog",
-		[]string{"/api/v1/*", "/api/v2/metrics/*"},
-		1000,
-	)
+	sessionID := "sess_abc123"
+	token, err := generator.Generate(sessionID)
 	if err != nil {
 		t.Fatalf("Failed to generate token: %v", err)
 	}
@@ -32,20 +27,16 @@ func TestTokenGenerationAndValidation(t *testing.T) {
 		t.Fatalf("Failed to validate token: %v", err)
 	}
 
-	if claims.UserEmail != "user@example.com" {
-		t.Errorf("Expected user email 'user@example.com', got '%s'", claims.UserEmail)
+	if claims.SessionID != sessionID {
+		t.Errorf("Expected session ID '%s', got '%s'", sessionID, claims.SessionID)
 	}
-	if claims.ExecutionID != "exec-123" {
-		t.Errorf("Expected execution ID 'exec-123', got '%s'", claims.ExecutionID)
+
+	if claims.IssuedAt.IsZero() {
+		t.Error("Expected IssuedAt to be set")
 	}
-	if claims.TargetService != "datadog" {
-		t.Errorf("Expected target service 'datadog', got '%s'", claims.TargetService)
-	}
-	if len(claims.AllowedPaths) != 2 {
-		t.Errorf("Expected 2 allowed paths, got %d", len(claims.AllowedPaths))
-	}
-	if claims.MaxRequests != 1000 {
-		t.Errorf("Expected max requests 1000, got %d", claims.MaxRequests)
+
+	if time.Since(claims.IssuedAt) > 1*time.Second {
+		t.Errorf("Expected IssuedAt to be recent, got %v", claims.IssuedAt)
 	}
 }
 
@@ -56,13 +47,7 @@ func TestTokenExpiration(t *testing.T) {
 	generator := NewGenerator(signingKey, ttl)
 	validator := NewValidator(signingKey, ttl)
 
-	token, err := generator.Generate(
-		"user@example.com",
-		"exec-123",
-		"datadog",
-		nil,
-		0,
-	)
+	token, err := generator.Generate("sess_abc123")
 	if err != nil {
 		t.Fatalf("Failed to generate token: %v", err)
 	}
@@ -84,13 +69,7 @@ func TestTokenWithDifferentSigningKey(t *testing.T) {
 	generator := NewGenerator(signingKey1, ttl)
 	validator := NewValidator(signingKey2, ttl)
 
-	token, err := generator.Generate(
-		"user@example.com",
-		"exec-123",
-		"datadog",
-		nil,
-		0,
-	)
+	token, err := generator.Generate("sess_abc123")
 	if err != nil {
 		t.Fatalf("Failed to generate token: %v", err)
 	}
@@ -101,58 +80,14 @@ func TestTokenWithDifferentSigningKey(t *testing.T) {
 	}
 }
 
-func TestGenerateWithMissingFields(t *testing.T) {
+func TestGenerateWithMissingSessionID(t *testing.T) {
 	signingKey := []byte("test-signing-key-that-is-at-least-32-bytes-long!!")
 	ttl := 5 * time.Minute
 	generator := NewGenerator(signingKey, ttl)
 
-	tests := []struct {
-		name          string
-		userEmail     string
-		executionID   string
-		targetService string
-		expectError   bool
-	}{
-		{
-			name:          "missing user email",
-			userEmail:     "",
-			executionID:   "exec-123",
-			targetService: "datadog",
-			expectError:   true,
-		},
-		{
-			name:          "missing execution ID",
-			userEmail:     "user@example.com",
-			executionID:   "",
-			targetService: "datadog",
-			expectError:   true,
-		},
-		{
-			name:          "missing target service",
-			userEmail:     "user@example.com",
-			executionID:   "exec-123",
-			targetService: "",
-			expectError:   true,
-		},
-		{
-			name:          "all fields present",
-			userEmail:     "user@example.com",
-			executionID:   "exec-123",
-			targetService: "datadog",
-			expectError:   false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, err := generator.Generate(tt.userEmail, tt.executionID, tt.targetService, nil, 0)
-			if tt.expectError && err == nil {
-				t.Error("Expected error but got none")
-			}
-			if !tt.expectError && err != nil {
-				t.Errorf("Expected no error but got: %v", err)
-			}
-		})
+	_, err := generator.Generate("")
+	if err == nil {
+		t.Error("Expected error when session ID is empty")
 	}
 }
 
@@ -175,37 +110,5 @@ func TestValidateMalformedToken(t *testing.T) {
 	_, err := validator.Validate("not-a-valid-token")
 	if err == nil {
 		t.Error("Expected validation to fail for malformed token")
-	}
-}
-
-func TestTokenWithOptionalFields(t *testing.T) {
-	signingKey := []byte("test-signing-key-that-is-at-least-32-bytes-long!!")
-	ttl := 5 * time.Minute
-
-	generator := NewGenerator(signingKey, ttl)
-	validator := NewValidator(signingKey, ttl)
-
-	// Generate token without optional fields
-	token, err := generator.Generate(
-		"user@example.com",
-		"exec-123",
-		"datadog",
-		nil, // No allowed paths
-		0,   // No max requests
-	)
-	if err != nil {
-		t.Fatalf("Failed to generate token: %v", err)
-	}
-
-	claims, err := validator.Validate(token)
-	if err != nil {
-		t.Fatalf("Failed to validate token: %v", err)
-	}
-
-	if claims.AllowedPaths != nil {
-		t.Errorf("Expected nil allowed paths, got %v", claims.AllowedPaths)
-	}
-	if claims.MaxRequests != 0 {
-		t.Errorf("Expected 0 max requests, got %d", claims.MaxRequests)
 	}
 }
