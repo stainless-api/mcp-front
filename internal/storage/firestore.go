@@ -971,9 +971,8 @@ func (s *FirestoreStorage) CleanupExpiredSessions(ctx context.Context) (int, err
 	defer iter.Stop()
 
 	count := 0
-	batch := s.client.Batch()
-	batchSize := 0
-	const maxBatchSize = 500 // Firestore batch write limit
+	bulkWriter := s.client.BulkWriter(ctx)
+	defer bulkWriter.End()
 
 	for {
 		doc, err := iter.Next()
@@ -984,27 +983,16 @@ func (s *FirestoreStorage) CleanupExpiredSessions(ctx context.Context) (int, err
 			return count, fmt.Errorf("failed to iterate expired sessions: %w", err)
 		}
 
-		// Delete in batch for efficiency
-		batch.Delete(doc.Ref)
-		batchSize++
+		// Delete using bulk writer
+		_, err = bulkWriter.Delete(doc.Ref)
+		if err != nil {
+			return count, fmt.Errorf("failed to queue delete: %w", err)
+		}
 		count++
-
-		// Commit batch if we hit the limit
-		if batchSize >= maxBatchSize {
-			if _, err := batch.Commit(ctx); err != nil {
-				return count, fmt.Errorf("failed to commit batch: %w", err)
-			}
-			batch = s.client.Batch()
-			batchSize = 0
-		}
 	}
 
-	// Commit remaining deletes
-	if batchSize > 0 {
-		if _, err := batch.Commit(ctx); err != nil {
-			return count, fmt.Errorf("failed to commit final batch: %w", err)
-		}
-	}
+	// Flush all pending operations
+	bulkWriter.Flush()
 
 	if count > 0 {
 		log.LogInfoWithFields("firestore", "Cleaned up expired execution sessions", map[string]any{
