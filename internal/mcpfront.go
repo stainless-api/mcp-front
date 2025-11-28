@@ -294,9 +294,17 @@ func buildHTTPHandler(
 	userTokenService *server.UserTokenService,
 	baseURL string,
 	info mcp.Implementation,
-) (*http.ServeMux, error) {
+) (http.Handler, error) {
 	// Create mux and register all routes with dependency injection
 	mux := http.NewServeMux()
+	basePath := cfg.Proxy.BasePath
+
+	route := func(path string) string {
+		if basePath == "/" {
+			return path
+		}
+		return basePath + path
+	}
 
 	// Build common middleware
 	corsMiddleware := server.NewCORSMiddleware(authConfig.AllowedOrigins)
@@ -307,7 +315,6 @@ func buildHTTPHandler(
 	mcpRecover := server.NewRecoverMiddleware("mcp")
 	oauthRecover := server.NewRecoverMiddleware("oauth")
 
-	// Register health endpoint
 	mux.Handle("/health", server.NewHealthHandler())
 
 	// Create browser state token for SSO middleware (used by both OAuth and admin routes)
@@ -337,13 +344,13 @@ func buildHTTPHandler(
 		)
 
 		// Register OAuth endpoints
-		mux.Handle("/.well-known/oauth-authorization-server", server.ChainMiddleware(http.HandlerFunc(authHandlers.WellKnownHandler), oauthMiddleware...))
-		mux.Handle("/.well-known/oauth-protected-resource", server.ChainMiddleware(http.HandlerFunc(authHandlers.ProtectedResourceMetadataHandler), oauthMiddleware...))
-		mux.Handle("/authorize", server.ChainMiddleware(http.HandlerFunc(authHandlers.AuthorizeHandler), oauthMiddleware...))
-		mux.Handle("/oauth/callback", server.ChainMiddleware(http.HandlerFunc(authHandlers.GoogleCallbackHandler), oauthMiddleware...))
-		mux.Handle("/token", server.ChainMiddleware(http.HandlerFunc(authHandlers.TokenHandler), oauthMiddleware...))
-		mux.Handle("/register", server.ChainMiddleware(http.HandlerFunc(authHandlers.RegisterHandler), oauthMiddleware...))
-		mux.Handle("/clients/{client_id}", server.ChainMiddleware(http.HandlerFunc(authHandlers.ClientMetadataHandler), oauthMiddleware...))
+		mux.Handle(route("/.well-known/oauth-authorization-server"), server.ChainMiddleware(http.HandlerFunc(authHandlers.WellKnownHandler), oauthMiddleware...))
+		mux.Handle(route("/.well-known/oauth-protected-resource"), server.ChainMiddleware(http.HandlerFunc(authHandlers.ProtectedResourceMetadataHandler), oauthMiddleware...))
+		mux.Handle(route("/authorize"), server.ChainMiddleware(http.HandlerFunc(authHandlers.AuthorizeHandler), oauthMiddleware...))
+		mux.Handle(route("/oauth/callback"), server.ChainMiddleware(http.HandlerFunc(authHandlers.GoogleCallbackHandler), oauthMiddleware...))
+		mux.Handle(route("/token"), server.ChainMiddleware(http.HandlerFunc(authHandlers.TokenHandler), oauthMiddleware...))
+		mux.Handle(route("/register"), server.ChainMiddleware(http.HandlerFunc(authHandlers.RegisterHandler), oauthMiddleware...))
+		mux.Handle(route("/clients/{client_id}"), server.ChainMiddleware(http.HandlerFunc(authHandlers.ClientMetadataHandler), oauthMiddleware...))
 
 		// Register protected token endpoints
 		tokenMiddleware := []server.MiddlewareFunc{
@@ -357,19 +364,19 @@ func buildHTTPHandler(
 		tokenHandlers := server.NewTokenHandlers(storage, cfg.MCPServers, true, serviceOAuthClient)
 
 		// Token management UI endpoints
-		mux.Handle("/my/tokens", server.ChainMiddleware(http.HandlerFunc(tokenHandlers.ListTokensHandler), tokenMiddleware...))
-		mux.Handle("/my/tokens/set", server.ChainMiddleware(http.HandlerFunc(tokenHandlers.SetTokenHandler), tokenMiddleware...))
-		mux.Handle("/my/tokens/delete", server.ChainMiddleware(http.HandlerFunc(tokenHandlers.DeleteTokenHandler), tokenMiddleware...))
+		mux.Handle(route("/my/tokens"), server.ChainMiddleware(http.HandlerFunc(tokenHandlers.ListTokensHandler), tokenMiddleware...))
+		mux.Handle(route("/my/tokens/set"), server.ChainMiddleware(http.HandlerFunc(tokenHandlers.SetTokenHandler), tokenMiddleware...))
+		mux.Handle(route("/my/tokens/delete"), server.ChainMiddleware(http.HandlerFunc(tokenHandlers.DeleteTokenHandler), tokenMiddleware...))
 
 		// OAuth interstitial page and completion endpoint
-		mux.Handle("/oauth/services", server.ChainMiddleware(http.HandlerFunc(authHandlers.ServiceSelectionHandler), tokenMiddleware...))
-		mux.Handle("/oauth/complete", server.ChainMiddleware(http.HandlerFunc(authHandlers.CompleteOAuthHandler), tokenMiddleware...))
+		mux.Handle(route("/oauth/services"), server.ChainMiddleware(http.HandlerFunc(authHandlers.ServiceSelectionHandler), tokenMiddleware...))
+		mux.Handle(route("/oauth/complete"), server.ChainMiddleware(http.HandlerFunc(authHandlers.CompleteOAuthHandler), tokenMiddleware...))
 
 		// Register service OAuth endpoints
 		serviceAuthHandlers := server.NewServiceAuthHandlers(serviceOAuthClient, cfg.MCPServers, storage)
-		mux.HandleFunc("/oauth/callback/", serviceAuthHandlers.CallbackHandler)
-		mux.Handle("/oauth/connect", server.ChainMiddleware(http.HandlerFunc(serviceAuthHandlers.ConnectHandler), tokenMiddleware...))
-		mux.Handle("/oauth/disconnect", server.ChainMiddleware(http.HandlerFunc(serviceAuthHandlers.DisconnectHandler), tokenMiddleware...))
+		mux.HandleFunc(route("/oauth/callback/{service}"), serviceAuthHandlers.CallbackHandler)
+		mux.Handle(route("/oauth/connect"), server.ChainMiddleware(http.HandlerFunc(serviceAuthHandlers.ConnectHandler), tokenMiddleware...))
+		mux.Handle(route("/oauth/disconnect"), server.ChainMiddleware(http.HandlerFunc(serviceAuthHandlers.DisconnectHandler), tokenMiddleware...))
 	}
 
 	// Setup MCP server endpoints
@@ -411,8 +418,8 @@ func buildHTTPHandler(
 				baseURL,
 				info,
 				sessionManager,
-				sseServers[serverName], // Pass the shared SSE server (nil for non-stdio)
-				mcpServer,              // Pass the shared MCP server (nil for non-stdio)
+				sseServers[serverName],
+				mcpServer,
 				userTokenService.GetUserToken,
 			)
 		}
@@ -436,8 +443,7 @@ func buildHTTPHandler(
 		// Recovery middleware should be last (outermost)
 		mcpMiddlewares = append(mcpMiddlewares, mcpRecover)
 
-		// Register handler - SSE server needs to handle all paths under the server name
-		mux.Handle("/"+serverName+"/", server.ChainMiddleware(handler, mcpMiddlewares...))
+		mux.Handle(route("/"+serverName+"/"), server.ChainMiddleware(handler, mcpMiddlewares...))
 	}
 
 	// Setup admin routes if admin is enabled
@@ -474,10 +480,10 @@ func buildHTTPHandler(
 		adminMiddleware = append(adminMiddleware, mcpRecover)
 
 		// Register admin routes
-		mux.Handle("/admin", server.ChainMiddleware(http.HandlerFunc(adminHandlers.DashboardHandler), adminMiddleware...))
-		mux.Handle("/admin/users", server.ChainMiddleware(http.HandlerFunc(adminHandlers.UserActionHandler), adminMiddleware...))
-		mux.Handle("/admin/sessions", server.ChainMiddleware(http.HandlerFunc(adminHandlers.SessionActionHandler), adminMiddleware...))
-		mux.Handle("/admin/logging", server.ChainMiddleware(http.HandlerFunc(adminHandlers.LoggingActionHandler), adminMiddleware...))
+		mux.Handle(route("/admin"), server.ChainMiddleware(http.HandlerFunc(adminHandlers.DashboardHandler), adminMiddleware...))
+		mux.Handle(route("/admin/users"), server.ChainMiddleware(http.HandlerFunc(adminHandlers.UserActionHandler), adminMiddleware...))
+		mux.Handle(route("/admin/sessions"), server.ChainMiddleware(http.HandlerFunc(adminHandlers.SessionActionHandler), adminMiddleware...))
+		mux.Handle(route("/admin/logging"), server.ChainMiddleware(http.HandlerFunc(adminHandlers.LoggingActionHandler), adminMiddleware...))
 	}
 
 	log.LogInfoWithFields("server", "MCP proxy server initialized", nil)

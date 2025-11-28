@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 
@@ -38,6 +39,11 @@ func Load(path string) (Config, error) {
 	var config Config
 	if err := json.Unmarshal(data, &config); err != nil {
 		return Config{}, fmt.Errorf("parsing config: %w", err)
+	}
+
+	// Extract base path from baseURL
+	if err := extractBasePath(&config); err != nil {
+		return Config{}, fmt.Errorf("extracting base path: %w", err)
 	}
 
 	if err := ValidateConfig(&config); err != nil {
@@ -205,6 +211,34 @@ func validateMCPServer(name string, server *MCPClientConfig) error {
 	if server.RequiresUserToken && server.UserAuthentication == nil {
 		return fmt.Errorf("server %s requires user token but has no userAuthentication", name)
 	}
+
+	return nil
+}
+
+func extractBasePath(config *Config) error {
+	u, err := url.Parse(config.Proxy.BaseURL)
+	if err != nil {
+		return fmt.Errorf("invalid baseURL: %w", err)
+	}
+
+	basePath := u.Path
+	if basePath == "" {
+		basePath = "/"
+	}
+
+	if !strings.HasPrefix(basePath, "/") {
+		basePath = "/" + basePath
+	}
+	if len(basePath) > 1 && strings.HasSuffix(basePath, "/") {
+		basePath = strings.TrimSuffix(basePath, "/")
+	}
+
+	config.Proxy.BasePath = basePath
+
+	log.LogInfoWithFields("config", "Extracted base path from baseURL", map[string]any{
+		"baseURL":  config.Proxy.BaseURL,
+		"basePath": basePath,
+	})
 
 	return nil
 }

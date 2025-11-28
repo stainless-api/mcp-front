@@ -93,13 +93,7 @@ func (h *ServiceAuthHandlers) CallbackHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	// Extract service name from path: /oauth/callback/{service}
-	pathParts := strings.Split(strings.TrimPrefix(r.URL.Path, "/"), "/")
-	if len(pathParts) < 3 {
-		jsonwriter.WriteBadRequest(w, "Invalid callback path")
-		return
-	}
-	serviceName := pathParts[2]
+	serviceName := r.PathValue("service")
 	if serviceName == "" {
 		jsonwriter.WriteBadRequest(w, "Service name is required")
 		return
