@@ -221,6 +221,7 @@ type OAuthAuthConfig struct {
 // ProxyConfig represents the proxy configuration with resolved values
 type ProxyConfig struct {
 	BaseURL  string           `json:"baseURL"`
+	BasePath string           `json:"-"` // Extracted from BaseURL, not in JSON
 	Addr     string           `json:"addr"`
 	Name     string           `json:"name"`
 	Auth     *OAuthAuthConfig `json:"auth,omitempty"` // Only OAuth is supported

@@ -215,3 +215,67 @@ func TestValidateConfig_SessionConfig(t *testing.T) {
 		})
 	}
 }
+
+func TestExtractBasePath(t *testing.T) {
+	tests := []struct {
+		name         string
+		baseURL      string
+		expectedPath string
+		expectError  bool
+	}{
+		{
+			name:         "root_path",
+			baseURL:      "http://localhost:8080",
+			expectedPath: "/",
+		},
+		{
+			name:         "simple_path",
+			baseURL:      "http://localhost:8080/api",
+			expectedPath: "/api",
+		},
+		{
+			name:         "nested_path",
+			baseURL:      "http://localhost:8080/api/v1",
+			expectedPath: "/api/v1",
+		},
+		{
+			name:         "trailing_slash_removed",
+			baseURL:      "http://localhost:8080/api/",
+			expectedPath: "/api",
+		},
+		{
+			name:         "root_with_trailing_slash",
+			baseURL:      "http://localhost:8080/",
+			expectedPath: "/",
+		},
+		{
+			name:         "path_with_multiple_segments",
+			baseURL:      "https://mcp.company.com/mcp-api/v1",
+			expectedPath: "/mcp-api/v1",
+		},
+		{
+			name:        "invalid_url",
+			baseURL:     "://invalid",
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := Config{
+				Proxy: ProxyConfig{
+					BaseURL: tt.baseURL,
+				},
+			}
+
+			err := extractBasePath(&cfg)
+
+			if tt.expectError {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, tt.expectedPath, cfg.Proxy.BasePath)
+			}
+		})
+	}
+}

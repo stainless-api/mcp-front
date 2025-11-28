@@ -165,7 +165,21 @@ func BuildResourceURI(issuer string, serviceName string) (string, error) {
 //	ValidateAudienceForService("/linear/sse", []string{"https://mcp.company.com/postgres"}, "https://mcp.company.com")
 //	Returns: error (invalid - linear not in audience)
 func ValidateAudienceForService(requestPath string, tokenAudience []string, issuer string) error {
-	path := strings.TrimPrefix(requestPath, "/")
+	u, err := url.Parse(issuer)
+	if err != nil {
+		return fmt.Errorf("invalid issuer URL: %w", err)
+	}
+
+	basePath := u.Path
+	if basePath == "" {
+		basePath = "/"
+	}
+
+	path := requestPath
+	if basePath != "/" {
+		path = strings.TrimPrefix(path, basePath)
+	}
+	path = strings.TrimPrefix(path, "/")
 	parts := strings.Split(path, "/")
 
 	if len(parts) == 0 || parts[0] == "" {
