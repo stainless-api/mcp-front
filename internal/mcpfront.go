@@ -343,6 +343,7 @@ func buildHTTPHandler(
 		mux.Handle("/oauth/callback", server.ChainMiddleware(http.HandlerFunc(authHandlers.GoogleCallbackHandler), oauthMiddleware...))
 		mux.Handle("/token", server.ChainMiddleware(http.HandlerFunc(authHandlers.TokenHandler), oauthMiddleware...))
 		mux.Handle("/register", server.ChainMiddleware(http.HandlerFunc(authHandlers.RegisterHandler), oauthMiddleware...))
+		mux.Handle("/clients/{client_id}", server.ChainMiddleware(http.HandlerFunc(authHandlers.ClientMetadataHandler), oauthMiddleware...))
 
 		// Register protected token endpoints
 		tokenMiddleware := []server.MiddlewareFunc{

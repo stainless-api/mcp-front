@@ -87,7 +87,7 @@ mcp-front is a Go-based OAuth proxy server for MCP (Model Context Protocol) serv
 
 ### Architecture: Per-Service Audience Validation (RFC 8707)
 
-mcp-front implements per-service audience claims per RFC 8707 and MCP Specification 2025-06-18. Each internal service (postgres, linear, gong) gets tokens scoped specifically to it.
+mcp-front implements per-service audience claims per RFC 8707 and MCP Specification 2025-11-25. Each internal service (postgres, linear, gong) gets tokens scoped specifically to it.
 
 **Design rationale:**
 - mcp-front acts as unified OAuth server for internal MCP infrastructure
@@ -353,21 +353,33 @@ The animated logo creates a face-like character:
 - Assume developer audience
 - Keep it concise but complete
 
-### Pull Request Guidelines
+### Pull Request and Commit Guidelines
 
-**PR Titles**: Use clear, descriptive titles focused on the change impact, not just restating commit messages. Examples:
+PRs are squash+merged, so the commit message is what matters for git log.
+
+**PR Titles**: Clear, focused on what changed:
 
 - ❌ "feat: add message endpoint support for SSE MCP servers"
 - ✅ "Add SSE message endpoint support"
-- ❌ "fix: implement session-specific tool registration for stdio clients"
-- ✅ "Fix stdio session tool handler conflicts"
 
-**PR Descriptions**: Write terse prose for humans, not documentation. Avoid bullet lists unless they add genuine value. Focus on the problem solved and solution approach:
+**Commit Messages**: Keep them short. Focus on what and why, not every detail:
 
-- Explain what was broken and how it's fixed
-- Use conversational, developer-to-developer tone
-- Skip implementation details unless critical for review
-- Keep it concise but informative
+```
+Implement MCP Specification 2025-06-18
+
+Implements MCP Specification 2025-06-18 which requires servers to
+validate tokens with per-service audience binding. Uses RFC 8707
+resource indicators to scope tokens—a postgres token can't be reused for
+linear. Authentication stays centralized at mcp-front so backends remain
+private and don't need their own JWT validation.
+
+Publishes OAuth metadata endpoints per RFC 8414 and RFC 9728 for spec
+compliance
+```
+
+Don't list every file touched or documentation update unless that's the main change. Write for humans reading git log.
+
+**PR Descriptions**: Can be longer than commit messages but not insanely long. Focus on the goal and important context. Skip minor details unless critical for review.
 
 ### Common Issues
 
@@ -405,6 +417,29 @@ Remember: The mascot is an easter egg, not a distraction. Subtle movements creat
 2. **Don't assume complexity where none exists** - This codebase favors simple, explicit solutions.
 
 3. **Don't bring patterns from other systems** - Understand THIS system's design choices.
+
+### Approaching Problems
+
+**Never rush.** There is no time pressure. Approach every question with curiosity and investigation, not urgency.
+
+When faced with a problem or decision:
+
+1. **Seek the complete picture first** - Don't jump to solutions
+2. **Investigate thoroughly** - Read the code, understand the architecture, trace the data flow
+3. **Ask clarifying questions** - What's the actual use case? What's the value? What are the tradeoffs?
+4. **Think architecturally** - What's the right abstraction? Where do concerns belong?
+5. **Expand the solution space** - Don't settle on the first approach. Be creative. What if we ignored time and complexity? Would a larger refactoring lead to a fundamentally better design?
+6. **Consider future needs** - What might we want later? Does this approach scale to those needs?
+7. **Only then decide** - After exploring fully, choose the approach
+
+The question is never "what's the quick fix?" The question is "what's the right design given what we now understand?"
+
+**Example progression:**
+- ❌ "Here are three options, which one do you want?"
+- ✅ "Let me investigate how this works... [reads code]... I see we already store timestamps in Firestore but lose them during conversion. The core issue is fosite.DefaultClient can't hold metadata. What's the actual value of exposing this timestamp?"
+- ✅✅ "One approach is adding GetClientMetadata() alongside GetClient(). But let me think bigger - what if we stopped being constrained by fosite's storage interface? We could build our own Client type with metadata and use fosite as an implementation detail. Larger refactoring, but natural place for future metadata needs. What's your instinct on likely future requirements?"
+
+Don't get anchored on the first solution. Explore the design space. Sometimes the right answer is a bigger change that solves the problem more fundamentally.
 
 ### When You're Stuck
 

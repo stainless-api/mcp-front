@@ -55,6 +55,13 @@ func WriteUnauthorized(w http.ResponseWriter, message string) {
 //
 // The header format is: Bearer resource_metadata="<uri>"
 // where <uri> points to the protected resource metadata endpoint
+//
+// TODO: Add scope parameter to WWW-Authenticate header per MCP spec SHOULD requirement.
+// Currently not implemented because:
+// - Scopes are constant (openid profile email offline_access) for Google OAuth
+// - Already published in AS metadata scopes_supported
+// - Will be more valuable when supporting multiple OAuth providers with different scope sets
+// Example: Bearer resource_metadata="...", scope="openid profile email offline_access"
 func WriteUnauthorizedRFC9728(w http.ResponseWriter, message string, protectedResourceMetadataURI string) {
 	if protectedResourceMetadataURI != "" {
 		// Format per RFC 9728: Bearer resource_metadata="https://example.com/.well-known/oauth-protected-resource"

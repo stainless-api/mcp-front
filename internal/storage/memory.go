@@ -3,7 +3,6 @@ package storage
 import (
 	"context"
 	"fmt"
-	"maps"
 	"strings"
 	"sync"
 	"time"
@@ -22,6 +21,7 @@ var _ fosite.Storage = (*MemoryStorage)(nil)
 type MemoryStorage struct {
 	*storage.MemoryStore
 	stateCache      sync.Map                // map[string]fosite.AuthorizeRequester
+	clients         map[string]*Client      // Our client storage with metadata
 	clientsMutex    sync.RWMutex            // For thread-safe client access
 	userTokens      map[string]*StoredToken // map["email:service"] = token
 	userTokensMutex sync.RWMutex
@@ -35,6 +35,7 @@ type MemoryStorage struct {
 func NewMemoryStorage() *MemoryStorage {
 	return &MemoryStorage{
 		MemoryStore: storage.NewMemoryStore(),
+		clients:     make(map[string]*Client),
 		userTokens:  make(map[string]*StoredToken),
 		users:       make(map[string]*UserInfo),
 		sessions:    make(map[string]*ActiveSession),
@@ -55,81 +56,73 @@ func (s *MemoryStorage) GetAuthorizeRequest(state string) (fosite.AuthorizeReque
 	return nil, false
 }
 
-// GetClient overrides the MemoryStore's GetClient to use our mutex
+// GetClient implements fosite.Storage interface
 func (s *MemoryStorage) GetClient(_ context.Context, id string) (fosite.Client, error) {
 	s.clientsMutex.RLock()
 	defer s.clientsMutex.RUnlock()
 
-	cl, ok := s.MemoryStore.Clients[id]
+	client, ok := s.clients[id]
 	if !ok {
 		return nil, fosite.ErrNotFound
 	}
-	return cl, nil
+	return client.ToFositeClient(), nil
 }
 
-// CreateClient creates a dynamic client and stores it thread-safely
-func (s *MemoryStorage) CreateClient(clientID string, redirectURIs []string, scopes []string, issuer string) *fosite.DefaultClient {
-	// Create as public client (no secret) since MCP Inspector is a public client
-	client := &fosite.DefaultClient{
+func (s *MemoryStorage) GetClientWithMetadata(ctx context.Context, clientID string) (*Client, error) {
+	s.clientsMutex.RLock()
+	defer s.clientsMutex.RUnlock()
+
+	client, ok := s.clients[clientID]
+	if !ok {
+		return nil, fosite.ErrNotFound
+	}
+	return client, nil
+}
+
+func (s *MemoryStorage) CreateClient(ctx context.Context, clientID string, redirectURIs []string, scopes []string, issuer string) (*Client, error) {
+	client := &Client{
 		ID:            clientID,
-		Secret:        nil, // Public client - no secret
+		Secret:        nil,
 		RedirectURIs:  redirectURIs,
 		Scopes:        scopes,
 		GrantTypes:    []string{"authorization_code", "refresh_token"},
 		ResponseTypes: []string{"code"},
 		Audience:      []string{issuer},
-		Public:        true, // Mark as public client
+		Public:        true,
+		CreatedAt:     time.Now().Unix(),
 	}
 
-	// Thread-safe client storage
 	s.clientsMutex.Lock()
-	s.MemoryStore.Clients[clientID] = client
-	clientCount := len(s.MemoryStore.Clients)
+	s.clients[clientID] = client
+	clientCount := len(s.clients)
 	s.clientsMutex.Unlock()
 
 	log.Logf("Created client %s, redirect_uris: %v, scopes: %v", clientID, redirectURIs, scopes)
 	log.Logf("Total clients in storage: %d", clientCount)
-	return client
+	return client, nil
 }
 
-// CreateConfidentialClient creates a dynamic confidential client with a secret and stores it thread-safely
-func (s *MemoryStorage) CreateConfidentialClient(clientID string, hashedSecret []byte, redirectURIs []string, scopes []string, issuer string) *fosite.DefaultClient {
-	// Create as confidential client (with secret)
-	client := &fosite.DefaultClient{
+func (s *MemoryStorage) CreateConfidentialClient(ctx context.Context, clientID string, hashedSecret []byte, redirectURIs []string, scopes []string, issuer string) (*Client, error) {
+	client := &Client{
 		ID:            clientID,
-		Secret:        hashedSecret, // Already hashed
+		Secret:        hashedSecret,
 		RedirectURIs:  redirectURIs,
 		Scopes:        scopes,
 		GrantTypes:    []string{"authorization_code", "refresh_token"},
 		ResponseTypes: []string{"code"},
 		Audience:      []string{issuer},
-		Public:        false, // Mark as confidential client
+		Public:        false,
+		CreatedAt:     time.Now().Unix(),
 	}
 
-	// Thread-safe client storage
 	s.clientsMutex.Lock()
-	s.MemoryStore.Clients[clientID] = client
-	clientCount := len(s.MemoryStore.Clients)
+	s.clients[clientID] = client
+	clientCount := len(s.clients)
 	s.clientsMutex.Unlock()
 
 	log.Logf("Created confidential client %s, redirect_uris: %v, scopes: %v", clientID, redirectURIs, scopes)
 	log.Logf("Total clients in storage: %d", clientCount)
-	return client
-}
-
-// GetAllClients returns all clients thread-safely (for debugging)
-func (s *MemoryStorage) GetAllClients() map[string]fosite.Client {
-	s.clientsMutex.RLock()
-	defer s.clientsMutex.RUnlock()
-
-	clients := make(map[string]fosite.Client, len(s.MemoryStore.Clients)) // Copy to avoid races
-	maps.Copy(clients, s.MemoryStore.Clients)
-	return clients
-}
-
-// GetMemoryStore returns the underlying MemoryStore for fosite
-func (s *MemoryStorage) GetMemoryStore() *storage.MemoryStore {
-	return s.MemoryStore
+	return client, nil
 }
 
 // User token methods

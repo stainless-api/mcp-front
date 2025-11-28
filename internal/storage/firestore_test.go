@@ -45,10 +45,3 @@ func TestFirestoreStorageConfig(t *testing.T) {
 		assert.Contains(t, err.Error(), "collection is required")
 	})
 }
-
-func TestMemoryStorageDefault(t *testing.T) {
-	// Test that memory storage works
-	storage := NewMemoryStorage()
-	assert.NotNil(t, storage, "Expected storage to be created")
-	assert.NotNil(t, storage.GetMemoryStore(), "Expected memory store to be initialized")
-}
