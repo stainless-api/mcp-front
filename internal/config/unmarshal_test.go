@@ -255,9 +255,12 @@ func TestOAuthAuthConfig_UnmarshalJSON(t *testing.T) {
 		"allowedOrigins": ["https://claude.ai", "https://example.com"],
 		"tokenTtl": "1h",
 		"storage": "firestore",
-		"googleClientId": "test-client-id",
-		"googleClientSecret": {"$env": "CLIENT_SECRET"},
-		"googleRedirectUri": "https://example.com/callback",
+		"idp": {
+			"provider": "google",
+			"clientId": "test-client-id",
+			"clientSecret": {"$env": "CLIENT_SECRET"},
+			"redirectUri": "https://example.com/callback"
+		},
 		"jwtSecret": {"$env": "JWT_SECRET"},
 		"encryptionKey": {"$env": "ENCRYPTION_KEY"}
 	}`
@@ -271,8 +274,10 @@ func TestOAuthAuthConfig_UnmarshalJSON(t *testing.T) {
 	assert.Equal(t, "test-project", config.GCPProject)
 	assert.Equal(t, []string{"example.com"}, config.AllowedDomains)
 	assert.Equal(t, []string{"https://claude.ai", "https://example.com"}, config.AllowedOrigins)
-	assert.Equal(t, "test-client-id", config.GoogleClientID)
-	assert.Equal(t, Secret("test-secret-value"), config.GoogleClientSecret)
+	assert.Equal(t, "google", config.IDP.Provider)
+	assert.Equal(t, "test-client-id", config.IDP.ClientID)
+	assert.Equal(t, Secret("test-secret-value"), config.IDP.ClientSecret)
+	assert.Equal(t, "https://example.com/callback", config.IDP.RedirectURI)
 	assert.Equal(t, Secret("this-is-a-very-long-jwt-secret-key"), config.JWTSecret)
 	assert.Equal(t, Secret("exactly-32-bytes-long-encryptkey"), config.EncryptionKey)
 }
@@ -406,9 +411,12 @@ func TestProxyConfig_SessionConfigIntegration(t *testing.T) {
 		"auth": {
 			"kind": "oauth",
 			"issuer": "https://auth.example.com",
-			"googleClientId": "test-client",
-			"googleClientSecret": "test-secret",
-			"googleRedirectUri": "https://test.example.com/callback",
+			"idp": {
+				"provider": "google",
+				"clientId": "test-client",
+				"clientSecret": "test-secret",
+				"redirectUri": "https://test.example.com/callback"
+			},
 			"jwtSecret": "test-jwt-secret-must-be-32-bytes-long",
 			"encryptionKey": "test-encryption-key-32-bytes-ok!",
 			"allowedDomains": ["example.com"],

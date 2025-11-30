@@ -8,13 +8,16 @@
       "kind": "oauth",
       "issuer": "https://mcp-internal.yourcompany.org",
       "gcpProject": {"$env": "GCP_PROJECT"},
+      "idp": {
+        "provider": "google",
+        "clientId": {"$env": "GOOGLE_CLIENT_ID"},
+        "clientSecret": {"$env": "GOOGLE_CLIENT_SECRET"},
+        "redirectUri": "https://mcp-internal.yourcompany.org/oauth/callback"
+      },
       "allowedDomains": ["yourcompany.com"],
       "allowedOrigins": ["https://claude.ai"],
       "tokenTtl": "24h",
       "storage": "memory",
-      "googleClientId": {"$env": "GOOGLE_CLIENT_ID"},
-      "googleClientSecret": {"$env": "GOOGLE_CLIENT_SECRET"},
-      "googleRedirectUri": "https://mcp-internal.yourcompany.org/oauth/callback",
       "jwtSecret": {"$env": "JWT_SECRET"},
       "encryptionKey": {"$env": "ENCRYPTION_KEY"}
     }

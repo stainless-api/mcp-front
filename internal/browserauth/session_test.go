@@ -11,8 +11,9 @@ import (
 
 func TestSessionCookie_MarshalUnmarshal(t *testing.T) {
 	original := SessionCookie{
-		Email:   "user@example.com",
-		Expires: time.Now().Add(24 * time.Hour).Truncate(time.Second),
+		Email:    "user@example.com",
+		Provider: "google",
+		Expires:  time.Now().Add(24 * time.Hour).Truncate(time.Second),
 	}
 
 	// Marshal to JSON
@@ -26,14 +27,16 @@ func TestSessionCookie_MarshalUnmarshal(t *testing.T) {
 
 	// Truncate for comparison (JSON time serialization)
 	assert.Equal(t, original.Email, unmarshaled.Email)
+	assert.Equal(t, original.Provider, unmarshaled.Provider)
 	assert.WithinDuration(t, original.Expires, unmarshaled.Expires, time.Second)
 }
 
 func TestSessionCookie_Expiry(t *testing.T) {
 	t.Run("not expired", func(t *testing.T) {
 		session := SessionCookie{
-			Email:   "user@example.com",
-			Expires: time.Now().Add(1 * time.Hour),
+			Email:    "user@example.com",
+			Provider: "google",
+			Expires:  time.Now().Add(1 * time.Hour),
 		}
 
 		assert.True(t, session.Expires.After(time.Now()))
@@ -41,8 +44,9 @@ func TestSessionCookie_Expiry(t *testing.T) {
 
 	t.Run("expired", func(t *testing.T) {
 		session := SessionCookie{
-			Email:   "user@example.com",
-			Expires: time.Now().Add(-1 * time.Hour),
+			Email:    "user@example.com",
+			Provider: "google",
+			Expires:  time.Now().Add(-1 * time.Hour),
 		}
 
 		assert.True(t, session.Expires.Before(time.Now()))

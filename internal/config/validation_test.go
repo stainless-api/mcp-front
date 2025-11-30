@@ -51,9 +51,12 @@ func TestValidateFile(t *testing.T) {
 					"auth": {
 						"kind": "oauth",
 						"issuer": "https://example.com",
-						"googleClientId": {"$env": "CLIENT_ID"},
-						"googleClientSecret": {"$env": "CLIENT_SECRET"},
-						"googleRedirectUri": "https://example.com/callback",
+						"idp": {
+							"provider": "google",
+							"clientId": {"$env": "CLIENT_ID"},
+							"clientSecret": {"$env": "CLIENT_SECRET"},
+							"redirectUri": "https://example.com/callback"
+						},
 						"jwtSecret": {"$env": "JWT_SECRET"},
 						"encryptionKey": {"$env": "ENCRYPTION_KEY"},
 						"allowedDomains": ["example.com"],
@@ -225,9 +228,12 @@ func TestValidateFile(t *testing.T) {
 					"auth": {
 						"kind": "oauth",
 						"issuer": "https://example.com",
-						"googleClientId": "id",
-						"googleClientSecret": "secret",
-						"googleRedirectUri": "https://example.com/callback",
+						"idp": {
+							"provider": "google",
+							"clientId": "id",
+							"clientSecret": "secret",
+							"redirectUri": "https://example.com/callback"
+						},
 						"jwtSecret": "secret",
 						"encryptionKey": "key",
 						"allowedDomains": ["example.com"],
@@ -260,15 +266,12 @@ func TestValidateFile(t *testing.T) {
 			}`,
 			wantErrors: []string{
 				"issuer is required for OAuth",
-				"googleClientId is required for OAuth",
-				"googleClientSecret is required for OAuth",
-				"googleRedirectUri is required for OAuth",
 				"jwtSecret is required for OAuth. Hint: Must be at least 32 bytes long for HMAC-SHA256",
 				"encryptionKey is required for OAuth. Hint: Must be exactly 32 bytes for AES-256-GCM encryption",
-				"at least one allowed domain is required for OAuth",
+				"idp configuration is required for OAuth",
 				"at least one allowed origin is required for OAuth (CORS configuration)",
 			},
-			wantErrCount: 8,
+			wantErrCount: 5,
 		},
 		{
 			name: "valid_manual_user_authentication",
@@ -280,9 +283,12 @@ func TestValidateFile(t *testing.T) {
 					"auth": {
 						"kind": "oauth",
 						"issuer": "https://example.com",
-						"googleClientId": "id",
-						"googleClientSecret": "secret",
-						"googleRedirectUri": "https://example.com/callback",
+						"idp": {
+							"provider": "google",
+							"clientId": "id",
+							"clientSecret": "secret",
+							"redirectUri": "https://example.com/callback"
+						},
 						"jwtSecret": "secret123456789012345678901234567890",
 						"encryptionKey": "key12345678901234567890123456789",
 						"allowedDomains": ["example.com"],
@@ -315,9 +321,12 @@ func TestValidateFile(t *testing.T) {
 					"auth": {
 						"kind": "oauth",
 						"issuer": "https://example.com",
-						"googleClientId": "id",
-						"googleClientSecret": "secret",
-						"googleRedirectUri": "https://example.com/callback",
+						"idp": {
+							"provider": "google",
+							"clientId": "id",
+							"clientSecret": "secret",
+							"redirectUri": "https://example.com/callback"
+						},
 						"jwtSecret": "secret123456789012345678901234567890",
 						"encryptionKey": "key12345678901234567890123456789",
 						"allowedDomains": ["example.com"],
@@ -354,9 +363,12 @@ func TestValidateFile(t *testing.T) {
 					"auth": {
 						"kind": "oauth",
 						"issuer": "https://example.com",
-						"googleClientId": "id",
-						"googleClientSecret": "secret",
-						"googleRedirectUri": "https://example.com/callback",
+						"idp": {
+							"provider": "google",
+							"clientId": "id",
+							"clientSecret": "secret",
+							"redirectUri": "https://example.com/callback"
+						},
 						"jwtSecret": "secret123456789012345678901234567890",
 						"encryptionKey": "key12345678901234567890123456789",
 						"allowedDomains": ["example.com"],
@@ -515,9 +527,12 @@ func TestValidateFile_ImprovedErrorMessages(t *testing.T) {
 					"auth": {
 						"kind": "oauth",
 						"issuer": "https://example.com",
-						"googleClientId": "id",
-						"googleClientSecret": "secret",
-						"googleRedirectUri": "https://example.com/callback",
+						"idp": {
+							"provider": "google",
+							"clientId": "id",
+							"clientSecret": "secret",
+							"redirectUri": "https://example.com/callback"
+						},
 						"jwtSecret": "secret123456789012345678901234567890",
 						"encryptionKey": "key12345678901234567890123456789",
 						"allowedDomains": ["example.com"],

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -12,11 +13,39 @@ import (
 	"github.com/dgellow/mcp-front/internal/browserauth"
 	"github.com/dgellow/mcp-front/internal/config"
 	"github.com/dgellow/mcp-front/internal/crypto"
+	"github.com/dgellow/mcp-front/internal/idp"
 	"github.com/dgellow/mcp-front/internal/oauth"
 	"github.com/dgellow/mcp-front/internal/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/oauth2"
 )
+
+// mockIDPProvider is a mock IDP provider for testing
+type mockIDPProvider struct{}
+
+func (m *mockIDPProvider) Type() string {
+	return "mock"
+}
+
+func (m *mockIDPProvider) AuthURL(state string) string {
+	return "https://auth.example.com/authorize?state=" + state
+}
+
+func (m *mockIDPProvider) ExchangeCode(ctx context.Context, code string) (*oauth2.Token, error) {
+	return &oauth2.Token{AccessToken: "test-token"}, nil
+}
+
+func (m *mockIDPProvider) UserInfo(ctx context.Context, token *oauth2.Token, allowedDomains []string) (*idp.UserInfo, error) {
+	return &idp.UserInfo{
+		ProviderType:  "mock",
+		Subject:       "123",
+		Email:         "test@example.com",
+		EmailVerified: true,
+		Name:          "Test User",
+		Domain:        "example.com",
+	}, nil
+}
 
 func TestAuthenticationBoundaries(t *testing.T) {
 	tests := []struct {
@@ -47,18 +76,21 @@ func TestAuthenticationBoundaries(t *testing.T) {
 
 	// Setup test OAuth configuration
 	oauthConfig := config.OAuthAuthConfig{
-		Kind:               config.AuthKindOAuth,
-		Issuer:             "https://test.example.com",
-		GoogleClientID:     "test-client-id",
-		GoogleClientSecret: config.Secret("test-client-secret"),
-		GoogleRedirectURI:  "https://test.example.com/oauth/callback",
-		JWTSecret:          config.Secret(strings.Repeat("a", 32)),
-		EncryptionKey:      config.Secret(strings.Repeat("b", 32)),
-		TokenTTL:           time.Hour,
-		RefreshTokenTTL:    30 * 24 * time.Hour,
-		Storage:            "memory",
-		AllowedDomains:     []string{"example.com"},
-		AllowedOrigins:     []string{"https://test.example.com"},
+		Kind:   config.AuthKindOAuth,
+		Issuer: "https://test.example.com",
+		IDP: config.IDPConfig{
+			Provider:     "google",
+			ClientID:     "test-client-id",
+			ClientSecret: config.Secret("test-client-secret"),
+			RedirectURI:  "https://test.example.com/oauth/callback",
+		},
+		JWTSecret:       config.Secret(strings.Repeat("a", 32)),
+		EncryptionKey:   config.Secret(strings.Repeat("b", 32)),
+		TokenTTL:        time.Hour,
+		RefreshTokenTTL: 30 * 24 * time.Hour,
+		Storage:         "memory",
+		AllowedDomains:  []string{"example.com"},
+		AllowedOrigins:  []string{"https://test.example.com"},
 	}
 
 	// Create storage
@@ -77,10 +109,14 @@ func TestAuthenticationBoundaries(t *testing.T) {
 	// Create service OAuth client
 	serviceOAuthClient := auth.NewServiceOAuthClient(store, "https://test.example.com", []byte(strings.Repeat("k", 32)))
 
+	// Create mock IDP provider for testing
+	mockIDP := &mockIDPProvider{}
+
 	// Create handlers
 	authHandlers := NewAuthHandlers(
 		oauthProvider,
 		oauthConfig,
+		mockIDP,
 		store,
 		sessionEncryptor,
 		map[string]*config.MCPClientConfig{},
@@ -103,7 +139,7 @@ func TestAuthenticationBoundaries(t *testing.T) {
 	// Protected endpoints
 	tokenMiddleware := []MiddlewareFunc{
 		corsMiddleware,
-		NewBrowserSSOMiddleware(oauthConfig, sessionEncryptor, &browserStateToken),
+		NewBrowserSSOMiddleware(oauthConfig, mockIDP, sessionEncryptor, &browserStateToken),
 	}
 
 	mux.Handle("/my/tokens", ChainMiddleware(
@@ -155,8 +191,9 @@ func TestAuthenticationBoundaries(t *testing.T) {
 			if tt.expectAuth {
 				// Create session data
 				sessionData := browserauth.SessionCookie{
-					Email:   "test@example.com",
-					Expires: time.Now().Add(24 * time.Hour),
+					Email:    "test@example.com",
+					Provider: "mock",
+					Expires:  time.Now().Add(24 * time.Hour),
 				}
 				jsonData, err := json.Marshal(sessionData)
 				require.NoError(t, err)
@@ -186,18 +223,21 @@ func TestAuthenticationBoundaries(t *testing.T) {
 
 func TestOAuthEndpointHandlers(t *testing.T) {
 	oauthConfig := config.OAuthAuthConfig{
-		Kind:               config.AuthKindOAuth,
-		Issuer:             "https://test.example.com",
-		GoogleClientID:     "test-client-id",
-		GoogleClientSecret: config.Secret("test-client-secret"),
-		GoogleRedirectURI:  "https://test.example.com/oauth/callback",
-		JWTSecret:          config.Secret(strings.Repeat("a", 32)),
-		EncryptionKey:      config.Secret(strings.Repeat("b", 32)),
-		TokenTTL:           time.Hour,
-		RefreshTokenTTL:    30 * 24 * time.Hour,
-		Storage:            "memory",
-		AllowedDomains:     []string{"example.com"},
-		AllowedOrigins:     []string{"https://test.example.com"},
+		Kind:   config.AuthKindOAuth,
+		Issuer: "https://test.example.com",
+		IDP: config.IDPConfig{
+			Provider:     "google",
+			ClientID:     "test-client-id",
+			ClientSecret: config.Secret("test-client-secret"),
+			RedirectURI:  "https://test.example.com/oauth/callback",
+		},
+		JWTSecret:       config.Secret(strings.Repeat("a", 32)),
+		EncryptionKey:   config.Secret(strings.Repeat("b", 32)),
+		TokenTTL:        time.Hour,
+		RefreshTokenTTL: 30 * 24 * time.Hour,
+		Storage:         "memory",
+		AllowedDomains:  []string{"example.com"},
+		AllowedOrigins:  []string{"https://test.example.com"},
 	}
 
 	store := storage.NewMemoryStorage()
@@ -208,10 +248,12 @@ func TestOAuthEndpointHandlers(t *testing.T) {
 	sessionEncryptor, err := oauth.NewSessionEncryptor([]byte(oauthConfig.EncryptionKey))
 	require.NoError(t, err)
 	serviceOAuthClient := auth.NewServiceOAuthClient(store, "https://test.example.com", []byte(strings.Repeat("k", 32)))
+	mockIDP := &mockIDPProvider{}
 
 	authHandlers := NewAuthHandlers(
 		oauthProvider,
 		oauthConfig,
+		mockIDP,
 		store,
 		sessionEncryptor,
 		map[string]*config.MCPClientConfig{},

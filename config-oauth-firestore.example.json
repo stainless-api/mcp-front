@@ -8,13 +8,16 @@
       "kind": "oauth",
       "issuer": {"$env": "OAUTH_ISSUER"},
       "gcpProject": {"$env": "GCP_PROJECT"},
+      "idp": {
+        "provider": "google",
+        "clientId": {"$env": "GOOGLE_CLIENT_ID"},
+        "clientSecret": {"$env": "GOOGLE_CLIENT_SECRET"},
+        "redirectUri": {"$env": "GOOGLE_REDIRECT_URI"}
+      },
       "allowedDomains": ["yourcompany.com", "contractors.yourcompany.com"],
       "allowedOrigins": ["https://claude.ai", "https://yourcompany.com"],
       "tokenTtl": "24h",
       "storage": "firestore",
-      "googleClientId": {"$env": "GOOGLE_CLIENT_ID"},
-      "googleClientSecret": {"$env": "GOOGLE_CLIENT_SECRET"},
-      "googleRedirectUri": {"$env": "GOOGLE_REDIRECT_URI"},
       "jwtSecret": {"$env": "JWT_SECRET"},
       "encryptionKey": {"$env": "ENCRYPTION_KEY"}
     }

@@ -8,6 +8,12 @@
       "kind": "oauth",
       "issuer": "http://localhost:8080",
       "gcpProject": "test-project",
+      "idp": {
+        "provider": "google",
+        "clientId": "test-client-id",
+        "clientSecret": "test-client-secret-for-integration-testing",
+        "redirectUri": "http://localhost:8080/oauth/callback"
+      },
       "allowedDomains": [
         "test.com"
       ],
@@ -16,9 +22,6 @@
       ],
       "tokenTtl": "1h",
       "storage": "memory",
-      "googleClientId": "test-client-id",
-      "googleClientSecret": "test-client-secret-for-integration-testing",
-      "googleRedirectUri": "http://localhost:8080/oauth/callback",
       "jwtSecret": "test-jwt-secret-for-integration-testing-32-chars-long",
       "encryptionKey": "test-encryption-key-32-bytes-aes"
     }
