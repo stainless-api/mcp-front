@@ -15,7 +15,7 @@ import (
 	"github.com/dgellow/mcp-front/internal/config"
 	"github.com/dgellow/mcp-front/internal/crypto"
 	"github.com/dgellow/mcp-front/internal/envutil"
-	"github.com/dgellow/mcp-front/internal/googleauth"
+	"github.com/dgellow/mcp-front/internal/idp"
 	jsonwriter "github.com/dgellow/mcp-front/internal/json"
 	"github.com/dgellow/mcp-front/internal/log"
 	"github.com/dgellow/mcp-front/internal/oauth"
@@ -28,6 +28,7 @@ import (
 type AuthHandlers struct {
 	oauthProvider      fosite.OAuth2Provider
 	authConfig         config.OAuthAuthConfig
+	idpProvider        idp.Provider
 	storage            storage.Storage
 	sessionEncryptor   crypto.Encryptor
 	mcpServers         map[string]*config.MCPClientConfig
@@ -37,18 +38,19 @@ type AuthHandlers struct {
 
 // UpstreamOAuthState stores OAuth state during upstream authentication flow (MCP host → mcp-front)
 type UpstreamOAuthState struct {
-	UserInfo     googleauth.UserInfo `json:"user_info"`
-	ClientID     string              `json:"client_id"`
-	RedirectURI  string              `json:"redirect_uri"`
-	Scopes       []string            `json:"scopes"`
-	State        string              `json:"state"`
-	ResponseType string              `json:"response_type"`
+	UserInfo     idp.UserInfo `json:"user_info"`
+	ClientID     string       `json:"client_id"`
+	RedirectURI  string       `json:"redirect_uri"`
+	Scopes       []string     `json:"scopes"`
+	State        string       `json:"state"`
+	ResponseType string       `json:"response_type"`
 }
 
 // NewAuthHandlers creates new auth handlers with dependency injection
 func NewAuthHandlers(
 	oauthProvider fosite.OAuth2Provider,
 	authConfig config.OAuthAuthConfig,
+	idpProvider idp.Provider,
 	storage storage.Storage,
 	sessionEncryptor crypto.Encryptor,
 	mcpServers map[string]*config.MCPClientConfig,
@@ -57,6 +59,7 @@ func NewAuthHandlers(
 	return &AuthHandlers{
 		oauthProvider:      oauthProvider,
 		authConfig:         authConfig,
+		idpProvider:        idpProvider,
 		storage:            storage,
 		sessionEncryptor:   sessionEncryptor,
 		mcpServers:         mcpServers,
@@ -206,12 +209,12 @@ func (h *AuthHandlers) AuthorizeHandler(w http.ResponseWriter, r *http.Request) 
 	state := ar.GetState()
 	h.storage.StoreAuthorizeRequest(state, ar)
 
-	authURL := googleauth.GoogleAuthURL(h.authConfig, state)
+	authURL := h.idpProvider.AuthURL(state)
 	http.Redirect(w, r, authURL, http.StatusFound)
 }
 
-// GoogleCallbackHandler handles the callback from Google OAuth
-func (h *AuthHandlers) GoogleCallbackHandler(w http.ResponseWriter, r *http.Request) {
+// IDPCallbackHandler handles the callback from the identity provider
+func (h *AuthHandlers) IDPCallbackHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	state := r.URL.Query().Get("state")
@@ -219,7 +222,7 @@ func (h *AuthHandlers) GoogleCallbackHandler(w http.ResponseWriter, r *http.Requ
 
 	if errMsg := r.URL.Query().Get("error"); errMsg != "" {
 		errDesc := r.URL.Query().Get("error_description")
-		log.LogError("Google OAuth error: %s - %s", errMsg, errDesc)
+		log.LogError("OAuth error: %s - %s", errMsg, errDesc)
 		jsonwriter.WriteBadRequest(w, fmt.Sprintf("Authentication failed: %s", errMsg))
 		return
 	}
@@ -260,7 +263,7 @@ func (h *AuthHandlers) GoogleCallbackHandler(w http.ResponseWriter, r *http.Requ
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	token, err := googleauth.ExchangeCodeForToken(ctx, h.authConfig, code)
+	token, err := h.idpProvider.ExchangeCode(ctx, code)
 	if err != nil {
 		log.LogError("Failed to exchange code: %v", err)
 		if !isBrowserFlow && ar != nil {
@@ -271,8 +274,8 @@ func (h *AuthHandlers) GoogleCallbackHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Validate user
-	userInfo, err := googleauth.ValidateUser(ctx, h.authConfig, token)
+	// Validate user and fetch user info
+	userInfo, err := h.idpProvider.UserInfo(ctx, token, h.authConfig.AllowedDomains)
 	if err != nil {
 		log.LogError("User validation failed: %v", err)
 		if !isBrowserFlow && ar != nil {
@@ -299,8 +302,9 @@ func (h *AuthHandlers) GoogleCallbackHandler(w http.ResponseWriter, r *http.Requ
 		sessionDuration := 24 * time.Hour
 
 		sessionData := browserauth.SessionCookie{
-			Email:   userInfo.Email,
-			Expires: time.Now().Add(sessionDuration),
+			Email:    userInfo.Email,
+			Provider: userInfo.ProviderType,
+			Expires:  time.Now().Add(sessionDuration),
 		}
 
 		// Marshal session data to JSON
@@ -353,7 +357,7 @@ func (h *AuthHandlers) GoogleCallbackHandler(w http.ResponseWriter, r *http.Requ
 	}
 
 	if needsServiceAuth {
-		stateData, err := h.signUpstreamOAuthState(ar, userInfo)
+		stateData, err := h.signUpstreamOAuthState(ar, *userInfo)
 		if err != nil {
 			log.LogError("Failed to sign OAuth state: %v", err)
 			h.oauthProvider.WriteAuthorizeError(ctx, w, ar, fosite.ErrServerError.WithHint("Failed to prepare service authentication"))
@@ -374,7 +378,7 @@ func (h *AuthHandlers) GoogleCallbackHandler(w http.ResponseWriter, r *http.Requ
 				fosite.RefreshToken: time.Now().Add(h.authConfig.TokenTTL * 2),
 			},
 		},
-		UserInfo: userInfo,
+		UserInfo: *userInfo,
 	}
 
 	// Accept the authorization request
@@ -456,7 +460,7 @@ func (h *AuthHandlers) RegisterHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Parse client request
-	redirectURIs, scopes, err := googleauth.ParseClientRequest(metadata)
+	redirectURIs, scopes, err := idp.ParseClientRequest(metadata)
 	if err != nil {
 		log.LogError("Client request parsing error: %v", err)
 		jsonwriter.WriteBadRequest(w, err.Error())
@@ -505,7 +509,7 @@ func (h *AuthHandlers) RegisterHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // signUpstreamOAuthState signs upstream OAuth state for secure storage
-func (h *AuthHandlers) signUpstreamOAuthState(ar fosite.AuthorizeRequester, userInfo googleauth.UserInfo) (string, error) {
+func (h *AuthHandlers) signUpstreamOAuthState(ar fosite.AuthorizeRequester, userInfo idp.UserInfo) (string, error) {
 	state := UpstreamOAuthState{
 		UserInfo:     userInfo,
 		ClientID:     ar.GetClient().GetID(),
