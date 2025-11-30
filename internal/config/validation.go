@@ -146,9 +146,6 @@ func validateAuthStructure(auth map[string]any, result *ValidationResult) {
 			hint string
 		}{
 			{"issuer", ""},
-			{"googleClientId", ""},
-			{"googleClientSecret", ""},
-			{"googleRedirectUri", ""},
 			{"jwtSecret", "Hint: Must be at least 32 bytes long for HMAC-SHA256"},
 			{"encryptionKey", "Hint: Must be exactly 32 bytes for AES-256-GCM encryption"},
 		}
@@ -164,12 +161,18 @@ func validateAuthStructure(auth map[string]any, result *ValidationResult) {
 				})
 			}
 		}
-		if domains, ok := auth["allowedDomains"].([]any); !ok || len(domains) == 0 {
+
+		// Validate IDP configuration
+		idp, hasIDP := auth["idp"].(map[string]any)
+		if !hasIDP {
 			result.Errors = append(result.Errors, ValidationError{
-				Path:    "proxy.auth.allowedDomains",
-				Message: "at least one allowed domain is required for OAuth",
+				Path:    "proxy.auth.idp",
+				Message: "idp configuration is required for OAuth",
 			})
+		} else {
+			validateIDPStructure(idp, result)
 		}
+
 		if origins, ok := auth["allowedOrigins"].([]any); !ok || len(origins) == 0 {
 			result.Errors = append(result.Errors, ValidationError{
 				Path:    "proxy.auth.allowedOrigins",
@@ -180,6 +183,74 @@ func validateAuthStructure(auth map[string]any, result *ValidationResult) {
 		result.Errors = append(result.Errors, ValidationError{
 			Path:    "proxy.auth.kind",
 			Message: fmt.Sprintf("unknown auth kind '%s' - only 'oauth' is supported for proxy auth", kind),
+		})
+	}
+}
+
+// validateIDPStructure checks identity provider configuration
+func validateIDPStructure(idp map[string]any, result *ValidationResult) {
+	provider, ok := idp["provider"].(string)
+	if !ok {
+		result.Errors = append(result.Errors, ValidationError{
+			Path:    "proxy.auth.idp.provider",
+			Message: "provider is required. Options: google, azure, github, oidc",
+		})
+		return
+	}
+
+	// Check required fields for all providers
+	if _, ok := idp["clientId"]; !ok {
+		result.Errors = append(result.Errors, ValidationError{
+			Path:    "proxy.auth.idp.clientId",
+			Message: "clientId is required for IDP configuration",
+		})
+	}
+	if _, ok := idp["clientSecret"]; !ok {
+		result.Errors = append(result.Errors, ValidationError{
+			Path:    "proxy.auth.idp.clientSecret",
+			Message: "clientSecret is required for IDP configuration",
+		})
+	}
+	if _, ok := idp["redirectUri"]; !ok {
+		result.Errors = append(result.Errors, ValidationError{
+			Path:    "proxy.auth.idp.redirectUri",
+			Message: "redirectUri is required for IDP configuration",
+		})
+	}
+
+	// Provider-specific validation
+	switch provider {
+	case "google", "github":
+		// No additional required fields
+	case "azure":
+		if _, ok := idp["tenantId"]; !ok {
+			result.Errors = append(result.Errors, ValidationError{
+				Path:    "proxy.auth.idp.tenantId",
+				Message: "tenantId is required for Azure AD provider",
+			})
+		}
+	case "oidc":
+		// Either discoveryUrl or manual endpoints required
+		hasDiscovery := false
+		if _, ok := idp["discoveryUrl"]; ok {
+			hasDiscovery = true
+		}
+		if !hasDiscovery {
+			// Check for manual endpoints
+			requiredEndpoints := []string{"authorizationUrl", "tokenUrl", "userInfoUrl"}
+			for _, endpoint := range requiredEndpoints {
+				if _, ok := idp[endpoint]; !ok {
+					result.Errors = append(result.Errors, ValidationError{
+						Path:    "proxy.auth.idp." + endpoint,
+						Message: fmt.Sprintf("%s is required for OIDC provider when discoveryUrl is not provided", endpoint),
+					})
+				}
+			}
+		}
+	default:
+		result.Errors = append(result.Errors, ValidationError{
+			Path:    "proxy.auth.idp.provider",
+			Message: fmt.Sprintf("unknown provider '%s' - supported providers: google, azure, github, oidc", provider),
 		})
 	}
 }

@@ -41,9 +41,13 @@ Claude redirects users to Google for authentication, and MCP Front validates the
   "auth": {
     "kind": "oauth",
     "issuer": "https://mcp.company.com",
+    "idp": {
+      "provider": "google",
+      "clientId": { "$env": "GOOGLE_CLIENT_ID" },
+      "clientSecret": { "$env": "GOOGLE_CLIENT_SECRET" },
+      "redirectUri": "https://mcp.company.com/oauth/callback"
+    },
     "allowedDomains": ["company.com"],
-    "googleClientId": { "$env": "GOOGLE_CLIENT_ID" },
-    "googleClientSecret": { "$env": "GOOGLE_CLIENT_SECRET" },
     "jwtSecret": { "$env": "JWT_SECRET" },
     "encryptionKey": { "$env": "ENCRYPTION_KEY" }
   }
