@@ -127,6 +127,6 @@ See the [configuration reference](https://stainless-api.github.io/mcp-front/conf
 
 ## License
 
-Licensed under the [Elastic License 2.0](LICENSE) with commercial exceptions for Stainless Software Ltd and the author. Using mcp-front as infrastructure for your own services (including public/commercial) is permitted; offering mcp-front itself as a hosted product is not.
+Licensed under the [Elastic License 2.0](LICENSE) with commercial exceptions for Stainless Software Ltd and its affiliates, and the author. Using mcp-front as infrastructure for your own services (including public/commercial) is permitted; offering mcp-front itself as a hosted product is not.
 
 Copyright 2025 Samuel "dgellow" El-Borai (sam@elborai.me)

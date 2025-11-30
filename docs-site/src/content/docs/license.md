@@ -15,7 +15,10 @@ Offer MCP Front itself as a hosted or managed product to third parties. For exam
 
 ## Commercial exceptions
 
-Stainless Software Ltd (stainless.com) and Samuel "dgellow" El-Borai (sam@elborai.me) have full commercial rights without the restrictions above.
+The following parties have full commercial rights without the restrictions above:
+
+- **Stainless Software Ltd** and its affiliates (stainless.com)
+- **Samuel "dgellow" El-Borai** (sam@elborai.me)
 
 ## Why this license
 
