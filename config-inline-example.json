@@ -7,13 +7,16 @@
     "auth": {
       "kind": "oauth",
       "issuer": "https://mcp.example.com",
+      "idp": {
+        "provider": "google",
+        "clientId": {"$env": "GOOGLE_CLIENT_ID"},
+        "clientSecret": {"$env": "GOOGLE_CLIENT_SECRET"},
+        "redirectUri": "https://mcp.example.com/oauth/callback"
+      },
       "allowedDomains": ["example.com"],
       "allowedOrigins": ["https://claude.ai"],
       "tokenTtl": "1h",
       "storage": "memory",
-      "googleClientId": {"$env": "GOOGLE_CLIENT_ID"},
-      "googleClientSecret": {"$env": "GOOGLE_CLIENT_SECRET"},
-      "googleRedirectUri": "https://mcp.example.com/oauth/callback",
       "jwtSecret": {"$env": "JWT_SECRET"},
       "encryptionKey": {"$env": "ENCRYPTION_KEY"}
     }
