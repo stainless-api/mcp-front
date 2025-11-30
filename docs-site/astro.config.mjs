@@ -30,6 +30,7 @@ export default defineConfig({
 				},
 				{ label: 'Configuration', slug: 'configuration' },
 				{ label: 'API Reference', slug: 'api-reference' },
+				{ label: 'License', slug: 'license' },
 			],
 			customCss: ['./src/styles/custom.css'],
 			components: {
