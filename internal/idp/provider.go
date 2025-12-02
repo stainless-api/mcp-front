@@ -23,6 +23,7 @@ type UserInfo struct {
 }
 
 // Provider abstracts identity provider operations.
+// Access control (allowed domains, orgs) is configured at construction time.
 type Provider interface {
 	// Type returns the provider type identifier (e.g., "google", "azure", "github", "oidc").
 	Type() string
@@ -34,9 +35,8 @@ type Provider interface {
 	ExchangeCode(ctx context.Context, code string) (*oauth2.Token, error)
 
 	// UserInfo fetches user information and validates access.
-	// allowedDomains is used for domain-based access control.
-	// Provider-specific access control (e.g., GitHub org membership) is configured at construction.
-	UserInfo(ctx context.Context, token *oauth2.Token, allowedDomains []string) (*UserInfo, error)
+	// Returns error if user doesn't meet access requirements (domain, org membership).
+	UserInfo(ctx context.Context, token *oauth2.Token) (*UserInfo, error)
 }
 
 // ValidateDomain checks if the domain is in the allowed list.

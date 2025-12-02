@@ -13,12 +13,12 @@ import (
 )
 
 func TestGitHubProvider_Type(t *testing.T) {
-	provider := NewGitHubProvider("client-id", "client-secret", "https://example.com/callback", nil)
+	provider := NewGitHubProvider("client-id", "client-secret", "https://example.com/callback", nil, nil)
 	assert.Equal(t, "github", provider.Type())
 }
 
 func TestGitHubProvider_AuthURL(t *testing.T) {
-	provider := NewGitHubProvider("client-id", "client-secret", "https://example.com/callback", nil)
+	provider := NewGitHubProvider("client-id", "client-secret", "https://example.com/callback", nil, nil)
 
 	authURL := provider.AuthURL("test-state")
 
@@ -184,12 +184,13 @@ func TestGitHubProvider_UserInfo(t *testing.T) {
 						TokenURL: server.URL + "/token",
 					},
 				},
-				apiBaseURL:  server.URL,
-				allowedOrgs: tt.allowedOrgs,
+				apiBaseURL:     server.URL,
+				allowedDomains: tt.allowedDomains,
+				allowedOrgs:    tt.allowedOrgs,
 			}
 
 			token := &oauth2.Token{AccessToken: "test-token"}
-			userInfo, err := provider.UserInfo(context.Background(), token, tt.allowedDomains)
+			userInfo, err := provider.UserInfo(context.Background(), token)
 
 			if tt.wantErr {
 				require.Error(t, err)
@@ -244,7 +245,7 @@ func TestGitHubProvider_UserInfo_APIErrors(t *testing.T) {
 			}
 
 			token := &oauth2.Token{AccessToken: "test-token"}
-			_, err := provider.UserInfo(context.Background(), token, nil)
+			_, err := provider.UserInfo(context.Background(), token)
 
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tt.errContains)
@@ -277,7 +278,7 @@ func TestGitHubProvider_UserInfo_NoVerifiedEmail(t *testing.T) {
 	}
 
 	token := &oauth2.Token{AccessToken: "test-token"}
-	_, err := provider.UserInfo(context.Background(), token, nil)
+	_, err := provider.UserInfo(context.Background(), token)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no verified email")

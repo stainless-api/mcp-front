@@ -239,7 +239,7 @@ func setupAuthentication(ctx context.Context, cfg config.Config, store storage.S
 	log.LogDebug("initializing OAuth components")
 
 	// Create identity provider
-	idpProvider, err := idp.NewProvider(oauthAuth.IDP)
+	idpProvider, err := idp.NewProvider(oauthAuth.IDP, oauthAuth.AllowedDomains)
 	if err != nil {
 		return nil, nil, nil, config.OAuthAuthConfig{}, nil, fmt.Errorf("failed to create identity provider: %w", err)
 	}

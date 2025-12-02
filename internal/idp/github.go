@@ -14,9 +14,10 @@ import (
 // GitHubProvider implements the Provider interface for GitHub OAuth.
 // GitHub uses OAuth 2.0 (not OIDC) and has its own API for user info and org membership.
 type GitHubProvider struct {
-	config      oauth2.Config
-	apiBaseURL  string   // defaults to https://api.github.com, can be overridden for testing
-	allowedOrgs []string // organizations users must be members of (empty = no restriction)
+	config         oauth2.Config
+	apiBaseURL     string   // defaults to https://api.github.com, can be overridden for testing
+	allowedDomains []string // email domains users must belong to (empty = no restriction)
+	allowedOrgs    []string // organizations users must be members of (empty = no restriction)
 }
 
 // githubUserResponse represents GitHub's user API response.
@@ -41,8 +42,7 @@ type githubOrgResponse struct {
 }
 
 // NewGitHubProvider creates a new GitHub OAuth provider.
-// allowedOrgs specifies organizations users must be members of (empty = no restriction).
-func NewGitHubProvider(clientID, clientSecret, redirectURI string, allowedOrgs []string) *GitHubProvider {
+func NewGitHubProvider(clientID, clientSecret, redirectURI string, allowedDomains, allowedOrgs []string) *GitHubProvider {
 	return &GitHubProvider{
 		config: oauth2.Config{
 			ClientID:     clientID,
@@ -51,8 +51,9 @@ func NewGitHubProvider(clientID, clientSecret, redirectURI string, allowedOrgs [
 			Scopes:       []string{"user:email", "read:org"},
 			Endpoint:     github.Endpoint,
 		},
-		apiBaseURL:  "https://api.github.com",
-		allowedOrgs: allowedOrgs,
+		apiBaseURL:     "https://api.github.com",
+		allowedDomains: allowedDomains,
+		allowedOrgs:    allowedOrgs,
 	}
 }
 
@@ -72,9 +73,9 @@ func (p *GitHubProvider) ExchangeCode(ctx context.Context, code string) (*oauth2
 }
 
 // UserInfo fetches user information from GitHub's API.
-// Validates organization membership if allowedOrgs was configured at construction.
+// Validates domain and organization membership based on construction-time config.
 // TODO: Consider caching org membership to reduce API calls.
-func (p *GitHubProvider) UserInfo(ctx context.Context, token *oauth2.Token, allowedDomains []string) (*UserInfo, error) {
+func (p *GitHubProvider) UserInfo(ctx context.Context, token *oauth2.Token) (*UserInfo, error) {
 	client := p.config.Client(ctx, token)
 
 	// Fetch user profile
@@ -99,7 +100,7 @@ func (p *GitHubProvider) UserInfo(ctx context.Context, token *oauth2.Token, allo
 	domain := emailutil.ExtractDomain(email)
 
 	// Validate domain if configured
-	if err := ValidateDomain(domain, allowedDomains); err != nil {
+	if err := ValidateDomain(domain, p.allowedDomains); err != nil {
 		return nil, err
 	}
 
