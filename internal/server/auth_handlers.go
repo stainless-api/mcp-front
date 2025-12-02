@@ -330,7 +330,7 @@ func (h *AuthHandlers) IDPCallbackHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	// Validate user and fetch user info
-	userInfo, err := h.idpProvider.UserInfo(ctx, token, h.authConfig.AllowedDomains)
+	userInfo, err := h.idpProvider.UserInfo(ctx, token)
 	if err != nil {
 		log.LogError("User validation failed: %v", err)
 		if !isBrowserFlow && ar != nil {

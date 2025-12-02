@@ -36,7 +36,7 @@ func (m *mockIDPProvider) ExchangeCode(ctx context.Context, code string) (*oauth
 	return &oauth2.Token{AccessToken: "test-token"}, nil
 }
 
-func (m *mockIDPProvider) UserInfo(ctx context.Context, token *oauth2.Token, allowedDomains []string) (*idp.UserInfo, error) {
+func (m *mockIDPProvider) UserInfo(ctx context.Context, token *oauth2.Token) (*idp.UserInfo, error) {
 	return &idp.UserInfo{
 		ProviderType:  "mock",
 		Subject:       "123",

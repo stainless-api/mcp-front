@@ -14,8 +14,9 @@ import (
 // GoogleProvider implements the Provider interface for Google OAuth.
 // Google has specific quirks like `hd` for hosted domain and `verified_email` field.
 type GoogleProvider struct {
-	config      oauth2.Config
-	userInfoURL string
+	config         oauth2.Config
+	userInfoURL    string
+	allowedDomains []string
 }
 
 // googleUserInfoResponse represents Google's userinfo response.
@@ -30,7 +31,7 @@ type googleUserInfoResponse struct {
 }
 
 // NewGoogleProvider creates a new Google OAuth provider.
-func NewGoogleProvider(clientID, clientSecret, redirectURI string) *GoogleProvider {
+func NewGoogleProvider(clientID, clientSecret, redirectURI string, allowedDomains []string) *GoogleProvider {
 	return &GoogleProvider{
 		config: oauth2.Config{
 			ClientID:     clientID,
@@ -39,7 +40,8 @@ func NewGoogleProvider(clientID, clientSecret, redirectURI string) *GoogleProvid
 			Scopes:       []string{"openid", "profile", "email"},
 			Endpoint:     google.Endpoint,
 		},
-		userInfoURL: "https://www.googleapis.com/oauth2/v2/userinfo",
+		userInfoURL:    "https://www.googleapis.com/oauth2/v2/userinfo",
+		allowedDomains: allowedDomains,
 	}
 }
 
@@ -62,7 +64,7 @@ func (p *GoogleProvider) ExchangeCode(ctx context.Context, code string) (*oauth2
 }
 
 // UserInfo fetches user information from Google's userinfo endpoint.
-func (p *GoogleProvider) UserInfo(ctx context.Context, token *oauth2.Token, allowedDomains []string) (*UserInfo, error) {
+func (p *GoogleProvider) UserInfo(ctx context.Context, token *oauth2.Token) (*UserInfo, error) {
 	client := p.config.Client(ctx, token)
 
 	resp, err := client.Get(p.userInfoURL)
@@ -87,7 +89,7 @@ func (p *GoogleProvider) UserInfo(ctx context.Context, token *oauth2.Token, allo
 	}
 
 	// Validate domain if configured
-	if err := ValidateDomain(domain, allowedDomains); err != nil {
+	if err := ValidateDomain(domain, p.allowedDomains); err != nil {
 		return nil, err
 	}
 

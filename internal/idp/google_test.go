@@ -13,12 +13,12 @@ import (
 )
 
 func TestGoogleProvider_Type(t *testing.T) {
-	provider := NewGoogleProvider("client-id", "client-secret", "https://example.com/callback")
+	provider := NewGoogleProvider("client-id", "client-secret", "https://example.com/callback", nil)
 	assert.Equal(t, "google", provider.Type())
 }
 
 func TestGoogleProvider_AuthURL(t *testing.T) {
-	provider := NewGoogleProvider("client-id", "client-secret", "https://example.com/callback")
+	provider := NewGoogleProvider("client-id", "client-secret", "https://example.com/callback", nil)
 
 	authURL := provider.AuthURL("test-state")
 
@@ -102,11 +102,12 @@ func TestGoogleProvider_UserInfo(t *testing.T) {
 						TokenURL: server.URL + "/token",
 					},
 				},
-				userInfoURL: server.URL,
+				userInfoURL:    server.URL,
+				allowedDomains: tt.allowedDomains,
 			}
 			token := &oauth2.Token{AccessToken: "test-token"}
 
-			userInfo, err := provider.UserInfo(context.Background(), token, tt.allowedDomains)
+			userInfo, err := provider.UserInfo(context.Background(), token)
 
 			if tt.wantErr {
 				require.Error(t, err)
@@ -142,7 +143,7 @@ func TestGoogleProvider_UserInfo_ServerError(t *testing.T) {
 	}
 	token := &oauth2.Token{AccessToken: "test-token"}
 
-	_, err := provider.UserInfo(context.Background(), token, nil)
+	_, err := provider.UserInfo(context.Background(), token)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "status 500")

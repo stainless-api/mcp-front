@@ -145,7 +145,7 @@ func TestOIDCProvider_UserInfo(t *testing.T) {
 	require.NoError(t, err)
 
 	token := &oauth2.Token{AccessToken: "test-token"}
-	userInfo, err := provider.UserInfo(context.Background(), token, nil)
+	userInfo, err := provider.UserInfo(context.Background(), token)
 
 	require.NoError(t, err)
 	require.NotNil(t, userInfo)
@@ -175,11 +175,12 @@ func TestOIDCProvider_UserInfo_DomainValidation(t *testing.T) {
 		ClientID:         "client-id",
 		ClientSecret:     "client-secret",
 		RedirectURI:      "https://example.com/callback",
+		AllowedDomains:   []string{"example.com"},
 	})
 	require.NoError(t, err)
 
 	token := &oauth2.Token{AccessToken: "test-token"}
-	_, err = provider.UserInfo(context.Background(), token, []string{"example.com"})
+	_, err = provider.UserInfo(context.Background(), token)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "domain 'other.com' is not allowed")
