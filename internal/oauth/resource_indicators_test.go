@@ -359,6 +359,13 @@ func TestValidateAudienceForService(t *testing.T) {
 			wantErr:              true,
 			errContains:          "does not include required resource",
 		},
+		{
+			name:                 "issuer audience with trailing slash accepted",
+			requestPath:          "/postgres/sse",
+			tokenAudience:        []string{"https://mcp.company.com/"},
+			acceptIssuerAudience: true,
+			wantErr:              false,
+		},
 	}
 
 	for _, tt := range tests {
