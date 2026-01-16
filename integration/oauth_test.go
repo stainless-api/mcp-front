@@ -1403,22 +1403,50 @@ func TestRFC8707ResourceIndicators(t *testing.T) {
 
 	waitForMCPFront(t)
 
-	t.Run("ProtectedResourceMetadataEndpoint", func(t *testing.T) {
+	t.Run("BaseProtectedResourceMetadataReturns404", func(t *testing.T) {
+		// Base metadata endpoint should return 404, directing clients to per-service endpoints
 		resp, err := http.Get("http://localhost:8080/.well-known/oauth-protected-resource")
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
-		assert.Equal(t, 200, resp.StatusCode, "Protected resource metadata endpoint should exist")
+		assert.Equal(t, 404, resp.StatusCode, "Base protected resource metadata endpoint should return 404")
+
+		var errResp map[string]any
+		err = json.NewDecoder(resp.Body).Decode(&errResp)
+		require.NoError(t, err)
+
+		assert.Contains(t, errResp["message"], "per-service", "Error message should direct to per-service endpoints")
+	})
+
+	t.Run("PerServiceProtectedResourceMetadataEndpoint", func(t *testing.T) {
+		// Per-service metadata endpoint should return service-specific resource URI
+		resp, err := http.Get("http://localhost:8080/.well-known/oauth-protected-resource/test-sse")
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, 200, resp.StatusCode, "Per-service protected resource metadata endpoint should exist")
 
 		var metadata map[string]any
 		err = json.NewDecoder(resp.Body).Decode(&metadata)
 		require.NoError(t, err)
 
-		assert.Equal(t, "http://localhost:8080", metadata["resource"])
+		// Resource should be service-specific, not base URL
+		assert.Equal(t, "http://localhost:8080/test-sse", metadata["resource"],
+			"Resource should be service-specific URL")
 
 		authzServers, ok := metadata["authorization_servers"].([]any)
 		require.True(t, ok, "Should have authorization_servers array")
 		require.NotEmpty(t, authzServers)
+		assert.Equal(t, "http://localhost:8080", authzServers[0],
+			"Authorization server should be base issuer")
+	})
+
+	t.Run("UnknownServiceReturns404", func(t *testing.T) {
+		resp, err := http.Get("http://localhost:8080/.well-known/oauth-protected-resource/nonexistent-service")
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, 404, resp.StatusCode, "Unknown service should return 404")
 	})
 
 	t.Run("TokenWithResourceParameter", func(t *testing.T) {
@@ -1517,5 +1545,33 @@ func TestRFC8707ResourceIndicators(t *testing.T) {
 		wwwAuth := streamableResp.Header.Get("WWW-Authenticate")
 		assert.Contains(t, wwwAuth, "Bearer resource_metadata=",
 			"401 response should include RFC 9728 WWW-Authenticate header")
+		// Per RFC 9728 Section 5.2, the metadata URI should be service-specific
+		assert.Contains(t, wwwAuth, "/.well-known/oauth-protected-resource/test-streamable",
+			"401 response should point to per-service metadata endpoint")
+	})
+
+	t.Run("401ResponseIncludesServiceSpecificMetadataURI", func(t *testing.T) {
+		// Request to a protected endpoint without token should get 401
+		// with service-specific metadata URI in WWW-Authenticate header
+		client := &http.Client{
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		}
+
+		req, _ := http.NewRequest("GET", "http://localhost:8080/test-sse/sse", nil)
+		req.Header.Set("Accept", "text/event-stream")
+
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, 401, resp.StatusCode, "Request without token should return 401")
+
+		wwwAuth := resp.Header.Get("WWW-Authenticate")
+		assert.Contains(t, wwwAuth, "Bearer resource_metadata=",
+			"401 response should include RFC 9728 WWW-Authenticate header")
+		assert.Contains(t, wwwAuth, "/.well-known/oauth-protected-resource/test-sse",
+			"401 response should point to test-sse specific metadata endpoint")
 	})
 }
