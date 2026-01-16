@@ -115,20 +115,21 @@ func (c *MCPClientConfig) UnmarshalJSON(data []byte) error {
 func (o *OAuthAuthConfig) UnmarshalJSON(data []byte) error {
 	// Use a raw type to parse references
 	type rawOAuth struct {
-		Kind                AuthKind        `json:"kind"`
-		Issuer              json.RawMessage `json:"issuer"`
-		GCPProject          json.RawMessage `json:"gcpProject"`
-		AllowedDomains      []string        `json:"allowedDomains"`
-		AllowedOrigins      []string        `json:"allowedOrigins"`
-		TokenTTL            string          `json:"tokenTtl"`
-		Storage             string          `json:"storage"`
-		FirestoreDatabase   string          `json:"firestoreDatabase,omitempty"`
-		FirestoreCollection string          `json:"firestoreCollection,omitempty"`
-		GoogleClientID      json.RawMessage `json:"googleClientId"`
-		GoogleClientSecret  json.RawMessage `json:"googleClientSecret"`
-		GoogleRedirectURI   json.RawMessage `json:"googleRedirectUri"`
-		JWTSecret           json.RawMessage `json:"jwtSecret"`
-		EncryptionKey       json.RawMessage `json:"encryptionKey,omitempty"`
+		Kind                            AuthKind        `json:"kind"`
+		Issuer                          json.RawMessage `json:"issuer"`
+		GCPProject                      json.RawMessage `json:"gcpProject"`
+		AllowedDomains                  []string        `json:"allowedDomains"`
+		AllowedOrigins                  []string        `json:"allowedOrigins"`
+		TokenTTL                        string          `json:"tokenTtl"`
+		Storage                         string          `json:"storage"`
+		FirestoreDatabase               string          `json:"firestoreDatabase,omitempty"`
+		FirestoreCollection             string          `json:"firestoreCollection,omitempty"`
+		GoogleClientID                  json.RawMessage `json:"googleClientId"`
+		GoogleClientSecret              json.RawMessage `json:"googleClientSecret"`
+		GoogleRedirectURI               json.RawMessage `json:"googleRedirectUri"`
+		JWTSecret                       json.RawMessage `json:"jwtSecret"`
+		EncryptionKey                   json.RawMessage `json:"encryptionKey,omitempty"`
+		DangerouslyAcceptIssuerAudience bool            `json:"dangerouslyAcceptIssuerAudience,omitempty"`
 	}
 
 	var raw rawOAuth
@@ -143,6 +144,7 @@ func (o *OAuthAuthConfig) UnmarshalJSON(data []byte) error {
 	o.Storage = raw.Storage
 	o.FirestoreDatabase = raw.FirestoreDatabase
 	o.FirestoreCollection = raw.FirestoreCollection
+	o.DangerouslyAcceptIssuerAudience = raw.DangerouslyAcceptIssuerAudience
 
 	// Parse TokenTTL duration
 	if raw.TokenTTL != "" {
