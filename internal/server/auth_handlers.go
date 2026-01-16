@@ -86,11 +86,22 @@ func (h *AuthHandlers) WellKnownHandler(w http.ResponseWriter, r *http.Request) 
 // ProtectedResourceMetadataHandler serves OAuth 2.0 Protected Resource Metadata (RFC 9728)
 // This endpoint helps clients discover which authorization servers this resource server trusts
 //
-// Deprecated: Use ServiceProtectedResourceMetadataHandler for per-service metadata.
-// This handler returns the base issuer as the resource, which doesn't support per-service
-// audience validation required by RFC 8707.
+// By default, this returns 404 directing clients to per-service metadata endpoints.
+// When DangerouslyAcceptIssuerAudience is enabled, it returns base issuer metadata as a
+// workaround for MCP clients that don't properly implement RFC 8707 resource indicators.
 func (h *AuthHandlers) ProtectedResourceMetadataHandler(w http.ResponseWriter, r *http.Request) {
 	log.Logf("Protected resource metadata handler called: %s %s", r.Method, r.URL.Path)
+
+	// By default, return 404 to direct clients to per-service metadata
+	if !h.authConfig.DangerouslyAcceptIssuerAudience {
+		jsonwriter.WriteNotFound(w, "Use /.well-known/oauth-protected-resource/{service} for per-service metadata")
+		return
+	}
+
+	// Workaround mode: return base issuer metadata for broken clients
+	log.LogWarnWithFields("oauth", "Serving base protected resource metadata (dangerouslyAcceptIssuerAudience enabled)", map[string]any{
+		"issuer": h.authConfig.Issuer,
+	})
 
 	metadata, err := oauth.ProtectedResourceMetadata(h.authConfig.Issuer)
 	if err != nil {

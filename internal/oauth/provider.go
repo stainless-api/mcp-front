@@ -118,7 +118,11 @@ func GenerateJWTSecret(providedSecret string) ([]byte, error) {
 // The middleware dynamically builds the service-specific metadata URI based on the
 // request path, ensuring 401 responses point clients to the correct per-service
 // protected resource metadata endpoint.
-func NewValidateTokenMiddleware(provider fosite.OAuth2Provider, issuer string) func(http.Handler) http.Handler {
+//
+// If acceptIssuerAudience is true, tokens with just the base issuer as audience are
+// accepted for any service. This is a workaround for MCP clients that don't properly
+// implement RFC 8707 resource indicators.
+func NewValidateTokenMiddleware(provider fosite.OAuth2Provider, issuer string, acceptIssuerAudience bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ctx := r.Context()
@@ -162,7 +166,7 @@ func NewValidateTokenMiddleware(provider fosite.OAuth2Provider, issuer string) f
 			}
 
 			// Validate audience claim matches requested service (RFC 8707)
-			if err := ValidateAudienceForService(r.URL.Path, accessRequest.GetGrantedAudience(), issuer); err != nil {
+			if err := ValidateAudienceForService(r.URL.Path, accessRequest.GetGrantedAudience(), issuer, acceptIssuerAudience); err != nil {
 				log.LogErrorWithFields("oauth", "Audience validation failed", map[string]any{
 					"path":     r.URL.Path,
 					"audience": accessRequest.GetGrantedAudience(),
