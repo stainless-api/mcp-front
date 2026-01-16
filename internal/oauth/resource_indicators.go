@@ -206,8 +206,12 @@ func ValidateAudienceForService(requestPath string, tokenAudience []string, issu
 	}
 
 	// Workaround: accept base issuer as audience if enabled
-	if acceptIssuerAudience && slices.Contains(tokenAudience, issuer) {
-		return nil
+	// Check both with and without trailing slash since clients may normalize differently
+	if acceptIssuerAudience {
+		normalized := strings.TrimSuffix(issuer, "/")
+		if slices.Contains(tokenAudience, normalized) || slices.Contains(tokenAudience, normalized+"/") {
+			return nil
+		}
 	}
 
 	return fmt.Errorf("token audience %v does not include required resource %s for service %s",
