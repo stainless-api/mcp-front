@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -113,18 +114,24 @@ func GenerateJWTSecret(providedSecret string) ([]byte, error) {
 	return secret, nil
 }
 
-// NewValidateTokenMiddleware creates middleware that validates OAuth tokens per RFC 9728
+// NewValidateTokenMiddleware creates middleware that validates OAuth tokens per RFC 9728.
+// The middleware dynamically builds the service-specific metadata URI based on the
+// request path, ensuring 401 responses point clients to the correct per-service
+// protected resource metadata endpoint.
 func NewValidateTokenMiddleware(provider fosite.OAuth2Provider, issuer string) func(http.Handler) http.Handler {
-	// Build protected resource metadata URI once at middleware creation (per RFC 9728)
-	metadataURI, err := ProtectedResourceMetadataURI(issuer)
-	if err != nil {
-		log.LogError("Failed to build protected resource metadata URI: %v", err)
-		metadataURI = "" // Fallback to empty, will skip WWW-Authenticate header
-	}
-
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ctx := r.Context()
+
+			// Extract service name from request path and build per-service metadata URI
+			// Per RFC 9728 Section 5.2, multiple resources per host use path-based differentiation
+			serviceName := ExtractServiceNameFromPath(r.URL.Path, issuer)
+			metadataURI := ""
+			if serviceName != "" {
+				if uri, err := ServiceProtectedResourceMetadataURI(issuer, serviceName); err == nil {
+					metadataURI = uri
+				}
+			}
 
 			// Extract token from Authorization header
 			auth := r.Header.Get("Authorization")
@@ -185,6 +192,43 @@ func NewValidateTokenMiddleware(provider fosite.OAuth2Provider, issuer string) f
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// ExtractServiceNameFromPath extracts the service name from a request path.
+// Given path "/postgres/sse" with issuer "https://host", returns "postgres".
+// Handles base paths like "/mcp/postgres/sse" with issuer "https://host/mcp".
+//
+// Returns empty string if no service name can be extracted.
+func ExtractServiceNameFromPath(requestPath string, issuer string) string {
+	u, err := url.Parse(issuer)
+	if err != nil {
+		return ""
+	}
+
+	basePath := u.Path
+	if basePath == "" {
+		basePath = "/"
+	}
+
+	path := requestPath
+	if basePath != "/" {
+		if !strings.HasPrefix(path, basePath) {
+			return ""
+		}
+		remainder := path[len(basePath):]
+		if remainder != "" && !strings.HasPrefix(remainder, "/") {
+			return ""
+		}
+		path = remainder
+	}
+	path = strings.TrimPrefix(path, "/")
+	parts := strings.Split(path, "/")
+
+	if len(parts) == 0 || parts[0] == "" {
+		return ""
+	}
+
+	return parts[0]
 }
 
 // ProtectedResourceMetadataURI builds the URI for the protected resource metadata endpoint

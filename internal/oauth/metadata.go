@@ -55,6 +55,10 @@ func AuthorizationServerMetadata(issuer string) (map[string]any, error) {
 
 // ProtectedResourceMetadata builds OAuth 2.0 Protected Resource Metadata per RFC 9728
 // https://datatracker.ietf.org/doc/html/rfc9728
+//
+// Deprecated: Use ServiceProtectedResourceMetadata for per-service metadata endpoints.
+// This function returns the base issuer as the resource, which doesn't support
+// per-service audience validation required by RFC 8707.
 func ProtectedResourceMetadata(issuer string) (map[string]any, error) {
 	authzServerURL, err := urlutil.JoinPath(issuer, ".well-known", "oauth-authorization-server")
 	if err != nil {
@@ -72,6 +76,50 @@ func ProtectedResourceMetadata(issuer string) (map[string]any, error) {
 			},
 		},
 	}, nil
+}
+
+// ServiceProtectedResourceMetadata builds OAuth 2.0 Protected Resource Metadata per RFC 9728
+// for a specific service. Per RFC 9728 Section 5.2, multiple resources on a single host
+// use path-based differentiation, with each resource having its own metadata endpoint.
+//
+// Example:
+//
+//	ServiceProtectedResourceMetadata("https://mcp.company.com", "postgres")
+//	Returns: {"resource": "https://mcp.company.com/postgres", ...}
+func ServiceProtectedResourceMetadata(issuer string, serviceName string) (map[string]any, error) {
+	resourceURI, err := urlutil.JoinPath(issuer, serviceName)
+	if err != nil {
+		return nil, err
+	}
+
+	authzServerURL, err := urlutil.JoinPath(issuer, ".well-known", "oauth-authorization-server")
+	if err != nil {
+		return nil, err
+	}
+
+	return map[string]any{
+		"resource": resourceURI,
+		"authorization_servers": []string{
+			issuer,
+		},
+		"_links": map[string]any{
+			"oauth-authorization-server": map[string]string{
+				"href": authzServerURL,
+			},
+		},
+	}, nil
+}
+
+// ServiceProtectedResourceMetadataURI builds the URI for a service-specific protected
+// resource metadata endpoint per RFC 9728. Used in WWW-Authenticate headers to direct
+// clients to the correct per-service metadata endpoint.
+//
+// Example:
+//
+//	ServiceProtectedResourceMetadataURI("https://mcp.company.com", "postgres")
+//	Returns: "https://mcp.company.com/.well-known/oauth-protected-resource/postgres"
+func ServiceProtectedResourceMetadataURI(issuer string, serviceName string) (string, error) {
+	return urlutil.JoinPath(issuer, ".well-known", "oauth-protected-resource", serviceName)
 }
 
 // ClientMetadata represents OAuth 2.0 client metadata

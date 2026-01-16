@@ -85,6 +85,10 @@ func (h *AuthHandlers) WellKnownHandler(w http.ResponseWriter, r *http.Request) 
 
 // ProtectedResourceMetadataHandler serves OAuth 2.0 Protected Resource Metadata (RFC 9728)
 // This endpoint helps clients discover which authorization servers this resource server trusts
+//
+// Deprecated: Use ServiceProtectedResourceMetadataHandler for per-service metadata.
+// This handler returns the base issuer as the resource, which doesn't support per-service
+// audience validation required by RFC 8707.
 func (h *AuthHandlers) ProtectedResourceMetadataHandler(w http.ResponseWriter, r *http.Request) {
 	log.Logf("Protected resource metadata handler called: %s %s", r.Method, r.URL.Path)
 
@@ -98,6 +102,46 @@ func (h *AuthHandlers) ProtectedResourceMetadataHandler(w http.ResponseWriter, r
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(metadata); err != nil {
 		log.LogError("Failed to encode protected resource metadata: %v", err)
+		jsonwriter.WriteInternalServerError(w, "Internal server error")
+	}
+}
+
+// ServiceProtectedResourceMetadataHandler serves per-service OAuth 2.0 Protected Resource
+// Metadata (RFC 9728). Per RFC 9728 Section 5.2, multiple resources on a single host use
+// path-based differentiation, with each resource having its own metadata endpoint.
+//
+// This endpoint returns service-specific resource URIs that support per-service audience
+// validation per RFC 8707.
+//
+// Route: /.well-known/oauth-protected-resource/{service}
+func (h *AuthHandlers) ServiceProtectedResourceMetadataHandler(w http.ResponseWriter, r *http.Request) {
+	serviceName := r.PathValue("service")
+	if serviceName == "" {
+		jsonwriter.WriteNotFound(w, "Service name required")
+		return
+	}
+
+	log.Logf("Service protected resource metadata handler called for service: %s", serviceName)
+
+	// Validate service exists in configuration
+	if _, exists := h.mcpServers[serviceName]; !exists {
+		log.LogWarnWithFields("oauth", "Unknown service requested in metadata", map[string]any{
+			"service": serviceName,
+		})
+		jsonwriter.WriteNotFound(w, fmt.Sprintf("Unknown service: %s", serviceName))
+		return
+	}
+
+	metadata, err := oauth.ServiceProtectedResourceMetadata(h.authConfig.Issuer, serviceName)
+	if err != nil {
+		log.LogError("Failed to build service protected resource metadata: %v", err)
+		jsonwriter.WriteInternalServerError(w, "Internal server error")
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(metadata); err != nil {
+		log.LogError("Failed to encode service protected resource metadata: %v", err)
 		jsonwriter.WriteInternalServerError(w, "Internal server error")
 	}
 }

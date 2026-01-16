@@ -135,3 +135,86 @@ func TestGetUserFromContext(t *testing.T) {
 		assert.Empty(t, email)
 	})
 }
+
+func TestExtractServiceNameFromPath(t *testing.T) {
+	tests := []struct {
+		name        string
+		requestPath string
+		issuer      string
+		want        string
+	}{
+		{
+			name:        "simple path",
+			requestPath: "/postgres/sse",
+			issuer:      "https://mcp.company.com",
+			want:        "postgres",
+		},
+		{
+			name:        "path with message endpoint",
+			requestPath: "/linear/message",
+			issuer:      "https://mcp.company.com",
+			want:        "linear",
+		},
+		{
+			name:        "path with base path in issuer",
+			requestPath: "/mcp/postgres/sse",
+			issuer:      "https://mcp.company.com/mcp",
+			want:        "postgres",
+		},
+		{
+			name:        "issuer with trailing slash",
+			requestPath: "/gong/sse",
+			issuer:      "https://mcp.company.com/",
+			want:        "gong",
+		},
+		{
+			name:        "deeply nested path",
+			requestPath: "/postgres/sse/some/more/path",
+			issuer:      "https://mcp.company.com",
+			want:        "postgres",
+		},
+		{
+			name:        "empty path",
+			requestPath: "/",
+			issuer:      "https://mcp.company.com",
+			want:        "",
+		},
+		{
+			name:        "path equals base path",
+			requestPath: "/mcp",
+			issuer:      "https://mcp.company.com/mcp",
+			want:        "",
+		},
+		{
+			name:        "invalid issuer URL",
+			requestPath: "/postgres/sse",
+			issuer:      "://invalid",
+			want:        "",
+		},
+		{
+			name:        "path outside base path",
+			requestPath: "/health",
+			issuer:      "https://mcp.company.com/api",
+			want:        "",
+		},
+		{
+			name:        "path with similar prefix to base path",
+			requestPath: "/api-v2/postgres/sse",
+			issuer:      "https://mcp.company.com/api",
+			want:        "",
+		},
+		{
+			name:        "well-known path outside base path",
+			requestPath: "/.well-known/oauth-authorization-server",
+			issuer:      "https://mcp.company.com/mcp",
+			want:        "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ExtractServiceNameFromPath(tt.requestPath, tt.issuer)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}

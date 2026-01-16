@@ -150,3 +150,143 @@ func TestProtectedResourceMetadata(t *testing.T) {
 		})
 	}
 }
+
+func TestServiceProtectedResourceMetadata(t *testing.T) {
+	tests := []struct {
+		name         string
+		issuer       string
+		serviceName  string
+		wantResource string
+		wantErr      bool
+	}{
+		{
+			name:         "standard case",
+			issuer:       "https://mcp.company.com",
+			serviceName:  "postgres",
+			wantResource: "https://mcp.company.com/postgres",
+		},
+		{
+			name:         "issuer with base path",
+			issuer:       "https://mcp.company.com/api",
+			serviceName:  "postgres",
+			wantResource: "https://mcp.company.com/api/postgres",
+		},
+		{
+			name:         "issuer with trailing slash",
+			issuer:       "https://mcp.company.com/",
+			serviceName:  "linear",
+			wantResource: "https://mcp.company.com/linear",
+		},
+		{
+			name:         "different service",
+			issuer:       "https://mcp.company.com",
+			serviceName:  "gong",
+			wantResource: "https://mcp.company.com/gong",
+		},
+		{
+			name:        "invalid issuer",
+			issuer:      "://invalid",
+			serviceName: "postgres",
+			wantErr:     true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			metadata, err := ServiceProtectedResourceMetadata(tt.issuer, tt.serviceName)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ServiceProtectedResourceMetadata() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			if tt.wantErr {
+				return
+			}
+
+			// Verify resource field is service-specific
+			resource := metadata["resource"].(string)
+			if resource != tt.wantResource {
+				t.Errorf("resource = %v, want %v", resource, tt.wantResource)
+			}
+
+			// Verify authorization_servers array contains issuer (not service-specific)
+			authzServers, ok := metadata["authorization_servers"].([]string)
+			if !ok || len(authzServers) == 0 {
+				t.Error("authorization_servers is missing or empty")
+			}
+
+			// Authorization server should not be empty
+			if authzServers[0] == "" {
+				t.Error("authorization_servers[0] is empty")
+			}
+
+			// Verify _links structure
+			links, ok := metadata["_links"].(map[string]any)
+			if !ok {
+				t.Error("_links is missing or wrong type")
+			}
+
+			authzServerLink, ok := links["oauth-authorization-server"].(map[string]string)
+			if !ok {
+				t.Error("oauth-authorization-server link is missing or wrong type")
+			}
+
+			if authzServerLink["href"] == "" {
+				t.Error("oauth-authorization-server href is empty")
+			}
+		})
+	}
+}
+
+func TestServiceProtectedResourceMetadataURI(t *testing.T) {
+	tests := []struct {
+		name        string
+		issuer      string
+		serviceName string
+		want        string
+		wantErr     bool
+	}{
+		{
+			name:        "standard case",
+			issuer:      "https://mcp.company.com",
+			serviceName: "postgres",
+			want:        "https://mcp.company.com/.well-known/oauth-protected-resource/postgres",
+		},
+		{
+			name:        "issuer with base path",
+			issuer:      "https://mcp.company.com/mcp",
+			serviceName: "linear",
+			want:        "https://mcp.company.com/mcp/.well-known/oauth-protected-resource/linear",
+		},
+		{
+			name:        "issuer with trailing slash",
+			issuer:      "https://mcp.company.com/",
+			serviceName: "gong",
+			want:        "https://mcp.company.com/.well-known/oauth-protected-resource/gong",
+		},
+		{
+			name:        "invalid issuer",
+			issuer:      "://invalid",
+			serviceName: "postgres",
+			wantErr:     true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ServiceProtectedResourceMetadataURI(tt.issuer, tt.serviceName)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ServiceProtectedResourceMetadataURI() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			if tt.wantErr {
+				return
+			}
+
+			if got != tt.want {
+				t.Errorf("ServiceProtectedResourceMetadataURI() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
