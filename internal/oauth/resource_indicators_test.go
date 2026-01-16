@@ -253,70 +253,117 @@ func TestValidateAudienceForService(t *testing.T) {
 	issuer := "https://mcp.company.com"
 
 	tests := []struct {
-		name          string
-		requestPath   string
-		tokenAudience []string
-		wantErr       bool
-		errContains   string
+		name                 string
+		requestPath          string
+		tokenAudience        []string
+		acceptIssuerAudience bool
+		wantErr              bool
+		errContains          string
 	}{
 		{
-			name:          "matching audience",
-			requestPath:   "/postgres/sse",
-			tokenAudience: []string{"https://mcp.company.com/postgres"},
-			wantErr:       false,
+			name:                 "matching audience",
+			requestPath:          "/postgres/sse",
+			tokenAudience:        []string{"https://mcp.company.com/postgres"},
+			acceptIssuerAudience: false,
+			wantErr:              false,
 		},
 		{
-			name:          "matching audience with message endpoint",
-			requestPath:   "/postgres/message",
-			tokenAudience: []string{"https://mcp.company.com/postgres"},
-			wantErr:       false,
+			name:                 "matching audience with message endpoint",
+			requestPath:          "/postgres/message",
+			tokenAudience:        []string{"https://mcp.company.com/postgres"},
+			acceptIssuerAudience: false,
+			wantErr:              false,
 		},
 		{
-			name:          "matching audience in multi-audience token",
-			requestPath:   "/postgres/sse",
-			tokenAudience: []string{"https://mcp.company.com/linear", "https://mcp.company.com/postgres"},
-			wantErr:       false,
+			name:                 "matching audience in multi-audience token",
+			requestPath:          "/postgres/sse",
+			tokenAudience:        []string{"https://mcp.company.com/linear", "https://mcp.company.com/postgres"},
+			acceptIssuerAudience: false,
+			wantErr:              false,
 		},
 		{
-			name:          "wrong audience",
-			requestPath:   "/postgres/sse",
-			tokenAudience: []string{"https://mcp.company.com/linear"},
-			wantErr:       true,
-			errContains:   "does not include required resource",
+			name:                 "wrong audience",
+			requestPath:          "/postgres/sse",
+			tokenAudience:        []string{"https://mcp.company.com/linear"},
+			acceptIssuerAudience: false,
+			wantErr:              true,
+			errContains:          "does not include required resource",
 		},
 		{
-			name:          "empty audience",
-			requestPath:   "/postgres/sse",
-			tokenAudience: []string{},
-			wantErr:       true,
-			errContains:   "does not include required resource",
+			name:                 "empty audience",
+			requestPath:          "/postgres/sse",
+			tokenAudience:        []string{},
+			acceptIssuerAudience: false,
+			wantErr:              true,
+			errContains:          "does not include required resource",
 		},
 		{
-			name:          "nil audience",
-			requestPath:   "/postgres/sse",
-			tokenAudience: nil,
-			wantErr:       true,
-			errContains:   "does not include required resource",
+			name:                 "nil audience",
+			requestPath:          "/postgres/sse",
+			tokenAudience:        nil,
+			acceptIssuerAudience: false,
+			wantErr:              true,
+			errContains:          "does not include required resource",
 		},
 		{
-			name:          "malformed request path",
-			requestPath:   "/",
-			tokenAudience: []string{"https://mcp.company.com/postgres"},
-			wantErr:       true,
-			errContains:   "does not contain service name",
+			name:                 "malformed request path",
+			requestPath:          "/",
+			tokenAudience:        []string{"https://mcp.company.com/postgres"},
+			acceptIssuerAudience: false,
+			wantErr:              true,
+			errContains:          "does not contain service name",
 		},
 		{
-			name:          "empty request path",
-			requestPath:   "",
-			tokenAudience: []string{"https://mcp.company.com/postgres"},
-			wantErr:       true,
-			errContains:   "does not contain service name",
+			name:                 "empty request path",
+			requestPath:          "",
+			tokenAudience:        []string{"https://mcp.company.com/postgres"},
+			acceptIssuerAudience: false,
+			wantErr:              true,
+			errContains:          "does not contain service name",
+		},
+		// Tests for acceptIssuerAudience workaround
+		{
+			name:                 "issuer audience accepted when enabled",
+			requestPath:          "/postgres/sse",
+			tokenAudience:        []string{"https://mcp.company.com"},
+			acceptIssuerAudience: true,
+			wantErr:              false,
+		},
+		{
+			name:                 "issuer audience rejected when disabled",
+			requestPath:          "/postgres/sse",
+			tokenAudience:        []string{"https://mcp.company.com"},
+			acceptIssuerAudience: false,
+			wantErr:              true,
+			errContains:          "does not include required resource",
+		},
+		{
+			name:                 "per-service audience still works when issuer fallback enabled",
+			requestPath:          "/postgres/sse",
+			tokenAudience:        []string{"https://mcp.company.com/postgres"},
+			acceptIssuerAudience: true,
+			wantErr:              false,
+		},
+		{
+			name:                 "issuer audience works for any service when enabled",
+			requestPath:          "/linear/sse",
+			tokenAudience:        []string{"https://mcp.company.com"},
+			acceptIssuerAudience: true,
+			wantErr:              false,
+		},
+		{
+			name:                 "wrong issuer still rejected even when fallback enabled",
+			requestPath:          "/postgres/sse",
+			tokenAudience:        []string{"https://other.company.com"},
+			acceptIssuerAudience: true,
+			wantErr:              true,
+			errContains:          "does not include required resource",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := ValidateAudienceForService(tt.requestPath, tt.tokenAudience, issuer)
+			err := ValidateAudienceForService(tt.requestPath, tt.tokenAudience, issuer, tt.acceptIssuerAudience)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("ValidateAudienceForService() error = %v, wantErr %v", err, tt.wantErr)
 				return

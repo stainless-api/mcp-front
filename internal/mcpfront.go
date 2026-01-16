@@ -15,7 +15,6 @@ import (
 	"github.com/dgellow/mcp-front/internal/config"
 	"github.com/dgellow/mcp-front/internal/crypto"
 	"github.com/dgellow/mcp-front/internal/inline"
-	jsonwriter "github.com/dgellow/mcp-front/internal/json"
 	"github.com/dgellow/mcp-front/internal/log"
 	"github.com/dgellow/mcp-front/internal/oauth"
 	"github.com/dgellow/mcp-front/internal/server"
@@ -349,10 +348,9 @@ func buildHTTPHandler(
 		// Per-service protected resource metadata (RFC 9728 Section 5.2)
 		// Clients discover service-specific resource URIs for per-service audience validation (RFC 8707)
 		mux.Handle(route("/.well-known/oauth-protected-resource/{service}"), server.ChainMiddleware(http.HandlerFunc(authHandlers.ServiceProtectedResourceMetadataHandler), oauthMiddleware...))
-		// Base protected resource metadata endpoint - returns 404 directing clients to per-service endpoints
-		mux.Handle(route("/.well-known/oauth-protected-resource"), server.ChainMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			jsonwriter.WriteNotFound(w, "Use /.well-known/oauth-protected-resource/{service} for per-service metadata")
-		}), oauthMiddleware...))
+		// Base protected resource metadata endpoint
+		// Returns 404 by default, or base issuer metadata if dangerouslyAcceptIssuerAudience is enabled
+		mux.Handle(route("/.well-known/oauth-protected-resource"), server.ChainMiddleware(http.HandlerFunc(authHandlers.ProtectedResourceMetadataHandler), oauthMiddleware...))
 		mux.Handle(route("/authorize"), server.ChainMiddleware(http.HandlerFunc(authHandlers.AuthorizeHandler), oauthMiddleware...))
 		mux.Handle(route("/oauth/callback"), server.ChainMiddleware(http.HandlerFunc(authHandlers.GoogleCallbackHandler), oauthMiddleware...))
 		mux.Handle(route("/token"), server.ChainMiddleware(http.HandlerFunc(authHandlers.TokenHandler), oauthMiddleware...))
@@ -439,7 +437,7 @@ func buildHTTPHandler(
 
 		// Add OAuth validation if OAuth is enabled
 		if oauthProvider != nil {
-			mcpMiddlewares = append(mcpMiddlewares, oauth.NewValidateTokenMiddleware(oauthProvider, authConfig.Issuer))
+			mcpMiddlewares = append(mcpMiddlewares, oauth.NewValidateTokenMiddleware(oauthProvider, authConfig.Issuer, authConfig.DangerouslyAcceptIssuerAudience))
 		}
 
 		// Add service auth middleware if configured

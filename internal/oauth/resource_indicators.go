@@ -157,14 +157,21 @@ func BuildResourceURI(issuer string, serviceName string) (string, error) {
 // in the token's audience claim. This prevents confused deputy attacks where a token
 // intended for one service is misused to access another.
 //
+// If acceptIssuerAudience is true, the base issuer URI is also accepted as a valid audience
+// for any service. This is a workaround for MCP clients that don't properly implement
+// RFC 8707 resource indicators, but it defeats per-service token isolation.
+//
 // Example:
 //
-//	ValidateAudienceForService("/postgres/sse", []string{"https://mcp.company.com/postgres"}, "https://mcp.company.com")
+//	ValidateAudienceForService("/postgres/sse", []string{"https://mcp.company.com/postgres"}, "https://mcp.company.com", false)
 //	Returns: nil (valid - postgres is in audience)
 //
-//	ValidateAudienceForService("/linear/sse", []string{"https://mcp.company.com/postgres"}, "https://mcp.company.com")
+//	ValidateAudienceForService("/linear/sse", []string{"https://mcp.company.com/postgres"}, "https://mcp.company.com", false)
 //	Returns: error (invalid - linear not in audience)
-func ValidateAudienceForService(requestPath string, tokenAudience []string, issuer string) error {
+//
+//	ValidateAudienceForService("/linear/sse", []string{"https://mcp.company.com"}, "https://mcp.company.com", true)
+//	Returns: nil (valid - issuer is in audience and acceptIssuerAudience is true)
+func ValidateAudienceForService(requestPath string, tokenAudience []string, issuer string, acceptIssuerAudience bool) error {
 	u, err := url.Parse(issuer)
 	if err != nil {
 		return fmt.Errorf("invalid issuer URL: %w", err)
@@ -193,7 +200,13 @@ func ValidateAudienceForService(requestPath string, tokenAudience []string, issu
 		return fmt.Errorf("failed to build resource URI for service %s: %w", serviceName, err)
 	}
 
+	// Check for per-service audience (preferred)
 	if slices.Contains(tokenAudience, expectedResource) {
+		return nil
+	}
+
+	// Workaround: accept base issuer as audience if enabled
+	if acceptIssuerAudience && slices.Contains(tokenAudience, issuer) {
 		return nil
 	}
 
