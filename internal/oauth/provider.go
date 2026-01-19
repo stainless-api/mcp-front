@@ -37,11 +37,10 @@ func GetUserContextKey() contextKey {
 }
 
 func NewOAuthProvider(oauthConfig config.OAuthAuthConfig, store storage.Storage, jwtSecret []byte) (fosite.OAuth2Provider, error) {
-	// Use TTL duration from config
+	// TTL values from config (defaults set in unmarshal.go)
 	tokenTTL := oauthConfig.TokenTTL
-	if tokenTTL == 0 {
-		tokenTTL = time.Hour // Default 1 hour
-	}
+	refreshTokenTTL := oauthConfig.RefreshTokenTTL
+
 	// Validate JWT secret length for HMAC-SHA512/256
 	if len(jwtSecret) < 32 {
 		return nil, fmt.Errorf("JWT secret must be at least 32 bytes long for security, got %d bytes", len(jwtSecret))
@@ -58,7 +57,7 @@ func NewOAuthProvider(oauthConfig config.OAuthAuthConfig, store storage.Storage,
 	// Configure fosite
 	fositeConfig := &fosite.Config{
 		AccessTokenLifespan:            tokenTTL,
-		RefreshTokenLifespan:           tokenTTL * 2,
+		RefreshTokenLifespan:           refreshTokenTTL,
 		AuthorizeCodeLifespan:          10 * time.Minute,
 		TokenURL:                       oauthConfig.Issuer + "/token",
 		ScopeStrategy:                  fosite.HierarchicScopeStrategy,
@@ -67,6 +66,7 @@ func NewOAuthProvider(oauthConfig config.OAuthAuthConfig, store storage.Storage,
 		EnablePKCEPlainChallengeMethod: false,
 		MinParameterEntropy:            minEntropy,
 		GlobalSecret:                   jwtSecret,
+		RefreshTokenScopes:             oauthConfig.RefreshTokenScopes,
 	}
 
 	// Create provider using compose with specific factories

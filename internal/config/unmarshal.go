@@ -121,6 +121,8 @@ func (o *OAuthAuthConfig) UnmarshalJSON(data []byte) error {
 		AllowedDomains                  []string        `json:"allowedDomains"`
 		AllowedOrigins                  []string        `json:"allowedOrigins"`
 		TokenTTL                        string          `json:"tokenTtl"`
+		RefreshTokenTTL                 string          `json:"refreshTokenTtl"`
+		RefreshTokenScopes              []string        `json:"refreshTokenScopes"`
 		Storage                         string          `json:"storage"`
 		FirestoreDatabase               string          `json:"firestoreDatabase,omitempty"`
 		FirestoreCollection             string          `json:"firestoreCollection,omitempty"`
@@ -146,13 +148,35 @@ func (o *OAuthAuthConfig) UnmarshalJSON(data []byte) error {
 	o.FirestoreCollection = raw.FirestoreCollection
 	o.DangerouslyAcceptIssuerAudience = raw.DangerouslyAcceptIssuerAudience
 
-	// Parse TokenTTL duration
+	// RefreshTokenScopes: nil means use fosite default ["offline_access"],
+	// empty slice means always issue refresh tokens (recommended for MCP)
+	// If not specified in config, default to empty slice (always issue)
+	if raw.RefreshTokenScopes != nil {
+		o.RefreshTokenScopes = raw.RefreshTokenScopes
+	} else {
+		o.RefreshTokenScopes = []string{} // Default: always issue refresh tokens
+	}
+
+	// Parse TokenTTL duration (default: 1 hour)
 	if raw.TokenTTL != "" {
 		tokenTTL, err := time.ParseDuration(raw.TokenTTL)
 		if err != nil {
 			return fmt.Errorf("parsing tokenTtl: %w", err)
 		}
 		o.TokenTTL = tokenTTL
+	} else {
+		o.TokenTTL = time.Hour // Default: 1 hour
+	}
+
+	// Parse RefreshTokenTTL duration (default: 30 days)
+	if raw.RefreshTokenTTL != "" {
+		refreshTokenTTL, err := time.ParseDuration(raw.RefreshTokenTTL)
+		if err != nil {
+			return fmt.Errorf("parsing refreshTokenTtl: %w", err)
+		}
+		o.RefreshTokenTTL = refreshTokenTTL
+	} else {
+		o.RefreshTokenTTL = 30 * 24 * time.Hour // Default: 30 days
 	}
 
 	// Parse string fields

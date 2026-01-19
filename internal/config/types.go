@@ -208,6 +208,8 @@ type OAuthAuthConfig struct {
 	AllowedDomains      []string      `json:"allowedDomains"` // For Google OAuth email validation
 	AllowedOrigins      []string      `json:"allowedOrigins"` // For CORS validation
 	TokenTTL            time.Duration `json:"tokenTtl"`
+	RefreshTokenTTL     time.Duration `json:"refreshTokenTtl"`
+	RefreshTokenScopes  []string      `json:"refreshTokenScopes"`
 	Storage             string        `json:"storage"`                       // "memory" or "firestore"
 	FirestoreDatabase   string        `json:"firestoreDatabase,omitempty"`   // Optional: Firestore database name
 	FirestoreCollection string        `json:"firestoreCollection,omitempty"` // Optional: Firestore collection name

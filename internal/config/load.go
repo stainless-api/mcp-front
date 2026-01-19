@@ -171,6 +171,12 @@ func validateOAuthConfig(oauth *OAuthAuthConfig) error {
 			return fmt.Errorf("gcpProject is required when using firestore storage")
 		}
 	}
+	if oauth.TokenTTL <= 0 {
+		return fmt.Errorf("tokenTtl must be positive")
+	}
+	if oauth.RefreshTokenTTL <= 0 {
+		return fmt.Errorf("refreshTokenTtl must be positive")
+	}
 	return nil
 }
 

@@ -15,10 +15,11 @@ import (
 func TestNewOAuthProvider(t *testing.T) {
 	t.Run("valid configuration", func(t *testing.T) {
 		oauthConfig := config.OAuthAuthConfig{
-			Issuer:        "https://test.example.com",
-			TokenTTL:      time.Hour,
-			JWTSecret:     config.Secret(strings.Repeat("a", 32)),
-			EncryptionKey: config.Secret(strings.Repeat("b", 32)),
+			Issuer:          "https://test.example.com",
+			TokenTTL:        time.Hour,
+			RefreshTokenTTL: 30 * 24 * time.Hour,
+			JWTSecret:       config.Secret(strings.Repeat("a", 32)),
+			EncryptionKey:   config.Secret(strings.Repeat("b", 32)),
 		}
 
 		store := storage.NewMemoryStorage()
@@ -48,10 +49,11 @@ func TestNewOAuthProvider(t *testing.T) {
 
 	t.Run("development mode vs production mode entropy", func(t *testing.T) {
 		oauthConfig := config.OAuthAuthConfig{
-			Issuer:        "https://test.example.com",
-			TokenTTL:      time.Hour,
-			JWTSecret:     config.Secret(strings.Repeat("a", 32)),
-			EncryptionKey: config.Secret(strings.Repeat("b", 32)),
+			Issuer:          "https://test.example.com",
+			TokenTTL:        time.Hour,
+			RefreshTokenTTL: 30 * 24 * time.Hour,
+			JWTSecret:       config.Secret(strings.Repeat("a", 32)),
+			EncryptionKey:   config.Secret(strings.Repeat("b", 32)),
 		}
 
 		store := storage.NewMemoryStorage()

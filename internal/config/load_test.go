@@ -50,6 +50,8 @@ func TestValidateConfig_UserTokensRequireOAuth(t *testing.T) {
 						EncryptionKey:      "test-encryption-key-32-bytes-ok!",
 						AllowedDomains:     []string{"example.com"},
 						AllowedOrigins:     []string{"https://test.example.com"},
+						TokenTTL:           time.Hour,
+						RefreshTokenTTL:    30 * 24 * time.Hour,
 					},
 				},
 				MCPServers: map[string]*MCPClientConfig{
@@ -105,6 +107,8 @@ func TestValidateConfig_SessionConfig(t *testing.T) {
 						EncryptionKey:      "test-encryption-key-32-bytes-ok!",
 						AllowedDomains:     []string{"example.com"},
 						AllowedOrigins:     []string{"https://test.example.com"},
+						TokenTTL:           time.Hour,
+						RefreshTokenTTL:    30 * 24 * time.Hour,
 					},
 					Sessions: &SessionConfig{
 						Timeout:         10 * time.Minute,
@@ -133,6 +137,8 @@ func TestValidateConfig_SessionConfig(t *testing.T) {
 						EncryptionKey:      "test-encryption-key-32-bytes-ok!",
 						AllowedDomains:     []string{"example.com"},
 						AllowedOrigins:     []string{"https://test.example.com"},
+						TokenTTL:           time.Hour,
+						RefreshTokenTTL:    30 * 24 * time.Hour,
 					},
 					Sessions: &SessionConfig{
 						Timeout:         -1 * time.Minute,
@@ -159,6 +165,8 @@ func TestValidateConfig_SessionConfig(t *testing.T) {
 						EncryptionKey:      "test-encryption-key-32-bytes-ok!",
 						AllowedDomains:     []string{"example.com"},
 						AllowedOrigins:     []string{"https://test.example.com"},
+						TokenTTL:           time.Hour,
+						RefreshTokenTTL:    30 * 24 * time.Hour,
 					},
 					Sessions: &SessionConfig{
 						Timeout:         10 * time.Minute,
@@ -185,6 +193,8 @@ func TestValidateConfig_SessionConfig(t *testing.T) {
 						EncryptionKey:      "test-encryption-key-32-bytes-ok!",
 						AllowedDomains:     []string{"example.com"},
 						AllowedOrigins:     []string{"https://test.example.com"},
+						TokenTTL:           time.Hour,
+						RefreshTokenTTL:    30 * 24 * time.Hour,
 					},
 					Sessions: &SessionConfig{
 						Timeout:         0,
