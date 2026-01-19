@@ -45,6 +45,7 @@ func TestOAuthEndpointsCORS(t *testing.T) {
 		JWTSecret:          config.Secret(strings.Repeat("a", 32)),
 		EncryptionKey:      config.Secret(strings.Repeat("b", 32)),
 		TokenTTL:           time.Hour,
+		RefreshTokenTTL:    30 * 24 * time.Hour,
 		Storage:            "memory",
 		AllowedOrigins:     []string{"http://localhost:6274"},
 	}

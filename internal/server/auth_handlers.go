@@ -426,7 +426,7 @@ func (h *AuthHandlers) GoogleCallbackHandler(w http.ResponseWriter, r *http.Requ
 		DefaultSession: &fosite.DefaultSession{
 			ExpiresAt: map[fosite.TokenType]time.Time{
 				fosite.AccessToken:  time.Now().Add(h.authConfig.TokenTTL),
-				fosite.RefreshToken: time.Now().Add(h.authConfig.TokenTTL * 2),
+				fosite.RefreshToken: time.Now().Add(h.authConfig.RefreshTokenTTL),
 			},
 		},
 		UserInfo: userInfo,
@@ -741,7 +741,7 @@ func (h *AuthHandlers) CompleteOAuthHandler(w http.ResponseWriter, r *http.Reque
 		DefaultSession: &fosite.DefaultSession{
 			ExpiresAt: map[fosite.TokenType]time.Time{
 				fosite.AccessToken:  time.Now().Add(h.authConfig.TokenTTL),
-				fosite.RefreshToken: time.Now().Add(h.authConfig.TokenTTL * 2),
+				fosite.RefreshToken: time.Now().Add(h.authConfig.RefreshTokenTTL),
 			},
 		},
 		UserInfo: upstreamOAuthState.UserInfo,
