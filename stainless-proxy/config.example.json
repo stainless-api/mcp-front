@@ -1,0 +1,9 @@
+{
+    "addr": ":8443",
+    "keyDir": "./keys",
+    "generateKeys": true,
+    "mintEnabled": true,
+    "mintSecret": {"$env": "MINT_SECRET"},
+    "logLevel": "debug",
+    "logFormat": "text"
+}
