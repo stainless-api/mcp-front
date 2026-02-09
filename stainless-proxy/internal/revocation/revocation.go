@@ -25,18 +25,12 @@ func (d *DenyList) Add(hash string, expiresAt time.Time) {
 
 func (d *DenyList) IsRevoked(hash string) bool {
 	d.mu.RLock()
+	defer d.mu.RUnlock()
 	exp, ok := d.entries[hash]
-	d.mu.RUnlock()
 	if !ok {
 		return false
 	}
-	if time.Now().After(exp) {
-		d.mu.Lock()
-		delete(d.entries, hash)
-		d.mu.Unlock()
-		return false
-	}
-	return true
+	return time.Now().Before(exp)
 }
 
 func (d *DenyList) Cleanup() {

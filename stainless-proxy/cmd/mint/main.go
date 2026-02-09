@@ -51,7 +51,8 @@ func main() {
 	}
 
 	// Fetch JWKS
-	resp, err := http.Get(*jwksURL)
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Get(*jwksURL)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: fetching JWKS: %v\n", err)
 		os.Exit(1)

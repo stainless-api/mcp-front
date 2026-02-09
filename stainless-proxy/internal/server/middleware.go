@@ -1,6 +1,7 @@
 package server
 
 import (
+	"crypto/subtle"
 	"log/slog"
 	"net/http"
 	"time"
@@ -48,7 +49,8 @@ func MintAuthMiddleware(secret config.Secret) MiddlewareFunc {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			auth := r.Header.Get("Authorization")
-			if auth != "Bearer "+string(secret) {
+			expected := "Bearer " + string(secret)
+			if subtle.ConstantTimeCompare([]byte(auth), []byte(expected)) != 1 {
 				http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 				return
 			}

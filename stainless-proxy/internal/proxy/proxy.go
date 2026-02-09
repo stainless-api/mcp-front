@@ -261,7 +261,7 @@ func copyHeaders(dst, src http.Header) {
 func isHopByHop(header string) bool {
 	switch header {
 	case "Connection", "Keep-Alive", "Proxy-Authenticate",
-		"Proxy-Authorization", "Te", "Trailers",
+		"Proxy-Authorization", "Te", "Trailer",
 		"Transfer-Encoding", "Upgrade":
 		return true
 	}
