@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/dgellow/mcp-front/internal/adminauth"
-	"github.com/dgellow/mcp-front/internal/browserauth"
 	"github.com/dgellow/mcp-front/internal/config"
 	"github.com/dgellow/mcp-front/internal/cookie"
 	"github.com/dgellow/mcp-front/internal/crypto"
@@ -19,6 +18,7 @@ import (
 	"github.com/dgellow/mcp-front/internal/log"
 	"github.com/dgellow/mcp-front/internal/oauth"
 	"github.com/dgellow/mcp-front/internal/servicecontext"
+	"github.com/dgellow/mcp-front/internal/session"
 	"github.com/dgellow/mcp-front/internal/storage"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -319,7 +319,7 @@ func NewBrowserSSOMiddleware(authConfig config.OAuthAuthConfig, idpProvider idp.
 			}
 
 			// Parse session data
-			var sessionData browserauth.SessionCookie
+			var sessionData session.BrowserCookie
 			if err := json.NewDecoder(strings.NewReader(decrypted)).Decode(&sessionData); err != nil {
 				// Invalid format
 				cookie.ClearSession(w)
@@ -353,7 +353,7 @@ func NewBrowserSSOMiddleware(authConfig config.OAuthAuthConfig, idpProvider idp.
 
 // generateBrowserState creates a secure state parameter for browser SSO
 func generateBrowserState(browserStateToken *crypto.TokenSigner, returnURL string) string {
-	state := browserauth.AuthorizationState{
+	state := session.AuthorizationState{
 		Nonce:     crypto.GenerateSecureToken(),
 		ReturnURL: returnURL,
 	}

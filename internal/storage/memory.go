@@ -43,8 +43,9 @@ func NewMemoryStorage() *MemoryStorage {
 }
 
 // StoreAuthorizeRequest stores an authorize request with state
-func (s *MemoryStorage) StoreAuthorizeRequest(state string, req fosite.AuthorizeRequester) {
+func (s *MemoryStorage) StoreAuthorizeRequest(state string, req fosite.AuthorizeRequester) error {
 	s.stateCache.Store(state, req)
+	return nil
 }
 
 // GetAuthorizeRequest retrieves an authorize request by state (one-time use)
@@ -202,6 +203,19 @@ func (s *MemoryStorage) UpsertUser(ctx context.Context, email string) error {
 		}
 	}
 	return nil
+}
+
+// GetUser returns a single user by email
+func (s *MemoryStorage) GetUser(ctx context.Context, email string) (*UserInfo, error) {
+	s.usersMutex.RLock()
+	defer s.usersMutex.RUnlock()
+
+	user, exists := s.users[email]
+	if !exists {
+		return nil, ErrUserNotFound
+	}
+	userCopy := *user
+	return &userCopy, nil
 }
 
 // GetAllUsers returns all users

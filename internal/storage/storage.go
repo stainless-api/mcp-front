@@ -76,7 +76,7 @@ type Storage interface {
 	fosite.Storage
 
 	// OAuth state management
-	StoreAuthorizeRequest(state string, req fosite.AuthorizeRequester)
+	StoreAuthorizeRequest(state string, req fosite.AuthorizeRequester) error
 	GetAuthorizeRequest(state string) (fosite.AuthorizeRequester, bool)
 
 	// OAuth client management
@@ -89,6 +89,7 @@ type Storage interface {
 
 	// User tracking (upserted when users access MCP endpoints)
 	UpsertUser(ctx context.Context, email string) error
+	GetUser(ctx context.Context, email string) (*UserInfo, error)
 	GetAllUsers(ctx context.Context) ([]UserInfo, error)
 	UpdateUserStatus(ctx context.Context, email string, enabled bool) error
 	DeleteUser(ctx context.Context, email string) error

@@ -12,10 +12,9 @@ import (
 
 	"github.com/dgellow/mcp-front/internal/config"
 	"github.com/dgellow/mcp-front/internal/crypto"
-	"github.com/dgellow/mcp-front/internal/envutil"
 	jsonwriter "github.com/dgellow/mcp-front/internal/json"
 	"github.com/dgellow/mcp-front/internal/log"
-	"github.com/dgellow/mcp-front/internal/oauthsession"
+	"github.com/dgellow/mcp-front/internal/session"
 	"github.com/dgellow/mcp-front/internal/storage"
 	"github.com/dgellow/mcp-front/internal/urlutil"
 	"github.com/ory/fosite"
@@ -48,8 +47,8 @@ func NewOAuthProvider(oauthConfig config.OAuthAuthConfig, store storage.Storage,
 
 	// Determine min parameter entropy based on environment
 	minEntropy := 8 // Production default - enforce secure state parameters (8+ chars)
-	log.Logf("OAuth provider initialization - MCP_FRONT_ENV=%s, isDevelopmentMode=%v", os.Getenv("MCP_FRONT_ENV"), envutil.IsDev())
-	if envutil.IsDev() {
+	log.Logf("OAuth provider initialization - MCP_FRONT_ENV=%s, isDevelopmentMode=%v", os.Getenv("MCP_FRONT_ENV"), config.IsDev())
+	if config.IsDev() {
 		minEntropy = 0 // Development mode - allow empty state parameters
 		log.LogWarn("Development mode enabled - OAuth security checks relaxed (state parameter entropy: %d)", minEntropy)
 	}
@@ -158,8 +157,8 @@ func NewValidateTokenMiddleware(provider fosite.OAuth2Provider, issuer string, a
 			// - This is documented fosite behavior, not a bug
 			// - The actual session data must be retrieved from the returned AccessRequester
 			// See: https://github.com/ory/fosite/issues/256
-			session := &oauthsession.Session{DefaultSession: &fosite.DefaultSession{}}
-			_, accessRequest, err := provider.IntrospectToken(ctx, token, fosite.AccessToken, session)
+			oauthSession := &session.OAuthSession{DefaultSession: &fosite.DefaultSession{}}
+			_, accessRequest, err := provider.IntrospectToken(ctx, token, fosite.AccessToken, oauthSession)
 			if err != nil {
 				jsonwriter.WriteUnauthorizedRFC9728(w, "Invalid or expired token", metadataURI)
 				return
@@ -180,7 +179,7 @@ func NewValidateTokenMiddleware(provider fosite.OAuth2Provider, issuer string, a
 			// This is the correct way to retrieve session data after token introspection
 			var userEmail string
 			if accessRequest != nil {
-				if reqSession, ok := accessRequest.GetSession().(*oauthsession.Session); ok {
+				if reqSession, ok := accessRequest.GetSession().(*session.OAuthSession); ok {
 					if reqSession.Identity.Email != "" {
 						userEmail = reqSession.Identity.Email
 					}

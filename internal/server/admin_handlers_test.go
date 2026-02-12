@@ -27,7 +27,7 @@ func TestAdminHandlers_CSRF(t *testing.T) {
 
 	t.Run("generate and validate CSRF token", func(t *testing.T) {
 		// Generate token
-		token, err := handlers.generateCSRFToken()
+		token, err := handlers.csrf.Generate()
 		if err != nil {
 			t.Fatalf("Failed to generate CSRF token: %v", err)
 		}
@@ -38,13 +38,13 @@ func TestAdminHandlers_CSRF(t *testing.T) {
 		}
 
 		// Token should be valid immediately
-		if !handlers.validateCSRFToken(token) {
+		if !handlers.csrf.Validate(token) {
 			t.Error("Token should be valid immediately after generation")
 		}
 
 		// Token should not be valid twice (though with HMAC it actually can be)
 		// With HMAC-based tokens, they can be validated multiple times
-		if !handlers.validateCSRFToken(token) {
+		if !handlers.csrf.Validate(token) {
 			t.Error("HMAC token should be valid on second validation")
 		}
 	})
@@ -58,7 +58,7 @@ func TestAdminHandlers_CSRF(t *testing.T) {
 		}
 
 		for _, token := range invalidTokens {
-			if handlers.validateCSRFToken(token) {
+			if handlers.csrf.Validate(token) {
 				t.Errorf("Token '%s' should be invalid", token)
 			}
 		}
@@ -69,7 +69,7 @@ func TestAdminHandlers_CSRF(t *testing.T) {
 		// An expired token would have a timestamp from > 15 minutes ago
 		expiredToken := "test-nonce:0:invalid-signature"
 
-		if handlers.validateCSRFToken(expiredToken) {
+		if handlers.csrf.Validate(expiredToken) {
 			t.Error("Expired token should be invalid")
 		}
 	})
@@ -79,18 +79,18 @@ func TestAdminHandlers_CSRF(t *testing.T) {
 		handlers2 := NewAdminHandlers(storage, cfg, sessionManager, "different-encryption-key-32bytes")
 
 		// Generate token with first handler
-		token1, err := handlers.generateCSRFToken()
+		token1, err := handlers.csrf.Generate()
 		if err != nil {
 			t.Fatalf("Failed to generate token: %v", err)
 		}
 
 		// Token from handler1 should not validate with handler2
-		if handlers2.validateCSRFToken(token1) {
+		if handlers2.csrf.Validate(token1) {
 			t.Error("Token should not validate with different encryption key")
 		}
 
 		// But should still validate with original handler
-		if !handlers.validateCSRFToken(token1) {
+		if !handlers.csrf.Validate(token1) {
 			t.Error("Token should validate with original handler")
 		}
 	})

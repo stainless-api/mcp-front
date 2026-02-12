@@ -187,6 +187,11 @@ type MCPClientConfig struct {
 	InlineConfig json.RawMessage `json:"inline,omitempty"`
 }
 
+// IsStdio returns true if this is a stdio-based MCP server
+func (c *MCPClientConfig) IsStdio() bool {
+	return c.TransportType == MCPClientTypeStdio
+}
+
 // SessionConfig represents session management configuration
 type SessionConfig struct {
 	Timeout         time.Duration

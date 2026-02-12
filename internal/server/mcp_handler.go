@@ -122,7 +122,7 @@ func (h *MCPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			log.LogInfoWithFields("mcp", "Handling message request", map[string]any{
 				"path":          r.URL.Path,
 				"server":        h.serverName,
-				"isStdio":       isStdioServer(serverConfig),
+				"isStdio":       serverConfig.IsStdio(),
 				"user":          userEmail,
 				"remoteAddr":    r.RemoteAddr,
 				"contentLength": r.ContentLength,
@@ -133,7 +133,7 @@ func (h *MCPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			log.LogInfoWithFields("mcp", "Handling SSE request", map[string]any{
 				"path":       r.URL.Path,
 				"server":     h.serverName,
-				"isStdio":    isStdioServer(serverConfig),
+				"isStdio":    serverConfig.IsStdio(),
 				"user":       userEmail,
 				"remoteAddr": r.RemoteAddr,
 				"userAgent":  r.UserAgent(),
@@ -168,7 +168,7 @@ func (h *MCPHandler) trackUserAccess(ctx context.Context, userEmail string) {
 func (h *MCPHandler) handleSSERequest(ctx context.Context, w http.ResponseWriter, r *http.Request, userEmail string, config *config.MCPClientConfig) {
 	h.trackUserAccess(ctx, userEmail)
 
-	if !isStdioServer(config) {
+	if !config.IsStdio() {
 		// For non-stdio servers, handle normally
 		h.handleNonStdioSSERequest(ctx, w, r, userEmail, config)
 		return
@@ -206,7 +206,7 @@ func (h *MCPHandler) handleSSERequest(ctx context.Context, w http.ResponseWriter
 func (h *MCPHandler) handleMessageRequest(ctx context.Context, w http.ResponseWriter, r *http.Request, userEmail string, config *config.MCPClientConfig) {
 	h.trackUserAccess(ctx, userEmail)
 
-	if isStdioServer(config) {
+	if config.IsStdio() {
 		sessionID := r.URL.Query().Get("sessionId")
 		if sessionID == "" {
 			jsonrpc.WriteError(w, nil, jsonrpc.InvalidParams, "missing sessionId")

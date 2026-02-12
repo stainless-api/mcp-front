@@ -380,7 +380,7 @@ func buildHTTPHandler(
 		}
 
 		// Create token handlers
-		tokenHandlers := server.NewTokenHandlers(storage, cfg.MCPServers, true, serviceOAuthClient)
+		tokenHandlers := server.NewTokenHandlers(storage, cfg.MCPServers, true, serviceOAuthClient, []byte(authConfig.EncryptionKey))
 
 		// Token management UI endpoints
 		mux.Handle(route("/my/tokens"), server.ChainMiddleware(http.HandlerFunc(tokenHandlers.ListTokensHandler), tokenMiddleware...))
@@ -421,7 +421,7 @@ func buildHTTPHandler(
 			}
 		} else {
 			// For stdio/SSE servers
-			if isStdioServer(serverConfig) {
+			if serverConfig.IsStdio() {
 				sseServer, mcpServer, err = buildStdioSSEServer(serverName, baseURL, sessionManager)
 				if err != nil {
 					return nil, fmt.Errorf("failed to create SSE server for %s: %w", serverName, err)
@@ -606,7 +606,3 @@ func buildStdioSSEServer(serverName, baseURL string, sessionManager *client.Stdi
 	return sseServer, mcpServer, nil
 }
 
-// isStdioServer checks if this is a stdio-based server
-func isStdioServer(cfg *config.MCPClientConfig) bool {
-	return cfg.TransportType == config.MCPClientTypeStdio
-}

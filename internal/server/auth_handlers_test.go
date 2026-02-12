@@ -10,11 +10,11 @@ import (
 	"time"
 
 	"github.com/dgellow/mcp-front/internal/auth"
-	"github.com/dgellow/mcp-front/internal/browserauth"
 	"github.com/dgellow/mcp-front/internal/config"
 	"github.com/dgellow/mcp-front/internal/crypto"
 	"github.com/dgellow/mcp-front/internal/idp"
 	"github.com/dgellow/mcp-front/internal/oauth"
+	"github.com/dgellow/mcp-front/internal/session"
 	"github.com/dgellow/mcp-front/internal/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -123,7 +123,7 @@ func TestAuthenticationBoundaries(t *testing.T) {
 		serviceOAuthClient,
 	)
 
-	tokenHandlers := NewTokenHandlers(store, map[string]*config.MCPClientConfig{}, true, serviceOAuthClient)
+	tokenHandlers := NewTokenHandlers(store, map[string]*config.MCPClientConfig{}, true, serviceOAuthClient, []byte(oauthConfig.EncryptionKey))
 
 	// Build mux with middlewares
 	mux := http.NewServeMux()
@@ -190,7 +190,7 @@ func TestAuthenticationBoundaries(t *testing.T) {
 			// Test with valid session cookie (if auth is expected)
 			if tt.expectAuth {
 				// Create session data
-				sessionData := browserauth.SessionCookie{
+				sessionData := session.BrowserCookie{
 					Email:    "test@example.com",
 					Provider: "mock",
 					Expires:  time.Now().Add(24 * time.Hour),
@@ -314,7 +314,7 @@ func TestOAuthEndpointHandlers(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/oauth/services", nil)
 
 		// Add valid session cookie
-		sessionData := browserauth.SessionCookie{
+		sessionData := session.BrowserCookie{
 			Email:   "test@example.com",
 			Expires: time.Now().Add(24 * time.Hour),
 		}
