@@ -40,16 +40,31 @@ type githubOrgResponse struct {
 }
 
 // NewGitHubProvider creates a new GitHub OAuth provider.
-func NewGitHubProvider(clientID, clientSecret, redirectURI string) *GitHubProvider {
+// Optional endpoint overrides (authorizationURL, tokenURL, apiBaseURL) allow
+// pointing at a non-GitHub server for testing.
+func NewGitHubProvider(clientID, clientSecret, redirectURI, authorizationURL, tokenURL, apiBaseURL string) *GitHubProvider {
+	endpoint := github.Endpoint
+	if authorizationURL != "" {
+		endpoint.AuthURL = authorizationURL
+	}
+	if tokenURL != "" {
+		endpoint.TokenURL = tokenURL
+	}
+
+	apiBase := "https://api.github.com"
+	if apiBaseURL != "" {
+		apiBase = apiBaseURL
+	}
+
 	return &GitHubProvider{
 		config: oauth2.Config{
 			ClientID:     clientID,
 			ClientSecret: clientSecret,
 			RedirectURL:  redirectURI,
 			Scopes:       []string{"user:email", "read:org"},
-			Endpoint:     github.Endpoint,
+			Endpoint:     endpoint,
 		},
-		apiBaseURL: "https://api.github.com",
+		apiBaseURL: apiBase,
 	}
 }
 

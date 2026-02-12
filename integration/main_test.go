@@ -62,7 +62,7 @@ func TestMain(m *testing.M) {
 		os.Exit(exitCode)
 	}()
 
-	// Start fake GCP server for OAuth
+	// Start fake GCP server for OAuth (port 9090)
 	fakeGCP := NewFakeGCPServer("9090")
 	err := fakeGCP.Start()
 	if err != nil {
@@ -72,6 +72,28 @@ func TestMain(m *testing.M) {
 	}
 	defer func() {
 		_ = fakeGCP.Stop()
+	}()
+
+	// Start fake GitHub server (port 9092)
+	fakeGitHub := NewFakeGitHubServer("9092", []string{"test-org", "another-org"})
+	if err := fakeGitHub.Start(); err != nil {
+		fmt.Printf("Failed to start fake GitHub server: %v\n", err)
+		exitCode = 1
+		return
+	}
+	defer func() {
+		_ = fakeGitHub.Stop()
+	}()
+
+	// Start fake OIDC server (port 9093) — used for both OIDC and Azure tests
+	fakeOIDC := NewFakeOIDCServer("9093")
+	if err := fakeOIDC.Start(); err != nil {
+		fmt.Printf("Failed to start fake OIDC server: %v\n", err)
+		exitCode = 1
+		return
+	}
+	defer func() {
+		_ = fakeOIDC.Stop()
 	}()
 
 	// Wait for database to be ready

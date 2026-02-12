@@ -13,12 +13,12 @@ import (
 )
 
 func TestGitHubProvider_Type(t *testing.T) {
-	provider := NewGitHubProvider("client-id", "client-secret", "https://example.com/callback")
+	provider := NewGitHubProvider("client-id", "client-secret", "https://example.com/callback", "", "", "")
 	assert.Equal(t, "github", provider.Type())
 }
 
 func TestGitHubProvider_AuthURL(t *testing.T) {
-	provider := NewGitHubProvider("client-id", "client-secret", "https://example.com/callback")
+	provider := NewGitHubProvider("client-id", "client-secret", "https://example.com/callback", "", "", "")
 
 	authURL := provider.AuthURL("test-state")
 
