@@ -14,9 +14,8 @@ import (
 // GoogleProvider implements the Provider interface for Google OAuth.
 // Google has specific quirks like `hd` for hosted domain and `verified_email` field.
 type GoogleProvider struct {
-	config         oauth2.Config
-	userInfoURL    string
-	allowedDomains []string
+	config      oauth2.Config
+	userInfoURL string
 }
 
 // googleUserInfoResponse represents Google's userinfo response.
@@ -31,7 +30,7 @@ type googleUserInfoResponse struct {
 }
 
 // NewGoogleProvider creates a new Google OAuth provider.
-func NewGoogleProvider(clientID, clientSecret, redirectURI string, allowedDomains []string) *GoogleProvider {
+func NewGoogleProvider(clientID, clientSecret, redirectURI string) *GoogleProvider {
 	return &GoogleProvider{
 		config: oauth2.Config{
 			ClientID:     clientID,
@@ -40,8 +39,7 @@ func NewGoogleProvider(clientID, clientSecret, redirectURI string, allowedDomain
 			Scopes:       []string{"openid", "profile", "email"},
 			Endpoint:     google.Endpoint,
 		},
-		userInfoURL:    "https://www.googleapis.com/oauth2/v2/userinfo",
-		allowedDomains: allowedDomains,
+		userInfoURL: "https://www.googleapis.com/oauth2/v2/userinfo",
 	}
 }
 
@@ -63,8 +61,8 @@ func (p *GoogleProvider) ExchangeCode(ctx context.Context, code string) (*oauth2
 	return p.config.Exchange(ctx, code)
 }
 
-// UserInfo fetches user information from Google's userinfo endpoint.
-func (p *GoogleProvider) UserInfo(ctx context.Context, token *oauth2.Token) (*UserInfo, error) {
+// UserInfo fetches user identity from Google's userinfo endpoint.
+func (p *GoogleProvider) UserInfo(ctx context.Context, token *oauth2.Token) (*Identity, error) {
 	client := p.config.Client(ctx, token)
 
 	resp, err := client.Get(p.userInfoURL)
@@ -88,12 +86,7 @@ func (p *GoogleProvider) UserInfo(ctx context.Context, token *oauth2.Token) (*Us
 		domain = emailutil.ExtractDomain(googleUser.Email)
 	}
 
-	// Validate domain if configured
-	if err := ValidateDomain(domain, p.allowedDomains); err != nil {
-		return nil, err
-	}
-
-	return &UserInfo{
+	return &Identity{
 		ProviderType:  "google",
 		Subject:       googleUser.Sub,
 		Email:         googleUser.Email,

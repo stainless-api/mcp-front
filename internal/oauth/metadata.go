@@ -53,29 +53,9 @@ func AuthorizationServerMetadata(issuer string) (map[string]any, error) {
 	}, nil
 }
 
-// ProtectedResourceMetadata builds OAuth 2.0 Protected Resource Metadata per RFC 9728
-// https://datatracker.ietf.org/doc/html/rfc9728
-//
-// Deprecated: Use ServiceProtectedResourceMetadata for per-service metadata endpoints.
-// This function returns the base issuer as the resource, which doesn't support
-// per-service audience validation required by RFC 8707.
-func ProtectedResourceMetadata(issuer string) (map[string]any, error) {
-	authzServerURL, err := urlutil.JoinPath(issuer, ".well-known", "oauth-authorization-server")
-	if err != nil {
-		return nil, err
-	}
-
-	return map[string]any{
-		"resource": issuer,
-		"authorization_servers": []string{
-			issuer,
-		},
-		"_links": map[string]any{
-			"oauth-authorization-server": map[string]string{
-				"href": authzServerURL,
-			},
-		},
-	}, nil
+// AuthorizationServerMetadataURI returns the well-known URI for the authorization server metadata.
+func AuthorizationServerMetadataURI(issuer string) (string, error) {
+	return urlutil.JoinPath(issuer, ".well-known", "oauth-authorization-server")
 }
 
 // ServiceProtectedResourceMetadata builds OAuth 2.0 Protected Resource Metadata per RFC 9728
@@ -92,7 +72,7 @@ func ServiceProtectedResourceMetadata(issuer string, serviceName string) (map[st
 		return nil, err
 	}
 
-	authzServerURL, err := urlutil.JoinPath(issuer, ".well-known", "oauth-authorization-server")
+	authzServerURL, err := AuthorizationServerMetadataURI(issuer)
 	if err != nil {
 		return nil, err
 	}

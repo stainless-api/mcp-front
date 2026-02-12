@@ -36,8 +36,8 @@ func (m *mockIDPProvider) ExchangeCode(ctx context.Context, code string) (*oauth
 	return &oauth2.Token{AccessToken: "test-token"}, nil
 }
 
-func (m *mockIDPProvider) UserInfo(ctx context.Context, token *oauth2.Token) (*idp.UserInfo, error) {
-	return &idp.UserInfo{
+func (m *mockIDPProvider) UserInfo(ctx context.Context, token *oauth2.Token) (*idp.Identity, error) {
+	return &idp.Identity{
 		ProviderType:  "mock",
 		Subject:       "123",
 		Email:         "test@example.com",
@@ -417,6 +417,91 @@ func TestBearerTokenAuth(t *testing.T) {
 			authHandler.ServeHTTP(rec, req)
 
 			assert.Equal(t, tt.expectStatus, rec.Code)
+		})
+	}
+}
+
+func TestValidateAccess(t *testing.T) {
+	tests := []struct {
+		name           string
+		allowedDomains []string
+		allowedOrgs    []string
+		identity       *idp.Identity
+		wantErr        bool
+		errContains    string
+	}{
+		{
+			name:           "no_restrictions",
+			allowedDomains: nil,
+			allowedOrgs:    nil,
+			identity:       &idp.Identity{Domain: "any.com", Organizations: []string{"any-org"}},
+			wantErr:        false,
+		},
+		{
+			name:           "domain_allowed",
+			allowedDomains: []string{"company.com"},
+			identity:       &idp.Identity{Domain: "company.com"},
+			wantErr:        false,
+		},
+		{
+			name:           "domain_rejected",
+			allowedDomains: []string{"company.com"},
+			identity:       &idp.Identity{Domain: "other.com"},
+			wantErr:        true,
+			errContains:    "domain 'other.com' is not allowed",
+		},
+		{
+			name:        "org_allowed",
+			allowedOrgs: []string{"allowed-org"},
+			identity:    &idp.Identity{Domain: "any.com", Organizations: []string{"allowed-org", "other-org"}},
+			wantErr:     false,
+		},
+		{
+			name:        "org_rejected",
+			allowedOrgs: []string{"required-org"},
+			identity:    &idp.Identity{Domain: "any.com", Organizations: []string{"other-org"}},
+			wantErr:     true,
+			errContains: "not a member of any allowed organization",
+		},
+		{
+			name:           "domain_and_org_both_pass",
+			allowedDomains: []string{"company.com"},
+			allowedOrgs:    []string{"my-org"},
+			identity:       &idp.Identity{Domain: "company.com", Organizations: []string{"my-org"}},
+			wantErr:        false,
+		},
+		{
+			name:           "domain_fails_before_org_check",
+			allowedDomains: []string{"company.com"},
+			allowedOrgs:    []string{"my-org"},
+			identity:       &idp.Identity{Domain: "other.com", Organizations: []string{"my-org"}},
+			wantErr:        true,
+			errContains:    "domain 'other.com' is not allowed",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := &AuthHandlers{
+				authConfig: config.OAuthAuthConfig{
+					AllowedDomains: tt.allowedDomains,
+					IDP: config.IDPConfig{
+						AllowedOrgs: tt.allowedOrgs,
+					},
+				},
+			}
+
+			err := h.validateAccess(tt.identity)
+
+			if tt.wantErr {
+				require.Error(t, err)
+				if tt.errContains != "" {
+					assert.Contains(t, err.Error(), tt.errContains)
+				}
+				return
+			}
+
+			require.NoError(t, err)
 		})
 	}
 }

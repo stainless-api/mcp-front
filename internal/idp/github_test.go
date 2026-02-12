@@ -13,12 +13,12 @@ import (
 )
 
 func TestGitHubProvider_Type(t *testing.T) {
-	provider := NewGitHubProvider("client-id", "client-secret", "https://example.com/callback", nil, nil)
+	provider := NewGitHubProvider("client-id", "client-secret", "https://example.com/callback")
 	assert.Equal(t, "github", provider.Type())
 }
 
 func TestGitHubProvider_AuthURL(t *testing.T) {
-	provider := NewGitHubProvider("client-id", "client-secret", "https://example.com/callback", nil, nil)
+	provider := NewGitHubProvider("client-id", "client-secret", "https://example.com/callback")
 
 	authURL := provider.AuthURL("test-state")
 
@@ -33,10 +33,6 @@ func TestGitHubProvider_UserInfo(t *testing.T) {
 		userResp              githubUserResponse
 		emailsResp            []githubEmailResponse
 		orgsResp              []githubOrgResponse
-		allowedDomains        []string
-		allowedOrgs           []string
-		wantErr               bool
-		errContains           string
 		expectedEmail         string
 		expectedEmailVerified bool
 		expectedDomain        string
@@ -51,10 +47,11 @@ func TestGitHubProvider_UserInfo(t *testing.T) {
 				Name:      "Test User",
 				AvatarURL: "https://github.com/avatar.jpg",
 			},
+			orgsResp:              []githubOrgResponse{{Login: "my-org"}},
 			expectedEmail:         "user@company.com",
-			expectedEmailVerified: true, // Public emails in GitHub profile are verified
+			expectedEmailVerified: true,
 			expectedDomain:        "company.com",
-			expectedOrgs:          nil, // Orgs not fetched when allowedOrgs is empty
+			expectedOrgs:          []string{"my-org"},
 		},
 		{
 			name: "user_without_public_email_fetches_from_api",
@@ -67,10 +64,11 @@ func TestGitHubProvider_UserInfo(t *testing.T) {
 				{Email: "secondary@other.com", Primary: false, Verified: true},
 				{Email: "primary@company.com", Primary: true, Verified: true},
 			},
+			orgsResp:              []githubOrgResponse{},
 			expectedEmail:         "primary@company.com",
 			expectedEmailVerified: true,
 			expectedDomain:        "company.com",
-			expectedOrgs:          nil, // Orgs not fetched when allowedOrgs is empty
+			expectedOrgs:          []string{},
 		},
 		{
 			name: "user_with_unverified_primary_falls_back_to_verified",
@@ -82,72 +80,24 @@ func TestGitHubProvider_UserInfo(t *testing.T) {
 				{Email: "primary@company.com", Primary: true, Verified: false},
 				{Email: "verified@company.com", Primary: false, Verified: true},
 			},
+			orgsResp:              []githubOrgResponse{},
 			expectedEmail:         "verified@company.com",
 			expectedEmailVerified: true,
 			expectedDomain:        "company.com",
-			expectedOrgs:          nil, // Orgs not fetched when allowedOrgs is empty
+			expectedOrgs:          []string{},
 		},
 		{
-			name: "domain_validation_success",
-			userResp: githubUserResponse{
-				ID:    12345,
-				Login: "testuser",
-				Email: "user@company.com",
-			},
-			allowedDomains:        []string{"company.com"},
-			expectedEmail:         "user@company.com",
-			expectedEmailVerified: true,
-			expectedDomain:        "company.com",
-			expectedOrgs:          nil, // Orgs not fetched when allowedOrgs is empty
-		},
-		{
-			name: "domain_validation_failure",
-			userResp: githubUserResponse{
-				ID:    12345,
-				Login: "testuser",
-				Email: "user@other.com",
-			},
-			allowedDomains: []string{"company.com"},
-			wantErr:        true,
-			errContains:    "domain 'other.com' is not allowed",
-		},
-		{
-			name: "org_validation_success",
+			name: "orgs_always_populated",
 			userResp: githubUserResponse{
 				ID:    12345,
 				Login: "testuser",
 				Email: "user@gmail.com",
 			},
-			orgsResp:              []githubOrgResponse{{Login: "allowed-org"}, {Login: "other-org"}},
-			allowedOrgs:           []string{"allowed-org"},
+			orgsResp:              []githubOrgResponse{{Login: "org-a"}, {Login: "org-b"}},
 			expectedEmail:         "user@gmail.com",
 			expectedEmailVerified: true,
 			expectedDomain:        "gmail.com",
-			expectedOrgs:          []string{"allowed-org", "other-org"},
-		},
-		{
-			name: "org_validation_failure",
-			userResp: githubUserResponse{
-				ID:    12345,
-				Login: "testuser",
-				Email: "user@gmail.com",
-			},
-			orgsResp:    []githubOrgResponse{{Login: "other-org"}},
-			allowedOrgs: []string{"required-org"},
-			wantErr:     true,
-			errContains: "not a member of any allowed organization",
-		},
-		{
-			name: "user_with_no_orgs_restriction",
-			userResp: githubUserResponse{
-				ID:    12345,
-				Login: "testuser",
-				Email: "user@gmail.com",
-			},
-			expectedEmail:         "user@gmail.com",
-			expectedEmailVerified: true,
-			expectedDomain:        "gmail.com",
-			expectedOrgs:          nil, // Orgs not fetched when allowedOrgs is empty
+			expectedOrgs:          []string{"org-a", "org-b"},
 		},
 	}
 
@@ -172,7 +122,6 @@ func TestGitHubProvider_UserInfo(t *testing.T) {
 			}))
 			defer server.Close()
 
-			// Create provider with test server endpoints and allowedOrgs
 			provider := &GitHubProvider{
 				config: oauth2.Config{
 					ClientID:     "test-client",
@@ -184,29 +133,19 @@ func TestGitHubProvider_UserInfo(t *testing.T) {
 						TokenURL: server.URL + "/token",
 					},
 				},
-				apiBaseURL:     server.URL,
-				allowedDomains: tt.allowedDomains,
-				allowedOrgs:    tt.allowedOrgs,
+				apiBaseURL: server.URL,
 			}
 
 			token := &oauth2.Token{AccessToken: "test-token"}
-			userInfo, err := provider.UserInfo(context.Background(), token)
-
-			if tt.wantErr {
-				require.Error(t, err)
-				if tt.errContains != "" {
-					assert.Contains(t, err.Error(), tt.errContains)
-				}
-				return
-			}
+			identity, err := provider.UserInfo(context.Background(), token)
 
 			require.NoError(t, err)
-			require.NotNil(t, userInfo)
-			assert.Equal(t, "github", userInfo.ProviderType)
-			assert.Equal(t, tt.expectedEmail, userInfo.Email)
-			assert.Equal(t, tt.expectedEmailVerified, userInfo.EmailVerified)
-			assert.Equal(t, tt.expectedDomain, userInfo.Domain)
-			assert.Equal(t, tt.expectedOrgs, userInfo.Organizations)
+			require.NotNil(t, identity)
+			assert.Equal(t, "github", identity.ProviderType)
+			assert.Equal(t, tt.expectedEmail, identity.Email)
+			assert.Equal(t, tt.expectedEmailVerified, identity.EmailVerified)
+			assert.Equal(t, tt.expectedDomain, identity.Domain)
+			assert.Equal(t, tt.expectedOrgs, identity.Organizations)
 		})
 	}
 }

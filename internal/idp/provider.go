@@ -2,16 +2,14 @@ package idp
 
 import (
 	"context"
-	"fmt"
-	"slices"
-	"strings"
 
 	"golang.org/x/oauth2"
 )
 
-// UserInfo represents user information from any identity provider.
-// ProviderType is included for multi-IDP readiness.
-type UserInfo struct {
+// Identity represents user identity as reported by an identity provider.
+// Providers populate this with identity information only — access control
+// (domain, org checks) is handled by the authorization layer.
+type Identity struct {
 	ProviderType  string   `json:"provider_type"`
 	Subject       string   `json:"sub"`
 	Email         string   `json:"email"`
@@ -23,7 +21,6 @@ type UserInfo struct {
 }
 
 // Provider abstracts identity provider operations.
-// Access control (allowed domains, orgs) is configured at construction time.
 type Provider interface {
 	// Type returns the provider type identifier (e.g., "google", "azure", "github", "oidc").
 	Type() string
@@ -34,47 +31,7 @@ type Provider interface {
 	// ExchangeCode exchanges an authorization code for tokens.
 	ExchangeCode(ctx context.Context, code string) (*oauth2.Token, error)
 
-	// UserInfo fetches user information and validates access.
-	// Returns error if user doesn't meet access requirements (domain, org membership).
-	UserInfo(ctx context.Context, token *oauth2.Token) (*UserInfo, error)
-}
-
-// ValidateDomain checks if the domain is in the allowed list.
-// Returns nil if allowedDomains is empty (no restriction) or domain is allowed.
-func ValidateDomain(domain string, allowedDomains []string) error {
-	if len(allowedDomains) == 0 {
-		return nil
-	}
-	if !slices.Contains(allowedDomains, domain) {
-		return fmt.Errorf("domain '%s' is not allowed. Contact your administrator", domain)
-	}
-	return nil
-}
-
-// ParseClientRequest parses MCP client registration metadata.
-// This is provider-agnostic as it deals with MCP client registration, not IDP.
-func ParseClientRequest(metadata map[string]any) (redirectURIs []string, scopes []string, err error) {
-	// Extract redirect URIs
-	redirectURIs = []string{}
-	if uris, ok := metadata["redirect_uris"].([]any); ok {
-		for _, uri := range uris {
-			if uriStr, ok := uri.(string); ok {
-				redirectURIs = append(redirectURIs, uriStr)
-			}
-		}
-	}
-
-	if len(redirectURIs) == 0 {
-		return nil, nil, fmt.Errorf("no valid redirect URIs provided")
-	}
-
-	// Extract scopes, default to read/write if not provided
-	scopes = []string{"read", "write"} // Default MCP scopes
-	if clientScopes, ok := metadata["scope"].(string); ok {
-		if strings.TrimSpace(clientScopes) != "" {
-			scopes = strings.Fields(clientScopes)
-		}
-	}
-
-	return redirectURIs, scopes, nil
+	// UserInfo fetches user identity from the provider.
+	// Returns identity information only — no access control validation.
+	UserInfo(ctx context.Context, token *oauth2.Token) (*Identity, error)
 }

@@ -87,7 +87,7 @@ func TestNewProvider(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			provider, err := NewProvider(tt.cfg, nil)
+			provider, err := NewProvider(tt.cfg)
 
 			if tt.wantErr {
 				require.Error(t, err)

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -38,7 +39,7 @@ type AuthHandlers struct {
 
 // UpstreamOAuthState stores OAuth state during upstream authentication flow (MCP host → mcp-front)
 type UpstreamOAuthState struct {
-	UserInfo     idp.UserInfo `json:"user_info"`
+	Identity     idp.Identity `json:"identity"`
 	ClientID     string       `json:"client_id"`
 	RedirectURI  string       `json:"redirect_uri"`
 	Scopes       []string     `json:"scopes"`
@@ -101,16 +102,29 @@ func (h *AuthHandlers) ProtectedResourceMetadataHandler(w http.ResponseWriter, r
 		return
 	}
 
-	// Workaround mode: return base issuer metadata for broken clients
+	// Workaround mode: return base issuer metadata for broken clients.
+	// This intentionally uses the issuer as the resource (no per-service scoping)
+	// because broken clients don't implement RFC 8707 resource indicators.
+	issuer := h.authConfig.Issuer
 	log.LogWarnWithFields("oauth", "Serving base protected resource metadata (dangerouslyAcceptIssuerAudience enabled)", map[string]any{
-		"issuer": h.authConfig.Issuer,
+		"issuer": issuer,
 	})
 
-	metadata, err := oauth.ProtectedResourceMetadata(h.authConfig.Issuer)
+	authzServerURL, err := oauth.AuthorizationServerMetadataURI(issuer)
 	if err != nil {
 		log.LogError("Failed to build protected resource metadata: %v", err)
 		jsonwriter.WriteInternalServerError(w, "Internal server error")
 		return
+	}
+
+	metadata := map[string]any{
+		"resource":              issuer,
+		"authorization_servers": []string{issuer},
+		"_links": map[string]any{
+			"oauth-authorization-server": map[string]string{
+				"href": authzServerURL,
+			},
+		},
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -329,10 +343,21 @@ func (h *AuthHandlers) IDPCallbackHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Validate user and fetch user info
-	userInfo, err := h.idpProvider.UserInfo(ctx, token)
+	// Fetch user identity from IDP
+	identity, err := h.idpProvider.UserInfo(ctx, token)
 	if err != nil {
-		log.LogError("User validation failed: %v", err)
+		log.LogError("Failed to fetch user identity: %v", err)
+		if !isBrowserFlow && ar != nil {
+			h.oauthProvider.WriteAuthorizeError(ctx, w, ar, fosite.ErrServerError.WithHint("Failed to fetch user identity"))
+		} else {
+			jsonwriter.WriteInternalServerError(w, "Authentication failed")
+		}
+		return
+	}
+
+	// Validate access (domain/org restrictions)
+	if err := h.validateAccess(identity); err != nil {
+		log.LogError("Access denied: %v", err)
 		if !isBrowserFlow && ar != nil {
 			h.oauthProvider.WriteAuthorizeError(ctx, w, ar, fosite.ErrAccessDenied.WithHint(err.Error()))
 		} else {
@@ -341,12 +366,12 @@ func (h *AuthHandlers) IDPCallbackHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	log.Logf("User authenticated: %s", userInfo.Email)
+	log.Logf("User authenticated: %s", identity.Email)
 
 	// Store user in database
-	if err := h.storage.UpsertUser(ctx, userInfo.Email); err != nil {
+	if err := h.storage.UpsertUser(ctx, identity.Email); err != nil {
 		log.LogWarnWithFields("auth", "Failed to track user", map[string]any{
-			"email": userInfo.Email,
+			"email": identity.Email,
 			"error": err.Error(),
 		})
 	}
@@ -357,8 +382,8 @@ func (h *AuthHandlers) IDPCallbackHandler(w http.ResponseWriter, r *http.Request
 		sessionDuration := 24 * time.Hour
 
 		sessionData := browserauth.SessionCookie{
-			Email:    userInfo.Email,
-			Provider: userInfo.ProviderType,
+			Email:    identity.Email,
+			Provider: identity.ProviderType,
 			Expires:  time.Now().Add(sessionDuration),
 		}
 
@@ -390,7 +415,7 @@ func (h *AuthHandlers) IDPCallbackHandler(w http.ResponseWriter, r *http.Request
 		})
 
 		log.LogInfoWithFields("auth", "Browser SSO session created", map[string]any{
-			"user":      userInfo.Email,
+			"user":      identity.Email,
 			"duration":  sessionDuration,
 			"returnURL": returnURL,
 		})
@@ -412,7 +437,7 @@ func (h *AuthHandlers) IDPCallbackHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	if needsServiceAuth {
-		stateData, err := h.signUpstreamOAuthState(ar, *userInfo)
+		stateData, err := h.signUpstreamOAuthState(ar, *identity)
 		if err != nil {
 			log.LogError("Failed to sign OAuth state: %v", err)
 			h.oauthProvider.WriteAuthorizeError(ctx, w, ar, fosite.ErrServerError.WithHint("Failed to prepare service authentication"))
@@ -433,7 +458,7 @@ func (h *AuthHandlers) IDPCallbackHandler(w http.ResponseWriter, r *http.Request
 				fosite.RefreshToken: time.Now().Add(h.authConfig.RefreshTokenTTL),
 			},
 		},
-		UserInfo: *userInfo,
+		Identity: *identity,
 	}
 
 	// Accept the authorization request
@@ -515,7 +540,7 @@ func (h *AuthHandlers) RegisterHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Parse client request
-	redirectURIs, scopes, err := idp.ParseClientRequest(metadata)
+	redirectURIs, scopes, err := oauth.ParseClientRegistration(metadata)
 	if err != nil {
 		log.LogError("Client request parsing error: %v", err)
 		jsonwriter.WriteBadRequest(w, err.Error())
@@ -564,9 +589,9 @@ func (h *AuthHandlers) RegisterHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // signUpstreamOAuthState signs upstream OAuth state for secure storage
-func (h *AuthHandlers) signUpstreamOAuthState(ar fosite.AuthorizeRequester, userInfo idp.UserInfo) (string, error) {
+func (h *AuthHandlers) signUpstreamOAuthState(ar fosite.AuthorizeRequester, identity idp.Identity) (string, error) {
 	state := UpstreamOAuthState{
-		UserInfo:     userInfo,
+		Identity:     identity,
 		ClientID:     ar.GetClient().GetID(),
 		RedirectURI:  ar.GetRedirectURI().String(),
 		Scopes:       ar.GetRequestedScopes(),
@@ -584,6 +609,28 @@ func (h *AuthHandlers) verifyUpstreamOAuthState(signedState string) (*UpstreamOA
 		return nil, err
 	}
 	return &state, nil
+}
+
+// validateAccess checks whether an authenticated identity meets the configured access policy.
+func (h *AuthHandlers) validateAccess(identity *idp.Identity) error {
+	if len(h.authConfig.AllowedDomains) > 0 &&
+		!slices.Contains(h.authConfig.AllowedDomains, identity.Domain) {
+		return fmt.Errorf("domain '%s' is not allowed. Contact your administrator", identity.Domain)
+	}
+	if len(h.authConfig.IDP.AllowedOrgs) > 0 &&
+		!hasOverlap(identity.Organizations, h.authConfig.IDP.AllowedOrgs) {
+		return fmt.Errorf("user is not a member of any allowed organization. Contact your administrator")
+	}
+	return nil
+}
+
+func hasOverlap(a, b []string) bool {
+	for _, x := range a {
+		if slices.Contains(b, x) {
+			return true
+		}
+	}
+	return false
 }
 
 // ServiceSelectionHandler shows the interstitial page for selecting services to connect
@@ -606,7 +653,7 @@ func (h *AuthHandlers) ServiceSelectionHandler(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	userEmail := upstreamOAuthState.UserInfo.Email
+	userEmail := upstreamOAuthState.Identity.Email
 
 	// Prepare template data
 	returnURL := fmt.Sprintf("/oauth/services?state=%s", url.QueryEscape(signedState))
@@ -748,7 +795,7 @@ func (h *AuthHandlers) CompleteOAuthHandler(w http.ResponseWriter, r *http.Reque
 				fosite.RefreshToken: time.Now().Add(h.authConfig.RefreshTokenTTL),
 			},
 		},
-		UserInfo: upstreamOAuthState.UserInfo,
+		Identity: upstreamOAuthState.Identity,
 	}
 	ar.SetSession(session)
 

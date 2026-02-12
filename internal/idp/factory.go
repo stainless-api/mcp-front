@@ -7,15 +7,13 @@ import (
 )
 
 // NewProvider creates a Provider based on the IDPConfig.
-// allowedDomains configures domain-based access control for all provider types.
-func NewProvider(cfg config.IDPConfig, allowedDomains []string) (Provider, error) {
+func NewProvider(cfg config.IDPConfig) (Provider, error) {
 	switch cfg.Provider {
 	case "google":
 		return NewGoogleProvider(
 			cfg.ClientID,
 			string(cfg.ClientSecret),
 			cfg.RedirectURI,
-			allowedDomains,
 		), nil
 
 	case "azure":
@@ -24,7 +22,6 @@ func NewProvider(cfg config.IDPConfig, allowedDomains []string) (Provider, error
 			cfg.ClientID,
 			string(cfg.ClientSecret),
 			cfg.RedirectURI,
-			allowedDomains,
 		)
 
 	case "github":
@@ -32,8 +29,6 @@ func NewProvider(cfg config.IDPConfig, allowedDomains []string) (Provider, error
 			cfg.ClientID,
 			string(cfg.ClientSecret),
 			cfg.RedirectURI,
-			allowedDomains,
-			cfg.AllowedOrgs,
 		), nil
 
 	case "oidc":
@@ -47,7 +42,6 @@ func NewProvider(cfg config.IDPConfig, allowedDomains []string) (Provider, error
 			ClientSecret:     string(cfg.ClientSecret),
 			RedirectURI:      cfg.RedirectURI,
 			Scopes:           cfg.Scopes,
-			AllowedDomains:   allowedDomains,
 		})
 
 	default:

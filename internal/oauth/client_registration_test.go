@@ -1,4 +1,4 @@
-package idp
+package oauth
 
 import (
 	"testing"
@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestParseClientRequest(t *testing.T) {
+func TestParseClientRegistration(t *testing.T) {
 	tests := []struct {
 		name             string
 		metadata         map[string]any
@@ -95,7 +95,7 @@ func TestParseClientRequest(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			redirectURIs, scopes, err := ParseClientRequest(tt.metadata)
+			redirectURIs, scopes, err := ParseClientRegistration(tt.metadata)
 
 			if tt.wantErr {
 				require.Error(t, err)

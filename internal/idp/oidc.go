@@ -30,16 +30,13 @@ type OIDCConfig struct {
 	RedirectURI  string
 	Scopes       []string
 
-	// Access control.
-	AllowedDomains []string
 }
 
 // OIDCProvider implements the Provider interface for OIDC-compliant identity providers.
 type OIDCProvider struct {
-	providerType   string
-	config         oauth2.Config
-	userInfoURL    string
-	allowedDomains []string
+	providerType string
+	config       oauth2.Config
+	userInfoURL  string
 }
 
 // oidcDiscoveryDocument represents the OIDC discovery document.
@@ -103,8 +100,7 @@ func NewOIDCProvider(cfg OIDCConfig) (*OIDCProvider, error) {
 				TokenURL: tokenURL,
 			},
 		},
-		userInfoURL:    userInfoURL,
-		allowedDomains: cfg.AllowedDomains,
+		userInfoURL: userInfoURL,
 	}, nil
 }
 
@@ -150,9 +146,9 @@ func (p *OIDCProvider) ExchangeCode(ctx context.Context, code string) (*oauth2.T
 	return p.config.Exchange(ctx, code)
 }
 
-// UserInfo fetches user information from the OIDC userinfo endpoint.
+// UserInfo fetches user identity from the OIDC userinfo endpoint.
 // TODO: Add ID token validation as optimization (avoids network call).
-func (p *OIDCProvider) UserInfo(ctx context.Context, token *oauth2.Token) (*UserInfo, error) {
+func (p *OIDCProvider) UserInfo(ctx context.Context, token *oauth2.Token) (*Identity, error) {
 	client := p.config.Client(ctx, token)
 	resp, err := client.Get(p.userInfoURL)
 	if err != nil {
@@ -171,12 +167,7 @@ func (p *OIDCProvider) UserInfo(ctx context.Context, token *oauth2.Token) (*User
 
 	domain := emailutil.ExtractDomain(userInfoResp.Email)
 
-	// Validate domain if configured
-	if err := ValidateDomain(domain, p.allowedDomains); err != nil {
-		return nil, err
-	}
-
-	return &UserInfo{
+	return &Identity{
 		ProviderType:  p.providerType,
 		Subject:       userInfoResp.Sub,
 		Email:         userInfoResp.Email,

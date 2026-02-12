@@ -14,10 +14,8 @@ import (
 // GitHubProvider implements the Provider interface for GitHub OAuth.
 // GitHub uses OAuth 2.0 (not OIDC) and has its own API for user info and org membership.
 type GitHubProvider struct {
-	config         oauth2.Config
-	apiBaseURL     string   // defaults to https://api.github.com, can be overridden for testing
-	allowedDomains []string // email domains users must belong to (empty = no restriction)
-	allowedOrgs    []string // organizations users must be members of (empty = no restriction)
+	config     oauth2.Config
+	apiBaseURL string // defaults to https://api.github.com, can be overridden for testing
 }
 
 // githubUserResponse represents GitHub's user API response.
@@ -42,7 +40,7 @@ type githubOrgResponse struct {
 }
 
 // NewGitHubProvider creates a new GitHub OAuth provider.
-func NewGitHubProvider(clientID, clientSecret, redirectURI string, allowedDomains, allowedOrgs []string) *GitHubProvider {
+func NewGitHubProvider(clientID, clientSecret, redirectURI string) *GitHubProvider {
 	return &GitHubProvider{
 		config: oauth2.Config{
 			ClientID:     clientID,
@@ -51,9 +49,7 @@ func NewGitHubProvider(clientID, clientSecret, redirectURI string, allowedDomain
 			Scopes:       []string{"user:email", "read:org"},
 			Endpoint:     github.Endpoint,
 		},
-		apiBaseURL:     "https://api.github.com",
-		allowedDomains: allowedDomains,
-		allowedOrgs:    allowedOrgs,
+		apiBaseURL: "https://api.github.com",
 	}
 }
 
@@ -72,13 +68,11 @@ func (p *GitHubProvider) ExchangeCode(ctx context.Context, code string) (*oauth2
 	return p.config.Exchange(ctx, code)
 }
 
-// UserInfo fetches user information from GitHub's API.
-// Validates domain and organization membership based on construction-time config.
-// TODO: Consider caching org membership to reduce API calls.
-func (p *GitHubProvider) UserInfo(ctx context.Context, token *oauth2.Token) (*UserInfo, error) {
+// UserInfo fetches user identity from GitHub's API.
+// Always fetches organizations so the authorization layer can check membership.
+func (p *GitHubProvider) UserInfo(ctx context.Context, token *oauth2.Token) (*Identity, error) {
 	client := p.config.Client(ctx, token)
 
-	// Fetch user profile
 	user, err := p.fetchUser(client)
 	if err != nil {
 		return nil, err
@@ -99,38 +93,12 @@ func (p *GitHubProvider) UserInfo(ctx context.Context, token *oauth2.Token) (*Us
 
 	domain := emailutil.ExtractDomain(email)
 
-	// Validate domain if configured
-	if err := ValidateDomain(domain, p.allowedDomains); err != nil {
-		return nil, err
+	orgs, err := p.fetchOrganizations(client)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user organizations: %w", err)
 	}
 
-	// Fetch organizations only if org validation is configured
-	var orgs []string
-	if len(p.allowedOrgs) > 0 {
-		orgs, err = p.fetchOrganizations(client)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get user organizations: %w", err)
-		}
-
-		// Validate org membership
-		hasAllowedOrg := false
-		for _, org := range orgs {
-			for _, allowed := range p.allowedOrgs {
-				if org == allowed {
-					hasAllowedOrg = true
-					break
-				}
-			}
-			if hasAllowedOrg {
-				break
-			}
-		}
-		if !hasAllowedOrg {
-			return nil, fmt.Errorf("user is not a member of any allowed organization. Contact your administrator")
-		}
-	}
-
-	return &UserInfo{
+	return &Identity{
 		ProviderType:  "github",
 		Subject:       fmt.Sprintf("%d", user.ID),
 		Email:         email,

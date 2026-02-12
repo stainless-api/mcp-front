@@ -145,45 +145,15 @@ func TestOIDCProvider_UserInfo(t *testing.T) {
 	require.NoError(t, err)
 
 	token := &oauth2.Token{AccessToken: "test-token"}
-	userInfo, err := provider.UserInfo(context.Background(), token)
+	identity, err := provider.UserInfo(context.Background(), token)
 
 	require.NoError(t, err)
-	require.NotNil(t, userInfo)
-	assert.Equal(t, "oidc", userInfo.ProviderType)
-	assert.Equal(t, "12345", userInfo.Subject)
-	assert.Equal(t, "user@example.com", userInfo.Email)
-	assert.Equal(t, "example.com", userInfo.Domain)
-	assert.True(t, userInfo.EmailVerified)
-}
-
-func TestOIDCProvider_UserInfo_DomainValidation(t *testing.T) {
-	userInfoServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		resp := oidcUserInfoResponse{
-			Sub:   "12345",
-			Email: "user@other.com",
-		}
-		err := json.NewEncoder(w).Encode(resp)
-		require.NoError(t, err)
-	}))
-	defer userInfoServer.Close()
-
-	provider, err := NewOIDCProvider(OIDCConfig{
-		AuthorizationURL: "https://idp.example.com/authorize",
-		TokenURL:         "https://idp.example.com/token",
-		UserInfoURL:      userInfoServer.URL,
-		ClientID:         "client-id",
-		ClientSecret:     "client-secret",
-		RedirectURI:      "https://example.com/callback",
-		AllowedDomains:   []string{"example.com"},
-	})
-	require.NoError(t, err)
-
-	token := &oauth2.Token{AccessToken: "test-token"}
-	_, err = provider.UserInfo(context.Background(), token)
-
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "domain 'other.com' is not allowed")
+	require.NotNil(t, identity)
+	assert.Equal(t, "oidc", identity.ProviderType)
+	assert.Equal(t, "12345", identity.Subject)
+	assert.Equal(t, "user@example.com", identity.Email)
+	assert.Equal(t, "example.com", identity.Domain)
+	assert.True(t, identity.EmailVerified)
 }
 
 func TestOIDCProvider_DefaultScopes(t *testing.T) {

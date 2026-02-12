@@ -181,8 +181,8 @@ func NewValidateTokenMiddleware(provider fosite.OAuth2Provider, issuer string, a
 			var userEmail string
 			if accessRequest != nil {
 				if reqSession, ok := accessRequest.GetSession().(*oauthsession.Session); ok {
-					if reqSession.UserInfo.Email != "" {
-						userEmail = reqSession.UserInfo.Email
+					if reqSession.Identity.Email != "" {
+						userEmail = reqSession.Identity.Email
 					}
 				}
 			}
