@@ -26,16 +26,16 @@ import (
 
 // TestBasicOAuthFlow tests the basic OAuth server functionality
 func TestBasicOAuthFlow(t *testing.T) {
-	// Start mcp-front with OAuth config
-	startMCPFront(t, "config/config.oauth-test.json",
+	cfg := buildTestConfig("http://localhost:8080", "mcp-front-oauth-test",
+		testOAuthConfigFromEnv(),
+		map[string]any{"postgres": testPostgresServer()},
+	)
+	startMCPFront(t, writeTestConfig(t, cfg),
 		"JWT_SECRET=test-jwt-secret-32-bytes-exactly!",
 		"ENCRYPTION_KEY=test-encryption-key-32-bytes-ok!",
 		"GOOGLE_CLIENT_ID=test-client-id-for-oauth",
 		"GOOGLE_CLIENT_SECRET=test-client-secret-for-oauth",
 		"MCP_FRONT_ENV=development",
-		"GOOGLE_OAUTH_AUTH_URL=http://localhost:9090/auth",
-		"GOOGLE_OAUTH_TOKEN_URL=http://localhost:9090/token",
-		"GOOGLE_USERINFO_URL=http://localhost:9090/userinfo",
 	)
 
 	// Wait for startup
@@ -84,6 +84,12 @@ func TestBasicOAuthFlow(t *testing.T) {
 
 // TestJWTSecretValidation tests JWT secret length requirements
 func TestJWTSecretValidation(t *testing.T) {
+	oauthCfg := buildTestConfig("http://localhost:8080", "mcp-front-oauth-test",
+		testOAuthConfigFromEnv(),
+		map[string]any{"postgres": testPostgresServer()},
+	)
+	configPath := writeTestConfig(t, oauthCfg)
+
 	tests := []struct {
 		name       string
 		secret     string
@@ -98,8 +104,7 @@ func TestJWTSecretValidation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 
-			// Start mcp-front with specific JWT secret
-			mcpCmd := exec.Command("../cmd/mcp-front/mcp-front", "-config", "config/config.oauth-test.json")
+			mcpCmd := exec.Command("../cmd/mcp-front/mcp-front", "-config", configPath)
 			mcpCmd.Env = []string{
 				"PATH=" + os.Getenv("PATH"),
 				"JWT_SECRET=" + tt.secret,
@@ -799,15 +804,15 @@ func TestCORSHeaders(t *testing.T) {
 // TestToolAdvertisementWithUserTokens tests that tools are advertised even without user tokens
 // but fail gracefully when invoked without the required token, and succeed with the token
 func TestToolAdvertisementWithUserTokens(t *testing.T) {
-	// Start OAuth server with user token configuration
-	startMCPFront(t, "config/config.oauth-usertoken-tools-test.json",
+	cfg := buildTestConfig("http://localhost:8080", "mcp-front-oauth-usertoken-test",
+		testOAuthConfigFromEnv(),
+		map[string]any{"postgres": testPostgresServer(withUserToken())},
+	)
+	startMCPFront(t, writeTestConfig(t, cfg),
 		"JWT_SECRET=demo-jwt-secret-32-bytes-exactly!",
 		"ENCRYPTION_KEY=test-encryption-key-32-bytes-ok!",
 		"GOOGLE_CLIENT_ID=test-client-id-oauth",
 		"GOOGLE_CLIENT_SECRET=test-client-secret-oauth",
-		"GOOGLE_OAUTH_AUTH_URL=http://localhost:9090/auth",
-		"GOOGLE_OAUTH_TOKEN_URL=http://localhost:9090/token",
-		"GOOGLE_USERINFO_URL=http://localhost:9090/userinfo",
 		"MCP_FRONT_ENV=development",
 		"LOG_LEVEL=debug",
 	)
@@ -851,7 +856,7 @@ func TestToolAdvertisementWithUserTokens(t *testing.T) {
 			}
 		}
 
-		assert.Contains(t, toolNames, "query", "Should have query tool")
+		assert.Contains(t, toolNames, "execute_sql", "Should have execute_sql tool")
 		t.Logf("Successfully advertised tools without user token: %v", toolNames)
 	})
 
@@ -867,7 +872,7 @@ func TestToolAdvertisementWithUserTokens(t *testing.T) {
 
 		// Try to invoke a tool without user token
 		queryParams := map[string]any{
-			"name": "query",
+			"name": "execute_sql",
 			"arguments": map[string]any{
 				"sql": "SELECT 1",
 			},
@@ -1001,7 +1006,7 @@ func TestToolAdvertisementWithUserTokens(t *testing.T) {
 
 		// Call the query tool with a simple query
 		queryParams := map[string]any{
-			"name": "query",
+			"name": "execute_sql",
 			"arguments": map[string]any{
 				"sql": "SELECT 1 as test",
 			},
@@ -1034,8 +1039,13 @@ func TestToolAdvertisementWithUserTokens(t *testing.T) {
 // Helper functions
 
 func startOAuthServer(t *testing.T, env map[string]string) *exec.Cmd {
-	// Start with OAuth config
-	mcpCmd := exec.Command("../cmd/mcp-front/mcp-front", "-config", "config/config.oauth-test.json")
+	cfg := buildTestConfig("http://localhost:8080", "mcp-front-oauth-test",
+		testOAuthConfigFromEnv(),
+		map[string]any{"postgres": testPostgresServer()},
+	)
+	configPath := writeTestConfig(t, cfg)
+
+	mcpCmd := exec.Command("../cmd/mcp-front/mcp-front", "-config", configPath)
 
 	// Set default environment
 	mcpCmd.Env = []string{
@@ -1044,9 +1054,6 @@ func startOAuthServer(t *testing.T, env map[string]string) *exec.Cmd {
 		"ENCRYPTION_KEY=test-encryption-key-32-bytes-ok!",
 		"GOOGLE_CLIENT_ID=test-client-id-oauth",
 		"GOOGLE_CLIENT_SECRET=test-client-secret-oauth",
-		"GOOGLE_OAUTH_AUTH_URL=http://localhost:9090/auth",
-		"GOOGLE_OAUTH_TOKEN_URL=http://localhost:9090/token",
-		"GOOGLE_USERINFO_URL=http://localhost:9090/userinfo",
 	}
 
 	// Override with provided env
@@ -1085,9 +1092,6 @@ func startOAuthServerWithTokenConfig(t *testing.T) *exec.Cmd {
 		"ENCRYPTION_KEY=test-encryption-key-32-bytes-ok!",
 		"GOOGLE_CLIENT_ID=test-client-id-oauth",
 		"GOOGLE_CLIENT_SECRET=test-client-secret-oauth",
-		"GOOGLE_OAUTH_AUTH_URL=http://localhost:9090/auth",
-		"GOOGLE_OAUTH_TOKEN_URL=http://localhost:9090/token",
-		"GOOGLE_USERINFO_URL=http://localhost:9090/userinfo",
 		"MCP_FRONT_ENV=development",
 	}
 
@@ -1198,9 +1202,6 @@ func TestServiceOAuthIntegration(t *testing.T) {
 		"GOOGLE_CLIENT_SECRET=test-client-secret-oauth",
 		"TEST_SERVICE_CLIENT_ID=service-client-id",
 		"TEST_SERVICE_CLIENT_SECRET=service-client-secret",
-		"GOOGLE_OAUTH_AUTH_URL=http://localhost:9090/auth",
-		"GOOGLE_OAUTH_TOKEN_URL=http://localhost:9090/token",
-		"GOOGLE_USERINFO_URL=http://localhost:9090/userinfo",
 		"MCP_FRONT_ENV=development",
 	)
 
@@ -1396,9 +1397,6 @@ func TestRFC8707ResourceIndicators(t *testing.T) {
 		"GOOGLE_CLIENT_ID=test-client-id-for-oauth",
 		"GOOGLE_CLIENT_SECRET=test-client-secret-for-oauth",
 		"MCP_FRONT_ENV=development",
-		"GOOGLE_OAUTH_AUTH_URL=http://localhost:9090/auth",
-		"GOOGLE_OAUTH_TOKEN_URL=http://localhost:9090/token",
-		"GOOGLE_USERINFO_URL=http://localhost:9090/userinfo",
 	)
 
 	waitForMCPFront(t)

@@ -25,12 +25,24 @@
   "mcpServers": {
     "postgres": {
       "transportType": "stdio",
-      "command": "docker", 
+      "command": "docker",
       "args": [
-        "run", "--rm", "-i",
-        "mcp/postgres:latest",
-        "postgresql://user:password@localhost:5432/database"
-      ]
+        "run", "--rm", "-i", "--network", "host",
+        "-e", "POSTGRES_HOST",
+        "-e", "POSTGRES_PORT",
+        "-e", "POSTGRES_DATABASE",
+        "-e", "POSTGRES_USER",
+        "-e", "POSTGRES_PASSWORD",
+        "us-central1-docker.pkg.dev/database-toolbox/toolbox/toolbox:latest",
+        "--stdio", "--prebuilt", "postgres"
+      ],
+      "env": {
+        "POSTGRES_HOST": {"$env": "POSTGRES_HOST"},
+        "POSTGRES_PORT": {"$env": "POSTGRES_PORT"},
+        "POSTGRES_DATABASE": {"$env": "POSTGRES_DATABASE"},
+        "POSTGRES_USER": {"$env": "POSTGRES_USER"},
+        "POSTGRES_PASSWORD": {"$env": "POSTGRES_PASSWORD"}
+      }
     },
     "notion": {
       "transportType": "stdio",

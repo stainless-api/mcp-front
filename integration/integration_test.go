@@ -15,11 +15,11 @@ func TestIntegration(t *testing.T) {
 	waitForDB(t)
 
 	trace(t, "Starting mcp-front")
-	startMCPFront(t, "config/config.test.json",
-		"GOOGLE_OAUTH_AUTH_URL=http://localhost:9090/auth",
-		"GOOGLE_OAUTH_TOKEN_URL=http://localhost:9090/token",
-		"GOOGLE_USERINFO_URL=http://localhost:9090/userinfo",
+	cfg := buildTestConfig("http://localhost:8080", "mcp-front-test",
+		nil,
+		map[string]any{"postgres": testPostgresServer(withBearerTokens("test-token", "alt-test-token"), withLogEnabled())},
 	)
+	startMCPFront(t, writeTestConfig(t, cfg))
 
 	waitForMCPFront(t)
 	trace(t, "mcp-front is ready")
@@ -49,7 +49,7 @@ func TestIntegration(t *testing.T) {
 	t.Log("Connected to MCP server with session")
 
 	queryParams := map[string]any{
-		"name": "query",
+		"name": "execute_sql",
 		"arguments": map[string]any{
 			"sql": "SELECT COUNT(*) as user_count FROM users",
 		},

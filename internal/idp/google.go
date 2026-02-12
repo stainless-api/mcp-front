@@ -30,16 +30,31 @@ type googleUserInfoResponse struct {
 }
 
 // NewGoogleProvider creates a new Google OAuth provider.
-func NewGoogleProvider(clientID, clientSecret, redirectURI string) *GoogleProvider {
+// Optional endpoint overrides (authorizationURL, tokenURL, userInfoURL) allow
+// pointing at a non-Google server — useful for testing or corporate proxies.
+func NewGoogleProvider(clientID, clientSecret, redirectURI, authorizationURL, tokenURL, userInfoURL string) *GoogleProvider {
+	endpoint := google.Endpoint
+	if authorizationURL != "" {
+		endpoint.AuthURL = authorizationURL
+	}
+	if tokenURL != "" {
+		endpoint.TokenURL = tokenURL
+	}
+
+	uiURL := "https://www.googleapis.com/oauth2/v2/userinfo"
+	if userInfoURL != "" {
+		uiURL = userInfoURL
+	}
+
 	return &GoogleProvider{
 		config: oauth2.Config{
 			ClientID:     clientID,
 			ClientSecret: clientSecret,
 			RedirectURL:  redirectURI,
 			Scopes:       []string{"openid", "profile", "email"},
-			Endpoint:     google.Endpoint,
+			Endpoint:     endpoint,
 		},
-		userInfoURL: "https://www.googleapis.com/oauth2/v2/userinfo",
+		userInfoURL: uiURL,
 	}
 }
 

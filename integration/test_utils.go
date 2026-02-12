@@ -19,24 +19,172 @@ import (
 	"time"
 )
 
-// getDockerComposeCommand returns the appropriate docker compose command
-func getDockerComposeCommand() string {
-	// Check if docker compose v2 is available
-	cmd := exec.Command("docker", "compose", "version")
-	if err := cmd.Run(); err == nil {
-		return "docker compose"
+// ToolboxImage is the Docker image for the MCP Toolbox for Databases.
+// Used as the MCP server backing integration tests. All test configs
+// that reference a postgres MCP server should use this image.
+const ToolboxImage = "us-central1-docker.pkg.dev/database-toolbox/toolbox/toolbox:latest"
+
+// testPostgresDockerArgs returns the Docker args for running the toolbox
+// as a stdio MCP server against the test postgres database.
+func testPostgresDockerArgs() []string {
+	return []string{
+		"run", "--rm", "-i", "--network", "host",
+		"-e", "POSTGRES_HOST=localhost",
+		"-e", "POSTGRES_PORT=15432",
+		"-e", "POSTGRES_DATABASE=testdb",
+		"-e", "POSTGRES_USER=testuser",
+		"-e", "POSTGRES_PASSWORD=testpass",
+		ToolboxImage,
+		"--stdio", "--prebuilt", "postgres",
 	}
-	return "docker-compose"
 }
 
-// execDockerCompose executes docker compose with the given arguments
-func execDockerCompose(args ...string) *exec.Cmd {
-	dcCmd := getDockerComposeCommand()
-	if dcCmd == "docker compose" {
-		allArgs := append([]string{"compose"}, args...)
-		return exec.Command("docker", allArgs...)
+// testPostgresServer returns an MCP server config for the test postgres database.
+// Options can customize auth, logging, etc.
+func testPostgresServer(opts ...serverOption) map[string]any {
+	args := make([]any, len(testPostgresDockerArgs()))
+	for i, a := range testPostgresDockerArgs() {
+		args[i] = a
 	}
-	return exec.Command("docker-compose", args...)
+	s := map[string]any{
+		"transportType": "stdio",
+		"command":       "docker",
+		"args":          args,
+	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
+}
+
+type serverOption func(map[string]any)
+
+func withBearerTokens(tokens ...string) serverOption {
+	return func(s map[string]any) {
+		s["serviceAuths"] = []map[string]any{
+			{"type": "bearer", "tokens": tokens},
+		}
+	}
+}
+
+func withBasicAuth(username, passwordEnvVar string) serverOption {
+	return func(s map[string]any) {
+		auths, _ := s["serviceAuths"].([]map[string]any)
+		auths = append(auths, map[string]any{
+			"type":     "basic",
+			"username": username,
+			"password": map[string]string{"$env": passwordEnvVar},
+		})
+		s["serviceAuths"] = auths
+	}
+}
+
+func withLogEnabled() serverOption {
+	return func(s map[string]any) {
+		s["options"] = map[string]any{"logEnabled": true}
+	}
+}
+
+func withUserToken() serverOption {
+	return func(s map[string]any) {
+		s["env"] = map[string]any{
+			"USER_TOKEN": map[string]string{"$userToken": "{{token}}"},
+		}
+		s["requiresUserToken"] = true
+		s["userAuthentication"] = map[string]any{
+			"type":         "manual",
+			"displayName":  "Test Service",
+			"instructions": "Enter your test token",
+			"helpUrl":      "https://example.com/help",
+		}
+	}
+}
+
+// testOAuthConfig returns a standard OAuth auth config for testing.
+// Uses hardcoded values suitable for integration tests with the fake GCP server.
+func testOAuthConfig() map[string]any {
+	return map[string]any{
+		"kind":      "oauth",
+		"issuer":    "http://localhost:8080",
+		"gcpProject": "test-project",
+		"idp": map[string]any{
+			"provider":         "google",
+			"clientId":         "test-client-id",
+			"clientSecret":     "test-client-secret-for-integration-testing",
+			"redirectUri":      "http://localhost:8080/oauth/callback",
+			"authorizationUrl": "http://localhost:9090/auth",
+			"tokenUrl":         "http://localhost:9090/token",
+			"userInfoUrl":      "http://localhost:9090/userinfo",
+		},
+		"allowedDomains": []string{"test.com"},
+		"allowedOrigins": []string{"https://claude.ai"},
+		"tokenTtl":       "1h",
+		"storage":        "memory",
+		"jwtSecret":      "test-jwt-secret-for-integration-testing-32-chars-long",
+		"encryptionKey":  "test-encryption-key-32-bytes-aes",
+	}
+}
+
+// testOAuthConfigFromEnv returns an OAuth auth config that reads secrets from env vars.
+func testOAuthConfigFromEnv() map[string]any {
+	return map[string]any{
+		"kind":      "oauth",
+		"issuer":    "http://localhost:8080",
+		"gcpProject": "test-project",
+		"idp": map[string]any{
+			"provider":         "google",
+			"clientId":         map[string]string{"$env": "GOOGLE_CLIENT_ID"},
+			"clientSecret":     map[string]string{"$env": "GOOGLE_CLIENT_SECRET"},
+			"redirectUri":      "http://localhost:8080/oauth/callback",
+			"authorizationUrl": "http://localhost:9090/auth",
+			"tokenUrl":         "http://localhost:9090/token",
+			"userInfoUrl":      "http://localhost:9090/userinfo",
+		},
+		"allowedDomains": []string{"test.com", "stainless.com", "claude.ai"},
+		"allowedOrigins": []string{"https://claude.ai"},
+		"tokenTtl":       "1h",
+		"storage":        "memory",
+		"jwtSecret":      map[string]string{"$env": "JWT_SECRET"},
+		"encryptionKey":  map[string]string{"$env": "ENCRYPTION_KEY"},
+	}
+}
+
+// writeTestConfig writes a config map to a temporary JSON file and returns its path.
+// The file is automatically cleaned up when the test finishes.
+func writeTestConfig(t *testing.T, cfg map[string]any) string {
+	t.Helper()
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		t.Fatalf("Failed to marshal test config: %v", err)
+	}
+	f, err := os.CreateTemp(t.TempDir(), "config-*.json")
+	if err != nil {
+		t.Fatalf("Failed to create temp config file: %v", err)
+	}
+	if _, err := f.Write(data); err != nil {
+		t.Fatalf("Failed to write temp config: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("Failed to close temp config: %v", err)
+	}
+	return f.Name()
+}
+
+// buildTestConfig builds a complete mcp-front config map.
+func buildTestConfig(baseURL, name string, auth map[string]any, mcpServers map[string]any) map[string]any {
+	proxy := map[string]any{
+		"baseURL": baseURL,
+		"addr":    ":8080",
+		"name":    name,
+	}
+	if auth != nil {
+		proxy["auth"] = auth
+	}
+	return map[string]any{
+		"version":    "v0.0.1-DEV_EDITION_EXPECT_CHANGES",
+		"proxy":      proxy,
+		"mcpServers": mcpServers,
+	}
 }
 
 // MCPSSEClient simulates an MCP client for testing
@@ -620,79 +768,6 @@ func (s *FakeServiceOAuthServer) Stop() error {
 	return s.server.Shutdown(ctx)
 }
 
-// TestEnvironment manages the complete test environment
-type TestEnvironment struct {
-	dbCmd   *exec.Cmd
-	mcpCmd  *exec.Cmd
-	fakeGCP *FakeGCPServer
-	client  *MCPSSEClient
-}
-
-// SetupTestEnvironment creates and starts all components needed for testing
-func SetupTestEnvironment(t *testing.T) *TestEnvironment {
-	env := &TestEnvironment{}
-
-	// Start test database
-	t.Log("🚀 Starting test database...")
-	env.dbCmd = execDockerCompose("-f", "config/docker-compose.test.yml", "up", "-d")
-	if err := env.dbCmd.Run(); err != nil {
-		t.Fatalf("Failed to start test database: %v", err)
-	}
-
-	time.Sleep(10 * time.Second)
-
-	// Start mock GCP server
-	t.Log("🚀 Starting mock GCP server...")
-	env.fakeGCP = NewFakeGCPServer("9090")
-	if err := env.fakeGCP.Start(); err != nil {
-		t.Fatalf("Failed to start mock GCP server: %v", err)
-	}
-
-	// Start mcp-front
-	t.Log("🚀 Starting mcp-front...")
-	env.mcpCmd = exec.Command("../cmd/mcp-front/mcp-front", "-config", "config/config.test.json")
-
-	// Capture stderr to log file if MCP_LOG_FILE is set
-	if logFile := os.Getenv("MCP_LOG_FILE"); logFile != "" {
-		f, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-		if err == nil {
-			env.mcpCmd.Stderr = f
-			env.mcpCmd.Stdout = f
-			t.Cleanup(func() { f.Close() })
-		}
-	}
-
-	if err := env.mcpCmd.Start(); err != nil {
-		t.Fatalf("Failed to start mcp-front: %v", err)
-	}
-
-	time.Sleep(15 * time.Second)
-
-	// Create and authenticate client
-	env.client = NewMCPSSEClient("http://localhost:8080")
-	if err := env.client.Authenticate(); err != nil {
-		t.Fatalf("Authentication failed: %v", err)
-	}
-
-	return env
-}
-
-// Cleanup stops all test environment components
-func (env *TestEnvironment) Cleanup() {
-	if env.mcpCmd != nil && env.mcpCmd.Process != nil {
-		_ = env.mcpCmd.Process.Kill()
-	}
-
-	if env.fakeGCP != nil {
-		_ = env.fakeGCP.Stop()
-	}
-
-	if env.dbCmd != nil {
-		downCmd := execDockerCompose("-f", "config/docker-compose.test.yml", "down", "-v")
-		_ = downCmd.Run()
-	}
-}
-
 // TestConfig holds all timeout configurations for integration tests
 type TestConfig struct {
 	SessionTimeout     string
@@ -865,9 +940,9 @@ func waitForMCPFront(t *testing.T) {
 	t.Fatal("mcp-front failed to become ready after 10 seconds")
 }
 
-// getMCPContainers returns a list of running mcp/postgres container IDs
+// getMCPContainers returns a list of running toolbox container IDs
 func getMCPContainers() []string {
-	cmd := exec.Command("docker", "ps", "--format", "{{.ID}}", "--filter", "ancestor=mcp/postgres")
+	cmd := exec.Command("docker", "ps", "--format", "{{.ID}}", "--filter", "ancestor="+ToolboxImage)
 	output, err := cmd.Output()
 	if err != nil {
 		return nil

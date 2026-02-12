@@ -22,6 +22,15 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
+	// Pull the toolbox image so the first test doesn't timeout on image pull
+	fmt.Println("Pulling toolbox image...")
+	pullCmd := exec.Command("docker", "pull", ToolboxImage)
+	pullCmd.Stdout = os.Stdout
+	pullCmd.Stderr = os.Stderr
+	if err := pullCmd.Run(); err != nil {
+		fmt.Printf("Warning: failed to pull toolbox image: %v\n", err)
+	}
+
 	// Set up local log file for mcp-front output
 	logFile := "mcp-front-test.log"
 	os.Setenv("MCP_LOG_FILE", logFile)

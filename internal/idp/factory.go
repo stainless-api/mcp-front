@@ -14,6 +14,9 @@ func NewProvider(cfg config.IDPConfig) (Provider, error) {
 			cfg.ClientID,
 			string(cfg.ClientSecret),
 			cfg.RedirectURI,
+			cfg.AuthorizationURL,
+			cfg.TokenURL,
+			cfg.UserInfoURL,
 		), nil
 
 	case "azure":

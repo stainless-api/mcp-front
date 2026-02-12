@@ -11,7 +11,12 @@ import (
 func TestBasePathRouting(t *testing.T) {
 	waitForDB(t)
 
-	startMCPFront(t, "config/config.base-path-test.json")
+	cfg := buildTestConfig(
+		"http://localhost:8080/mcp-api", "mcp-front-base-path-test",
+		nil,
+		map[string]any{"postgres": testPostgresServer(withBearerTokens("test-token"))},
+	)
+	startMCPFront(t, writeTestConfig(t, cfg))
 	waitForMCPFront(t)
 
 	initialContainers := getMCPContainers()

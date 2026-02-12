@@ -13,12 +13,12 @@ import (
 )
 
 func TestGoogleProvider_Type(t *testing.T) {
-	provider := NewGoogleProvider("client-id", "client-secret", "https://example.com/callback")
+	provider := NewGoogleProvider("client-id", "client-secret", "https://example.com/callback", "", "", "")
 	assert.Equal(t, "google", provider.Type())
 }
 
 func TestGoogleProvider_AuthURL(t *testing.T) {
-	provider := NewGoogleProvider("client-id", "client-secret", "https://example.com/callback")
+	provider := NewGoogleProvider("client-id", "client-secret", "https://example.com/callback", "", "", "")
 
 	authURL := provider.AuthURL("test-state")
 
