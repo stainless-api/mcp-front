@@ -104,8 +104,8 @@ func withUserToken() serverOption {
 // Uses hardcoded values suitable for integration tests with the fake GCP server.
 func testOAuthConfig() map[string]any {
 	return map[string]any{
-		"kind":      "oauth",
-		"issuer":    "http://localhost:8080",
+		"kind":       "oauth",
+		"issuer":     "http://localhost:8080",
 		"gcpProject": "test-project",
 		"idp": map[string]any{
 			"provider":         "google",
@@ -128,8 +128,8 @@ func testOAuthConfig() map[string]any {
 // testOAuthConfigFromEnv returns an OAuth auth config that reads secrets from env vars.
 func testOAuthConfigFromEnv() map[string]any {
 	return map[string]any{
-		"kind":      "oauth",
-		"issuer":    "http://localhost:8080",
+		"kind":       "oauth",
+		"issuer":     "http://localhost:8080",
 		"gcpProject": "test-project",
 		"idp": map[string]any{
 			"provider":         "google",

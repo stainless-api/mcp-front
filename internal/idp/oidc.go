@@ -29,7 +29,6 @@ type OIDCConfig struct {
 	ClientSecret string
 	RedirectURI  string
 	Scopes       []string
-
 }
 
 // OIDCProvider implements the Provider interface for OIDC-compliant identity providers.

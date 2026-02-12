@@ -302,10 +302,10 @@ func TestFailureScenarios(t *testing.T) {
 		waitForDB(t)
 
 		cfg := buildTestConfig("http://localhost:8080", "mcp-front-test",
-		nil,
-		map[string]any{"postgres": testPostgresServer(withBearerTokens("test-token", "alt-test-token"), withLogEnabled())},
-	)
-	startMCPFront(t, writeTestConfig(t, cfg))
+			nil,
+			map[string]any{"postgres": testPostgresServer(withBearerTokens("test-token", "alt-test-token"), withLogEnabled())},
+		)
+		startMCPFront(t, writeTestConfig(t, cfg))
 
 		// Wait for server to be ready
 		waitForMCPFront(t)

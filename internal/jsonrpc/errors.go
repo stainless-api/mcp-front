@@ -46,4 +46,3 @@ func NewStandardError(code int) *Error {
 		Message: message,
 	}
 }
-

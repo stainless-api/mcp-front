@@ -605,4 +605,3 @@ func buildStdioSSEServer(serverName, baseURL string, sessionManager *client.Stdi
 
 	return sseServer, mcpServer, nil
 }
-
