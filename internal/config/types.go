@@ -187,6 +187,11 @@ type MCPClientConfig struct {
 	InlineConfig json.RawMessage `json:"inline,omitempty"`
 }
 
+// IsStdio returns true if this is a stdio-based MCP server
+func (c *MCPClientConfig) IsStdio() bool {
+	return c.TransportType == MCPClientTypeStdio
+}
+
 // SessionConfig represents session management configuration
 type SessionConfig struct {
 	Timeout         time.Duration
@@ -200,12 +205,39 @@ type AdminConfig struct {
 	AdminEmails []string `json:"adminEmails"`
 }
 
+// IDPConfig represents identity provider configuration.
+type IDPConfig struct {
+	// Provider type: "google", "azure", "github", or "oidc"
+	Provider string `json:"provider"`
+
+	// OAuth client configuration
+	ClientID     string `json:"clientId"`
+	ClientSecret Secret `json:"clientSecret"`
+	RedirectURI  string `json:"redirectUri"`
+
+	// For OIDC: discovery URL or manual endpoint configuration
+	DiscoveryURL     string `json:"discoveryUrl,omitempty"`
+	AuthorizationURL string `json:"authorizationUrl,omitempty"`
+	TokenURL         string `json:"tokenUrl,omitempty"`
+	UserInfoURL      string `json:"userInfoUrl,omitempty"`
+
+	// Custom scopes (optional, defaults per provider)
+	Scopes []string `json:"scopes,omitempty"`
+
+	// Azure-specific: tenant ID
+	TenantID string `json:"tenantId,omitempty"`
+
+	// GitHub-specific: allowed organizations
+	AllowedOrgs []string `json:"allowedOrgs,omitempty"`
+}
+
 // OAuthAuthConfig represents OAuth 2.0 configuration with resolved values
 type OAuthAuthConfig struct {
 	Kind                AuthKind      `json:"kind"`
 	Issuer              string        `json:"issuer"`
 	GCPProject          string        `json:"gcpProject"`
-	AllowedDomains      []string      `json:"allowedDomains"` // For Google OAuth email validation
+	IDP                 IDPConfig     `json:"idp"`
+	AllowedDomains      []string      `json:"allowedDomains"` // For domain-based access control
 	AllowedOrigins      []string      `json:"allowedOrigins"` // For CORS validation
 	TokenTTL            time.Duration `json:"tokenTtl"`
 	RefreshTokenTTL     time.Duration `json:"refreshTokenTtl"`
@@ -213,9 +245,6 @@ type OAuthAuthConfig struct {
 	Storage             string        `json:"storage"`                       // "memory" or "firestore"
 	FirestoreDatabase   string        `json:"firestoreDatabase,omitempty"`   // Optional: Firestore database name
 	FirestoreCollection string        `json:"firestoreCollection,omitempty"` // Optional: Firestore collection name
-	GoogleClientID      string        `json:"googleClientId"`
-	GoogleClientSecret  Secret        `json:"googleClientSecret"`
-	GoogleRedirectURI   string        `json:"googleRedirectUri"`
 	JWTSecret           Secret        `json:"jwtSecret"`
 	EncryptionKey       Secret        `json:"encryptionKey"`
 	// DangerouslyAcceptIssuerAudience allows tokens with just the base issuer as audience

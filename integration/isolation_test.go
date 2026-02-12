@@ -18,12 +18,16 @@ func TestMultiUserSessionIsolation(t *testing.T) {
 
 	// Start mcp-front with bearer token auth
 	trace(t, "Starting mcp-front")
-	startMCPFront(t, "config/config.test.json")
+	cfg := buildTestConfig("http://localhost:8080", "mcp-front-test",
+		nil,
+		map[string]any{"postgres": testPostgresServer(withBearerTokens("test-token", "alt-test-token"), withLogEnabled())},
+	)
+	startMCPFront(t, writeTestConfig(t, cfg))
 	waitForMCPFront(t)
 
 	// Get initial container count
 	initialContainers := getMCPContainers()
-	t.Logf("Initial mcp/postgres containers: %d", len(initialContainers))
+	t.Logf("Initial toolbox containers: %d", len(initialContainers))
 
 	// Create two clients with different auth tokens
 	client1 := NewMCPSSEClient("http://localhost:8080")
@@ -69,7 +73,7 @@ func TestMultiUserSessionIsolation(t *testing.T) {
 	}
 
 	query1Result, err := client1.SendMCPRequest("tools/call", map[string]any{
-		"name": "query",
+		"name": "execute_sql",
 		"arguments": map[string]any{
 			"sql": "SELECT 'user1-query1' as test_id, COUNT(*) as count FROM users",
 		},
@@ -116,13 +120,13 @@ func TestMultiUserSessionIsolation(t *testing.T) {
 	// Verify that client1 and client2 have different containers
 	if client1Container != "" && client2Container != "" && client1Container == client2Container {
 		t.Errorf("CRITICAL: Both users are using the same Docker container! Container ID: %s", client1Container)
-		t.Error("This indicates session isolation is NOT working - users are sharing the same mcp/postgres instance")
+		t.Error("This indicates session isolation is NOT working - users are sharing the same toolbox instance")
 	} else if client1Container != "" && client2Container != "" {
 		t.Logf("Confirmed different stdio processes: User1 container=%s, User2 container=%s", client1Container, client2Container)
 	}
 
 	query2Result, err := client2.SendMCPRequest("tools/call", map[string]any{
-		"name": "query",
+		"name": "execute_sql",
 		"arguments": map[string]any{
 			"sql": "SELECT 'user2-query1' as test_id, COUNT(*) as count FROM orders",
 		},
@@ -135,7 +139,7 @@ func TestMultiUserSessionIsolation(t *testing.T) {
 	// Step 3: First user sends another query
 	t.Log("\nStep 3: First user sends another query")
 	query3Result, err := client1.SendMCPRequest("tools/call", map[string]any{
-		"name": "query",
+		"name": "execute_sql",
 		"arguments": map[string]any{
 			"sql": "SELECT 'user1-query2' as test_id, current_timestamp as ts",
 		},
@@ -148,7 +152,7 @@ func TestMultiUserSessionIsolation(t *testing.T) {
 	// Step 4: First user sends another query
 	t.Log("\nStep 4: First user sends another query")
 	query4Result, err := client1.SendMCPRequest("tools/call", map[string]any{
-		"name": "query",
+		"name": "execute_sql",
 		"arguments": map[string]any{
 			"sql": "SELECT 'user1-query3' as test_id, version() as db_version",
 		},
@@ -161,7 +165,7 @@ func TestMultiUserSessionIsolation(t *testing.T) {
 	// Step 5: Second user sends a query
 	t.Log("\nStep 5: Second user sends a query")
 	query5Result, err := client2.SendMCPRequest("tools/call", map[string]any{
-		"name": "query",
+		"name": "execute_sql",
 		"arguments": map[string]any{
 			"sql": "SELECT 'user2-query2' as test_id, current_database() as db_name",
 		},
@@ -208,12 +212,16 @@ func TestSessionCleanupAfterTimeout(t *testing.T) {
 
 	// Start mcp-front with test timeout configuration
 	trace(t, "Starting mcp-front with test session timeout")
-	startMCPFront(t, "config/config.test.json")
+	cfg := buildTestConfig("http://localhost:8080", "mcp-front-test",
+		nil,
+		map[string]any{"postgres": testPostgresServer(withBearerTokens("test-token", "alt-test-token"), withLogEnabled())},
+	)
+	startMCPFront(t, writeTestConfig(t, cfg))
 	waitForMCPFront(t)
 
 	// Get initial container count
 	initialContainers := getMCPContainers()
-	t.Logf("Initial mcp/postgres containers: %d", len(initialContainers))
+	t.Logf("Initial toolbox containers: %d", len(initialContainers))
 
 	// Create a client and connect
 	client := NewMCPSSEClient("http://localhost:8080")
@@ -237,7 +245,7 @@ func TestSessionCleanupAfterTimeout(t *testing.T) {
 
 	// Send a query to ensure session is active
 	_, err = client.SendMCPRequest("tools/call", map[string]any{
-		"name": "query",
+		"name": "execute_sql",
 		"arguments": map[string]any{
 			"sql": "SELECT 'test' as test_id",
 		},
@@ -277,12 +285,16 @@ func TestSessionTimerReset(t *testing.T) {
 
 	// Start mcp-front with test timeout configuration
 	trace(t, "Starting mcp-front with test session timeout")
-	startMCPFront(t, "config/config.test.json")
+	cfg := buildTestConfig("http://localhost:8080", "mcp-front-test",
+		nil,
+		map[string]any{"postgres": testPostgresServer(withBearerTokens("test-token", "alt-test-token"), withLogEnabled())},
+	)
+	startMCPFront(t, writeTestConfig(t, cfg))
 	waitForMCPFront(t)
 
 	// Get initial container count
 	initialContainers := getMCPContainers()
-	t.Logf("Initial mcp/postgres containers: %d", len(initialContainers))
+	t.Logf("Initial toolbox containers: %d", len(initialContainers))
 
 	// Create a client and connect
 	client := NewMCPSSEClient("http://localhost:8080")
@@ -308,7 +320,7 @@ func TestSessionTimerReset(t *testing.T) {
 	for i := range 3 {
 		t.Logf("Sending keepalive query %d/3...", i+1)
 		_, err := client.SendMCPRequest("tools/call", map[string]any{
-			"name": "query",
+			"name": "execute_sql",
 			"arguments": map[string]any{
 				"sql": "SELECT 'keepalive' as status, NOW() as timestamp",
 			},
@@ -357,12 +369,16 @@ func TestMultiUserTimerIndependence(t *testing.T) {
 
 	// Start mcp-front with test timeout configuration
 	trace(t, "Starting mcp-front with test session timeout")
-	startMCPFront(t, "config/config.test.json")
+	cfg := buildTestConfig("http://localhost:8080", "mcp-front-test",
+		nil,
+		map[string]any{"postgres": testPostgresServer(withBearerTokens("test-token", "alt-test-token"), withLogEnabled())},
+	)
+	startMCPFront(t, writeTestConfig(t, cfg))
 	waitForMCPFront(t)
 
 	// Get initial container count
 	initialContainers := getMCPContainers()
-	t.Logf("Initial mcp/postgres containers: %d", len(initialContainers))
+	t.Logf("Initial toolbox containers: %d", len(initialContainers))
 
 	// Create two clients
 	client1 := NewMCPSSEClient("http://localhost:8080")
@@ -411,7 +427,7 @@ func TestMultiUserTimerIndependence(t *testing.T) {
 		for i := range 4 {
 			time.Sleep(4 * time.Second)
 			_, err := client2.SendMCPRequest("tools/call", map[string]any{
-				"name": "query",
+				"name": "execute_sql",
 				"arguments": map[string]any{
 					"sql": "SELECT 'client2-keepalive' as status",
 				},

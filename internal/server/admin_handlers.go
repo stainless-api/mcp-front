@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/dgellow/mcp-front/internal/adminauth"
@@ -23,7 +21,7 @@ type AdminHandlers struct {
 	storage        storage.Storage
 	config         config.Config
 	sessionManager *client.StdioSessionManager
-	encryptionKey  []byte // For HMAC-based CSRF tokens
+	csrf           crypto.CSRFProtection
 }
 
 // NewAdminHandlers creates a new admin handlers instance
@@ -32,65 +30,8 @@ func NewAdminHandlers(storage storage.Storage, config config.Config, sessionMana
 		storage:        storage,
 		config:         config,
 		sessionManager: sessionManager,
-		encryptionKey:  []byte(encryptionKey),
+		csrf:           crypto.NewCSRFProtection([]byte(encryptionKey), 15*time.Minute),
 	}
-}
-
-// generateCSRFToken creates a new HMAC-based CSRF token
-func (h *AdminHandlers) generateCSRFToken() (string, error) {
-	// Generate random nonce
-	nonce := crypto.GenerateSecureToken()
-	if nonce == "" {
-		return "", fmt.Errorf("failed to generate nonce")
-	}
-
-	// Add timestamp (Unix seconds)
-	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
-
-	// Create data to sign: nonce:timestamp
-	data := nonce + ":" + timestamp
-
-	// Sign with HMAC
-	signature := crypto.SignData(data, h.encryptionKey)
-
-	// Return format: nonce:timestamp:signature
-	return fmt.Sprintf("%s:%s:%s", nonce, timestamp, signature), nil
-}
-
-// validateCSRFToken checks if a CSRF token is valid
-func (h *AdminHandlers) validateCSRFToken(token string) bool {
-	// Parse token format: nonce:timestamp:signature
-	parts := strings.SplitN(token, ":", 3)
-	if len(parts) != 3 {
-		log.LogDebug("Invalid CSRF token format")
-		return false
-	}
-
-	nonce := parts[0]
-	timestampStr := parts[1]
-	signature := parts[2]
-
-	// Verify timestamp (15 minute expiry)
-	timestamp, err := strconv.ParseInt(timestampStr, 10, 64)
-	if err != nil {
-		log.LogDebug("Invalid CSRF token timestamp: %v", err)
-		return false
-	}
-
-	now := time.Now().Unix()
-	if now-timestamp > 900 { // 15 minutes
-		log.LogDebug("CSRF token expired")
-		return false
-	}
-
-	// Verify HMAC signature
-	data := nonce + ":" + timestampStr
-	if !crypto.ValidateSignedData(data, signature, h.encryptionKey) {
-		log.LogDebug("Invalid CSRF token signature")
-		return false
-	}
-
-	return true
 }
 
 // DashboardHandler shows the admin dashboard
@@ -152,7 +93,7 @@ func (h *AdminHandlers) DashboardHandler(w http.ResponseWriter, r *http.Request)
 	currentLogLevel := log.GetLogLevel()
 
 	// Generate CSRF token
-	csrfToken, err := h.generateCSRFToken()
+	csrfToken, err := h.csrf.Generate()
 	if err != nil {
 		log.LogErrorWithFields("admin", "Failed to generate CSRF token", map[string]any{
 			"error": err.Error(),
@@ -209,7 +150,7 @@ func (h *AdminHandlers) UserActionHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	// Validate CSRF
-	if !h.validateCSRFToken(r.FormValue("csrf_token")) {
+	if !h.csrf.Validate(r.FormValue("csrf_token")) {
 		jsonwriter.WriteForbidden(w, "Invalid CSRF token")
 		return
 	}
@@ -379,7 +320,7 @@ func (h *AdminHandlers) SessionActionHandler(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Validate CSRF
-	if !h.validateCSRFToken(r.FormValue("csrf_token")) {
+	if !h.csrf.Validate(r.FormValue("csrf_token")) {
 		jsonwriter.WriteForbidden(w, "Invalid CSRF token")
 		return
 	}
@@ -472,7 +413,7 @@ func (h *AdminHandlers) LoggingActionHandler(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Validate CSRF
-	if !h.validateCSRFToken(r.FormValue("csrf_token")) {
+	if !h.csrf.Validate(r.FormValue("csrf_token")) {
 		jsonwriter.WriteForbidden(w, "Invalid CSRF token")
 		return
 	}

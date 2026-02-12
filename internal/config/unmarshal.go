@@ -118,6 +118,7 @@ func (o *OAuthAuthConfig) UnmarshalJSON(data []byte) error {
 		Kind                            AuthKind        `json:"kind"`
 		Issuer                          json.RawMessage `json:"issuer"`
 		GCPProject                      json.RawMessage `json:"gcpProject"`
+		IDP                             json.RawMessage `json:"idp"`
 		AllowedDomains                  []string        `json:"allowedDomains"`
 		AllowedOrigins                  []string        `json:"allowedOrigins"`
 		TokenTTL                        string          `json:"tokenTtl"`
@@ -126,9 +127,6 @@ func (o *OAuthAuthConfig) UnmarshalJSON(data []byte) error {
 		Storage                         string          `json:"storage"`
 		FirestoreDatabase               string          `json:"firestoreDatabase,omitempty"`
 		FirestoreCollection             string          `json:"firestoreCollection,omitempty"`
-		GoogleClientID                  json.RawMessage `json:"googleClientId"`
-		GoogleClientSecret              json.RawMessage `json:"googleClientSecret"`
-		GoogleRedirectURI               json.RawMessage `json:"googleRedirectUri"`
 		JWTSecret                       json.RawMessage `json:"jwtSecret"`
 		EncryptionKey                   json.RawMessage `json:"encryptionKey,omitempty"`
 		DangerouslyAcceptIssuerAudience bool            `json:"dangerouslyAcceptIssuerAudience,omitempty"`
@@ -202,38 +200,13 @@ func (o *OAuthAuthConfig) UnmarshalJSON(data []byte) error {
 		o.GCPProject = parsed.value
 	}
 
-	if raw.GoogleClientID != nil {
-		parsed, err := ParseConfigValue(raw.GoogleClientID)
+	// Parse IDP config
+	if raw.IDP != nil {
+		idp, err := parseIDPConfig(raw.IDP)
 		if err != nil {
-			return fmt.Errorf("parsing googleClientId: %w", err)
+			return fmt.Errorf("parsing idp: %w", err)
 		}
-		if parsed.needsUserToken {
-			return fmt.Errorf("googleClientId cannot be a user token reference")
-		}
-		o.GoogleClientID = parsed.value
-	}
-
-	if raw.GoogleRedirectURI != nil {
-		parsed, err := ParseConfigValue(raw.GoogleRedirectURI)
-		if err != nil {
-			return fmt.Errorf("parsing googleRedirectUri: %w", err)
-		}
-		if parsed.needsUserToken {
-			return fmt.Errorf("googleRedirectUri cannot be a user token reference")
-		}
-		o.GoogleRedirectURI = parsed.value
-	}
-
-	// Parse secret fields
-	if raw.GoogleClientSecret != nil {
-		parsed, err := ParseConfigValue(raw.GoogleClientSecret)
-		if err != nil {
-			return fmt.Errorf("parsing googleClientSecret: %w", err)
-		}
-		if parsed.needsUserToken {
-			return fmt.Errorf("googleClientSecret cannot be a user token reference")
-		}
-		o.GoogleClientSecret = Secret(parsed.value)
+		o.IDP = *idp
 	}
 
 	if raw.JWTSecret != nil {
@@ -272,6 +245,87 @@ func (o *OAuthAuthConfig) UnmarshalJSON(data []byte) error {
 	}
 
 	return nil
+}
+
+// parseIDPConfig parses the IDP configuration with env var references
+func parseIDPConfig(data json.RawMessage) (*IDPConfig, error) {
+	type rawIDP struct {
+		Provider         string          `json:"provider"`
+		ClientID         json.RawMessage `json:"clientId"`
+		ClientSecret     json.RawMessage `json:"clientSecret"`
+		RedirectURI      json.RawMessage `json:"redirectUri"`
+		DiscoveryURL     json.RawMessage `json:"discoveryUrl,omitempty"`
+		AuthorizationURL json.RawMessage `json:"authorizationUrl,omitempty"`
+		TokenURL         json.RawMessage `json:"tokenUrl,omitempty"`
+		UserInfoURL      json.RawMessage `json:"userInfoUrl,omitempty"`
+		Scopes           []string        `json:"scopes,omitempty"`
+		TenantID         json.RawMessage `json:"tenantId,omitempty"`
+		AllowedOrgs      []string        `json:"allowedOrgs,omitempty"`
+	}
+
+	var raw rawIDP
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, err
+	}
+
+	idp := &IDPConfig{
+		Provider:    raw.Provider,
+		Scopes:      raw.Scopes,
+		AllowedOrgs: raw.AllowedOrgs,
+	}
+
+	// Helper to parse a field that cannot be a user token reference
+	parseField := func(data json.RawMessage, fieldName string) (string, error) {
+		if data == nil {
+			return "", nil
+		}
+		parsed, err := ParseConfigValue(data)
+		if err != nil {
+			return "", fmt.Errorf("parsing %s: %w", fieldName, err)
+		}
+		if parsed.needsUserToken {
+			return "", fmt.Errorf("%s cannot be a user token reference", fieldName)
+		}
+		return parsed.value, nil
+	}
+
+	var err error
+
+	if idp.ClientID, err = parseField(raw.ClientID, "clientId"); err != nil {
+		return nil, err
+	}
+
+	var clientSecret string
+	if clientSecret, err = parseField(raw.ClientSecret, "clientSecret"); err != nil {
+		return nil, err
+	}
+	idp.ClientSecret = Secret(clientSecret)
+
+	if idp.RedirectURI, err = parseField(raw.RedirectURI, "redirectUri"); err != nil {
+		return nil, err
+	}
+
+	if idp.DiscoveryURL, err = parseField(raw.DiscoveryURL, "discoveryUrl"); err != nil {
+		return nil, err
+	}
+
+	if idp.AuthorizationURL, err = parseField(raw.AuthorizationURL, "authorizationUrl"); err != nil {
+		return nil, err
+	}
+
+	if idp.TokenURL, err = parseField(raw.TokenURL, "tokenUrl"); err != nil {
+		return nil, err
+	}
+
+	if idp.UserInfoURL, err = parseField(raw.UserInfoURL, "userInfoUrl"); err != nil {
+		return nil, err
+	}
+
+	if idp.TenantID, err = parseField(raw.TenantID, "tenantId"); err != nil {
+		return nil, err
+	}
+
+	return idp, nil
 }
 
 // UnmarshalJSON implements custom unmarshaling for ProxyConfig

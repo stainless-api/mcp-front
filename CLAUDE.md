@@ -245,15 +245,16 @@ When refactoring for better design:
 
 ```bash
 # Build everything
-make build
+./scripts/build
 
 # Format everything
-make format
+./scripts/format
 
 # Lint everything
-make lint
+./scripts/lint
 
 # Test mcp-front
+./scripts/test
 go test ./internal/... -v
 go test ./integration -v
 
@@ -261,7 +262,7 @@ go test ./integration -v
 ./mcp-front -config config.json
 
 # Start docs dev server
-make doc
+./scripts/docs
 ```
 
 ## Documentation Site Guidelines

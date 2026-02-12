@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/dgellow/mcp-front/internal/envutil"
+	"github.com/dgellow/mcp-front/internal/config"
 	"github.com/dgellow/mcp-front/internal/log"
 )
 
@@ -16,7 +16,7 @@ const (
 
 // SetSession sets a session cookie with appropriate security settings
 func SetSession(w http.ResponseWriter, value string, maxAge time.Duration) {
-	secure := !envutil.IsDev()
+	secure := !config.IsDev()
 	http.SetCookie(w, &http.Cookie{
 		Name:     SessionCookie,
 		Value:    value,
@@ -41,7 +41,7 @@ func SetCSRF(w http.ResponseWriter, value string) {
 		Value:    value,
 		Path:     "/",
 		HttpOnly: false, // CSRF tokens need to be readable by JavaScript
-		Secure:   !envutil.IsDev(),
+		Secure:   !config.IsDev(),
 		SameSite: http.SameSiteStrictMode,
 		MaxAge:   int((24 * time.Hour).Seconds()), // 24 hours
 	})

@@ -15,11 +15,11 @@ func TestIntegration(t *testing.T) {
 	waitForDB(t)
 
 	trace(t, "Starting mcp-front")
-	startMCPFront(t, "config/config.test.json",
-		"GOOGLE_OAUTH_AUTH_URL=http://localhost:9090/auth",
-		"GOOGLE_OAUTH_TOKEN_URL=http://localhost:9090/token",
-		"GOOGLE_USERINFO_URL=http://localhost:9090/userinfo",
+	cfg := buildTestConfig("http://localhost:8080", "mcp-front-test",
+		nil,
+		map[string]any{"postgres": testPostgresServer(withBearerTokens("test-token", "alt-test-token"), withLogEnabled())},
 	)
+	startMCPFront(t, writeTestConfig(t, cfg))
 
 	waitForMCPFront(t)
 	trace(t, "mcp-front is ready")
@@ -49,7 +49,7 @@ func TestIntegration(t *testing.T) {
 	t.Log("Connected to MCP server with session")
 
 	queryParams := map[string]any{
-		"name": "query",
+		"name": "execute_sql",
 		"arguments": map[string]any{
 			"sql": "SELECT COUNT(*) as user_count FROM users",
 		},
@@ -75,23 +75,31 @@ func TestIntegration(t *testing.T) {
 	assert.NotEmpty(t, content, "Query result missing content")
 	t.Log("Query executed successfully")
 
-	// Test resources list
-	resourcesResult, err := client.SendMCPRequest("resources/list", map[string]any{})
-	require.NoError(t, err, "Failed to list resources")
+	// Test tools list
+	toolsResult, err := client.SendMCPRequest("tools/list", map[string]any{})
+	require.NoError(t, err, "Failed to list tools")
 
-	t.Logf("Resources response: %+v", resourcesResult)
+	t.Logf("Tools response: %+v", toolsResult)
 
-	// Check for error in resources response
-	errorMap, hasError = resourcesResult["error"].(map[string]any)
-	assert.False(t, hasError, "Resources list returned error: %v", errorMap)
+	errorMap, hasError = toolsResult["error"].(map[string]any)
+	assert.False(t, hasError, "Tools list returned error: %v", errorMap)
 
-	// Verify we got resources
-	resultMap, ok = resourcesResult["result"].(map[string]any)
-	require.True(t, ok, "Expected result in resources response")
+	resultMap, ok = toolsResult["result"].(map[string]any)
+	require.True(t, ok, "Expected result in tools response")
 
-	resources, ok := resultMap["resources"].([]any)
-	require.True(t, ok, "Expected resources array in result")
-	assert.NotEmpty(t, resources, "Expected at least one resource")
-	t.Logf("Found %d resources", len(resources))
+	tools, ok := resultMap["tools"].([]any)
+	require.True(t, ok, "Expected tools array in result")
+	assert.NotEmpty(t, tools, "Expected at least one tool")
+	t.Logf("Found %d tools", len(tools))
 
+	// Verify execute_sql tool is present
+	var toolNames []string
+	for _, tool := range tools {
+		if toolMap, ok := tool.(map[string]any); ok {
+			if name, ok := toolMap["name"].(string); ok {
+				toolNames = append(toolNames, name)
+			}
+		}
+	}
+	assert.Contains(t, toolNames, "execute_sql", "Should have execute_sql tool")
 }

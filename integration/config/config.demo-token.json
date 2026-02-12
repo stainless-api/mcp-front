@@ -11,8 +11,13 @@
       "command": "docker",
       "args": [
         "run", "--rm", "-i", "--network", "host",
-        "mcp/postgres",
-        "postgresql://testuser:testpass@localhost:15432/testdb"
+        "-e", "POSTGRES_HOST=localhost",
+        "-e", "POSTGRES_PORT=15432",
+        "-e", "POSTGRES_DATABASE=testdb",
+        "-e", "POSTGRES_USER=testuser",
+        "-e", "POSTGRES_PASSWORD=testpass",
+        "us-central1-docker.pkg.dev/database-toolbox/toolbox/toolbox:latest",
+        "--stdio", "--prebuilt", "postgres"
       ],
       "options": {
         "logEnabled": true

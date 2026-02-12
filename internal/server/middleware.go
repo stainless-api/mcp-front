@@ -10,15 +10,15 @@ import (
 	"time"
 
 	"github.com/dgellow/mcp-front/internal/adminauth"
-	"github.com/dgellow/mcp-front/internal/browserauth"
 	"github.com/dgellow/mcp-front/internal/config"
 	"github.com/dgellow/mcp-front/internal/cookie"
 	"github.com/dgellow/mcp-front/internal/crypto"
-	"github.com/dgellow/mcp-front/internal/googleauth"
+	"github.com/dgellow/mcp-front/internal/idp"
 	jsonwriter "github.com/dgellow/mcp-front/internal/json"
 	"github.com/dgellow/mcp-front/internal/log"
 	"github.com/dgellow/mcp-front/internal/oauth"
 	"github.com/dgellow/mcp-front/internal/servicecontext"
+	"github.com/dgellow/mcp-front/internal/session"
 	"github.com/dgellow/mcp-front/internal/storage"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -289,7 +289,7 @@ func adminMiddleware(adminConfig *config.AdminConfig, store storage.Storage) Mid
 }
 
 // NewBrowserSSOMiddleware creates middleware for browser-based SSO authentication
-func NewBrowserSSOMiddleware(authConfig config.OAuthAuthConfig, sessionEncryptor crypto.Encryptor, browserStateToken *crypto.TokenSigner) MiddlewareFunc {
+func NewBrowserSSOMiddleware(authConfig config.OAuthAuthConfig, idpProvider idp.Provider, sessionEncryptor crypto.Encryptor, browserStateToken *crypto.TokenSigner) MiddlewareFunc {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Check for session cookie
@@ -301,8 +301,8 @@ func NewBrowserSSOMiddleware(authConfig config.OAuthAuthConfig, sessionEncryptor
 					jsonwriter.WriteInternalServerError(w, "Failed to generate authentication state")
 					return
 				}
-				googleURL := googleauth.GoogleAuthURL(authConfig, state)
-				http.Redirect(w, r, googleURL, http.StatusFound)
+				authURL := idpProvider.AuthURL(state)
+				http.Redirect(w, r, authURL, http.StatusFound)
 				return
 			}
 
@@ -313,13 +313,13 @@ func NewBrowserSSOMiddleware(authConfig config.OAuthAuthConfig, sessionEncryptor
 				log.LogDebug("Invalid session cookie: %v", err)
 				cookie.ClearSession(w) // Clear bad cookie
 				state := generateBrowserState(browserStateToken, r.URL.String())
-				googleURL := googleauth.GoogleAuthURL(authConfig, state)
-				http.Redirect(w, r, googleURL, http.StatusFound)
+				authURL := idpProvider.AuthURL(state)
+				http.Redirect(w, r, authURL, http.StatusFound)
 				return
 			}
 
 			// Parse session data
-			var sessionData browserauth.SessionCookie
+			var sessionData session.BrowserCookie
 			if err := json.NewDecoder(strings.NewReader(decrypted)).Decode(&sessionData); err != nil {
 				// Invalid format
 				cookie.ClearSession(w)
@@ -331,14 +331,14 @@ func NewBrowserSSOMiddleware(authConfig config.OAuthAuthConfig, sessionEncryptor
 			if time.Now().After(sessionData.Expires) {
 				log.LogDebug("Session expired for user %s", sessionData.Email)
 				cookie.ClearSession(w)
-				// Redirect directly to Google OAuth
+				// Redirect directly to OAuth
 				state := generateBrowserState(browserStateToken, r.URL.String())
 				if state == "" {
 					jsonwriter.WriteInternalServerError(w, "Failed to generate authentication state")
 					return
 				}
-				googleURL := googleauth.GoogleAuthURL(authConfig, state)
-				http.Redirect(w, r, googleURL, http.StatusFound)
+				authURL := idpProvider.AuthURL(state)
+				http.Redirect(w, r, authURL, http.StatusFound)
 				return
 			}
 
@@ -353,7 +353,7 @@ func NewBrowserSSOMiddleware(authConfig config.OAuthAuthConfig, sessionEncryptor
 
 // generateBrowserState creates a secure state parameter for browser SSO
 func generateBrowserState(browserStateToken *crypto.TokenSigner, returnURL string) string {
-	state := browserauth.AuthorizationState{
+	state := session.AuthorizationState{
 		Nonce:     crypto.GenerateSecureToken(),
 		ReturnURL: returnURL,
 	}

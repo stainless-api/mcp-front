@@ -16,6 +16,11 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+const (
+	usersCollection    = "mcp_front_users"
+	sessionsCollection = "mcp_front_sessions"
+)
+
 // FirestoreStorage implements OAuth client storage using Google Cloud Firestore.
 //
 // Error handling strategy:
@@ -195,8 +200,9 @@ func (s *FirestoreStorage) loadClientsFromFirestore(ctx context.Context) error {
 }
 
 // StoreAuthorizeRequest stores an authorize request with state (in memory only - short-lived)
-func (s *FirestoreStorage) StoreAuthorizeRequest(state string, req fosite.AuthorizeRequester) {
+func (s *FirestoreStorage) StoreAuthorizeRequest(state string, req fosite.AuthorizeRequester) error {
 	s.stateCache.Store(state, req)
+	return nil
 }
 
 // GetAuthorizeRequest retrieves an authorize request by state (one-time use)
@@ -533,7 +539,7 @@ func (s *FirestoreStorage) UpsertUser(ctx context.Context, email string) error {
 	}
 
 	// Try to get existing user first
-	doc, err := s.client.Collection("mcp_front_users").Doc(email).Get(ctx)
+	doc, err := s.client.Collection(usersCollection).Doc(email).Get(ctx)
 	if err == nil {
 		// User exists, update LastSeen
 		_, err = doc.Ref.Update(ctx, []firestore.Update{
@@ -547,16 +553,35 @@ func (s *FirestoreStorage) UpsertUser(ctx context.Context, email string) error {
 		userDoc.FirstSeen = time.Now()
 		userDoc.Enabled = true
 		userDoc.IsAdmin = false
-		_, err = s.client.Collection("mcp_front_users").Doc(email).Set(ctx, userDoc)
+		_, err = s.client.Collection(usersCollection).Doc(email).Set(ctx, userDoc)
 		return err
 	}
 
 	return err
 }
 
+// GetUser returns a single user by email
+func (s *FirestoreStorage) GetUser(ctx context.Context, email string) (*UserInfo, error) {
+	doc, err := s.client.Collection(usersCollection).Doc(email).Get(ctx)
+	if err != nil {
+		if status.Code(err) == codes.NotFound {
+			return nil, ErrUserNotFound
+		}
+		return nil, fmt.Errorf("failed to get user from Firestore: %w", err)
+	}
+
+	var userDoc UserDoc
+	if err := doc.DataTo(&userDoc); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal user: %w", err)
+	}
+
+	user := UserInfo(userDoc)
+	return &user, nil
+}
+
 // GetAllUsers returns all users
 func (s *FirestoreStorage) GetAllUsers(ctx context.Context) ([]UserInfo, error) {
-	iter := s.client.Collection("mcp_front_users").Documents(ctx)
+	iter := s.client.Collection(usersCollection).Documents(ctx)
 	defer iter.Stop()
 
 	var users []UserInfo
@@ -583,7 +608,7 @@ func (s *FirestoreStorage) GetAllUsers(ctx context.Context) ([]UserInfo, error) 
 
 // UpdateUserStatus updates a user's enabled status
 func (s *FirestoreStorage) UpdateUserStatus(ctx context.Context, email string, enabled bool) error {
-	_, err := s.client.Collection("mcp_front_users").Doc(email).Update(ctx, []firestore.Update{
+	_, err := s.client.Collection(usersCollection).Doc(email).Update(ctx, []firestore.Update{
 		{Path: "enabled", Value: enabled},
 	})
 	if status.Code(err) == codes.NotFound {
@@ -595,7 +620,7 @@ func (s *FirestoreStorage) UpdateUserStatus(ctx context.Context, email string, e
 // DeleteUser removes a user from storage
 func (s *FirestoreStorage) DeleteUser(ctx context.Context, email string) error {
 	// Delete user document
-	_, err := s.client.Collection("mcp_front_users").Doc(email).Delete(ctx)
+	_, err := s.client.Collection(usersCollection).Doc(email).Delete(ctx)
 	if err != nil && status.Code(err) != codes.NotFound {
 		return err
 	}
@@ -625,7 +650,7 @@ func (s *FirestoreStorage) DeleteUser(ctx context.Context, email string) error {
 
 // SetUserAdmin updates a user's admin status
 func (s *FirestoreStorage) SetUserAdmin(ctx context.Context, email string, isAdmin bool) error {
-	_, err := s.client.Collection("mcp_front_users").Doc(email).Update(ctx, []firestore.Update{
+	_, err := s.client.Collection(usersCollection).Doc(email).Update(ctx, []firestore.Update{
 		{Path: "is_admin", Value: isAdmin},
 	})
 	if status.Code(err) == codes.NotFound {
@@ -645,7 +670,7 @@ func (s *FirestoreStorage) TrackSession(ctx context.Context, session ActiveSessi
 	}
 
 	// Check if session exists
-	doc, err := s.client.Collection("mcp_front_sessions").Doc(session.SessionID).Get(ctx)
+	doc, err := s.client.Collection(sessionsCollection).Doc(session.SessionID).Get(ctx)
 	if err == nil {
 		// Session exists, update LastActive
 		_, err = doc.Ref.Update(ctx, []firestore.Update{
@@ -657,7 +682,7 @@ func (s *FirestoreStorage) TrackSession(ctx context.Context, session ActiveSessi
 	// Session doesn't exist, create new
 	if status.Code(err) == codes.NotFound {
 		sessionDoc.Created = time.Now()
-		_, err = s.client.Collection("mcp_front_sessions").Doc(session.SessionID).Set(ctx, sessionDoc)
+		_, err = s.client.Collection(sessionsCollection).Doc(session.SessionID).Set(ctx, sessionDoc)
 		return err
 	}
 
@@ -666,7 +691,7 @@ func (s *FirestoreStorage) TrackSession(ctx context.Context, session ActiveSessi
 
 // GetActiveSessions returns all active sessions
 func (s *FirestoreStorage) GetActiveSessions(ctx context.Context) ([]ActiveSession, error) {
-	iter := s.client.Collection("mcp_front_sessions").Documents(ctx)
+	iter := s.client.Collection(sessionsCollection).Documents(ctx)
 	defer iter.Stop()
 
 	var sessions []ActiveSession
@@ -693,7 +718,7 @@ func (s *FirestoreStorage) GetActiveSessions(ctx context.Context) ([]ActiveSessi
 
 // RevokeSession removes a session
 func (s *FirestoreStorage) RevokeSession(ctx context.Context, sessionID string) error {
-	_, err := s.client.Collection("mcp_front_sessions").Doc(sessionID).Delete(ctx)
+	_, err := s.client.Collection(sessionsCollection).Doc(sessionID).Delete(ctx)
 	if err != nil && status.Code(err) != codes.NotFound {
 		return err
 	}

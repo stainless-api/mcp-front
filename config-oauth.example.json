@@ -8,13 +8,16 @@
       "kind": "oauth",
       "issuer": {"$env": "OAUTH_ISSUER"},
       "gcpProject": {"$env": "GCP_PROJECT"},
+      "idp": {
+        "provider": "google",
+        "clientId": {"$env": "GOOGLE_CLIENT_ID"},
+        "clientSecret": {"$env": "GOOGLE_CLIENT_SECRET"},
+        "redirectUri": {"$env": "GOOGLE_REDIRECT_URI"}
+      },
       "allowedDomains": ["yourcompany.com", "contractors.yourcompany.com"],
       "allowedOrigins": ["https://claude.ai", "https://yourcompany.com"],
       "tokenTtl": "24h",
       "storage": "memory",
-      "googleClientId": {"$env": "GOOGLE_CLIENT_ID"},
-      "googleClientSecret": {"$env": "GOOGLE_CLIENT_SECRET"},
-      "googleRedirectUri": {"$env": "GOOGLE_REDIRECT_URI"},
       "jwtSecret": {"$env": "JWT_SECRET"},
       "encryptionKey": {"$env": "ENCRYPTION_KEY"}
     }
@@ -25,11 +28,20 @@
       "command": "docker",
       "args": [
         "run", "--rm", "-i", "--network", "host",
-        "mcp/postgres",
-        {"$env": "DATABASE_URL"}
+        "-e", "POSTGRES_HOST",
+        "-e", "POSTGRES_PORT",
+        "-e", "POSTGRES_DATABASE",
+        "-e", "POSTGRES_USER",
+        "-e", "POSTGRES_PASSWORD",
+        "us-central1-docker.pkg.dev/database-toolbox/toolbox/toolbox:latest",
+        "--stdio", "--prebuilt", "postgres"
       ],
       "env": {
-        "PGPASSWORD": {"$env": "POSTGRES_PASSWORD"}
+        "POSTGRES_HOST": {"$env": "POSTGRES_HOST"},
+        "POSTGRES_PORT": {"$env": "POSTGRES_PORT"},
+        "POSTGRES_DATABASE": {"$env": "POSTGRES_DATABASE"},
+        "POSTGRES_USER": {"$env": "POSTGRES_USER"},
+        "POSTGRES_PASSWORD": {"$env": "POSTGRES_PASSWORD"}
       }
     },
     "notion": {

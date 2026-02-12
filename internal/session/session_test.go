@@ -1,4 +1,4 @@
-package browserauth
+package session
 
 import (
 	"encoding/json"
@@ -9,43 +9,42 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestSessionCookie_MarshalUnmarshal(t *testing.T) {
-	original := SessionCookie{
-		Email:   "user@example.com",
-		Expires: time.Now().Add(24 * time.Hour).Truncate(time.Second),
+func TestBrowserCookie_MarshalUnmarshal(t *testing.T) {
+	original := BrowserCookie{
+		Email:    "user@example.com",
+		Provider: "google",
+		Expires:  time.Now().Add(24 * time.Hour).Truncate(time.Second),
 	}
 
-	// Marshal to JSON
 	data, err := json.Marshal(original)
 	require.NoError(t, err)
 
-	// Unmarshal back
-	var unmarshaled SessionCookie
+	var unmarshaled BrowserCookie
 	err = json.Unmarshal(data, &unmarshaled)
 	require.NoError(t, err)
 
-	// Truncate for comparison (JSON time serialization)
 	assert.Equal(t, original.Email, unmarshaled.Email)
+	assert.Equal(t, original.Provider, unmarshaled.Provider)
 	assert.WithinDuration(t, original.Expires, unmarshaled.Expires, time.Second)
 }
 
-func TestSessionCookie_Expiry(t *testing.T) {
+func TestBrowserCookie_Expiry(t *testing.T) {
 	t.Run("not expired", func(t *testing.T) {
-		session := SessionCookie{
-			Email:   "user@example.com",
-			Expires: time.Now().Add(1 * time.Hour),
+		s := BrowserCookie{
+			Email:    "user@example.com",
+			Provider: "google",
+			Expires:  time.Now().Add(1 * time.Hour),
 		}
-
-		assert.True(t, session.Expires.After(time.Now()))
+		assert.True(t, s.Expires.After(time.Now()))
 	})
 
 	t.Run("expired", func(t *testing.T) {
-		session := SessionCookie{
-			Email:   "user@example.com",
-			Expires: time.Now().Add(-1 * time.Hour),
+		s := BrowserCookie{
+			Email:    "user@example.com",
+			Provider: "google",
+			Expires:  time.Now().Add(-1 * time.Hour),
 		}
-
-		assert.True(t, session.Expires.Before(time.Now()))
+		assert.True(t, s.Expires.Before(time.Now()))
 	})
 }
 
@@ -55,11 +54,9 @@ func TestAuthorizationState_MarshalUnmarshal(t *testing.T) {
 		ReturnURL: "/my/tokens",
 	}
 
-	// Marshal to JSON
 	data, err := json.Marshal(original)
 	require.NoError(t, err)
 
-	// Unmarshal back
 	var unmarshaled AuthorizationState
 	err = json.Unmarshal(data, &unmarshaled)
 	require.NoError(t, err)

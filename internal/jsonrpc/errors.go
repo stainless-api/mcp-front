@@ -46,25 +46,3 @@ func NewStandardError(code int) *Error {
 		Message: message,
 	}
 }
-
-// GetErrorName returns a human-readable name for standard error codes
-func GetErrorName(code int) string {
-	switch code {
-	case ParseError:
-		return "PARSE_ERROR"
-	case InvalidRequest:
-		return "INVALID_REQUEST"
-	case MethodNotFound:
-		return "METHOD_NOT_FOUND"
-	case InvalidParams:
-		return "INVALID_PARAMS"
-	case InternalError:
-		return "INTERNAL_ERROR"
-	default:
-		// Check if it's an MCP-specific error code
-		if code >= -32099 && code <= -32000 {
-			return "SERVER_ERROR"
-		}
-		return "UNKNOWN_ERROR"
-	}
-}

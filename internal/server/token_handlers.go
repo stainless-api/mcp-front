@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/dgellow/mcp-front/internal/auth"
@@ -20,38 +19,20 @@ import (
 type TokenHandlers struct {
 	tokenStore         storage.UserTokenStore
 	mcpServers         map[string]*config.MCPClientConfig
-	csrfTokens         sync.Map // Thread-safe CSRF token storage
+	csrf               crypto.CSRFProtection
 	oauthEnabled       bool
 	serviceOAuthClient *auth.ServiceOAuthClient
 }
 
 // NewTokenHandlers creates a new token handlers instance
-func NewTokenHandlers(tokenStore storage.UserTokenStore, mcpServers map[string]*config.MCPClientConfig, oauthEnabled bool, serviceOAuthClient *auth.ServiceOAuthClient) *TokenHandlers {
+func NewTokenHandlers(tokenStore storage.UserTokenStore, mcpServers map[string]*config.MCPClientConfig, oauthEnabled bool, serviceOAuthClient *auth.ServiceOAuthClient, csrfKey []byte) *TokenHandlers {
 	return &TokenHandlers{
 		tokenStore:         tokenStore,
 		mcpServers:         mcpServers,
 		oauthEnabled:       oauthEnabled,
 		serviceOAuthClient: serviceOAuthClient,
+		csrf:               crypto.NewCSRFProtection(csrfKey, 15*time.Minute),
 	}
-}
-
-// generateCSRFToken creates a new CSRF token
-func (h *TokenHandlers) generateCSRFToken() (string, error) {
-	token := crypto.GenerateSecureToken()
-	if token == "" {
-		return "", fmt.Errorf("failed to generate CSRF token")
-	}
-	h.csrfTokens.Store(token, true)
-	return token, nil
-}
-
-// validateCSRFToken checks if a CSRF token is valid
-func (h *TokenHandlers) validateCSRFToken(token string) bool {
-	if _, exists := h.csrfTokens.LoadAndDelete(token); exists {
-		// One-time use via LoadAndDelete
-		return true
-	}
-	return false
 }
 
 // ListTokensHandler shows the token management page
@@ -137,7 +118,7 @@ func (h *TokenHandlers) ListTokensHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	// Generate CSRF token
-	csrfToken, err := h.generateCSRFToken()
+	csrfToken, err := h.csrf.Generate()
 	if err != nil {
 		log.LogErrorWithFields("token", "Failed to generate CSRF token", map[string]any{
 			"error": err.Error(),
@@ -188,7 +169,7 @@ func (h *TokenHandlers) SetTokenHandler(w http.ResponseWriter, r *http.Request) 
 
 	// Validate CSRF token
 	csrfToken := r.FormValue("csrf_token")
-	if !h.validateCSRFToken(csrfToken) {
+	if !h.csrf.Validate(csrfToken) {
 		jsonwriter.WriteForbidden(w, "Invalid CSRF token")
 		return
 	}
@@ -304,7 +285,7 @@ func (h *TokenHandlers) DeleteTokenHandler(w http.ResponseWriter, r *http.Reques
 
 	// Validate CSRF token
 	csrfToken := r.FormValue("csrf_token")
-	if !h.validateCSRFToken(csrfToken) {
+	if !h.csrf.Validate(csrfToken) {
 		jsonwriter.WriteForbidden(w, "Invalid CSRF token")
 		return
 	}

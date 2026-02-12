@@ -58,11 +58,11 @@ func validateRawConfig(rawConfig map[string]any) error {
 	if proxy, ok := rawConfig["proxy"].(map[string]any); ok {
 		if auth, ok := proxy["auth"].(map[string]any); ok {
 			if kind, ok := auth["kind"].(string); ok && kind == "oauth" {
+				// Validate top-level auth secrets
 				secrets := []struct {
 					name     string
 					required bool
 				}{
-					{"googleClientSecret", true},
 					{"jwtSecret", true},
 					{"encryptionKey", true}, // Always required for OAuth
 				}
@@ -84,6 +84,20 @@ func validateRawConfig(rawConfig map[string]any) error {
 						if secret.name == "encryptionKey" {
 							if storage, ok := auth["storage"].(string); ok && storage != "memory" && storage != "" {
 								return fmt.Errorf("%s is required when using %s storage", secret.name, storage)
+							}
+						}
+					}
+				}
+
+				// Validate IDP secret (clientSecret must be env ref)
+				if idp, ok := auth["idp"].(map[string]any); ok {
+					if clientSecret, exists := idp["clientSecret"]; exists {
+						if _, isString := clientSecret.(string); isString {
+							return fmt.Errorf("idp.clientSecret must use environment variable reference for security")
+						}
+						if refMap, isMap := clientSecret.(map[string]any); isMap {
+							if _, hasEnv := refMap["$env"]; !hasEnv {
+								return fmt.Errorf("idp.clientSecret must use {\"$env\": \"VAR_NAME\"} format")
 							}
 						}
 					}
@@ -148,24 +162,54 @@ func validateOAuthConfig(oauth *OAuthAuthConfig) error {
 	if oauth.Issuer == "" {
 		return fmt.Errorf("issuer is required")
 	}
-	if oauth.GoogleClientID == "" {
-		return fmt.Errorf("googleClientId is required")
+
+	// Validate IDP configuration
+	if oauth.IDP.Provider == "" {
+		return fmt.Errorf("idp.provider is required (google, azure, github, or oidc)")
 	}
-	if oauth.GoogleClientSecret == "" {
-		return fmt.Errorf("googleClientSecret is required")
+	if oauth.IDP.ClientID == "" {
+		return fmt.Errorf("idp.clientId is required")
 	}
-	if oauth.GoogleRedirectURI == "" {
-		return fmt.Errorf("googleRedirectUri is required")
+	if oauth.IDP.ClientSecret == "" {
+		return fmt.Errorf("idp.clientSecret is required")
 	}
+	if oauth.IDP.RedirectURI == "" {
+		return fmt.Errorf("idp.redirectUri is required")
+	}
+
+	// Provider-specific validation
+	switch oauth.IDP.Provider {
+	case "google":
+		// No additional validation needed
+	case "azure":
+		if oauth.IDP.TenantID == "" {
+			return fmt.Errorf("idp.tenantId is required for Azure AD")
+		}
+	case "github":
+		// No additional validation needed
+	case "oidc":
+		// Either discoveryUrl or all manual endpoints required
+		if oauth.IDP.DiscoveryURL == "" {
+			if oauth.IDP.AuthorizationURL == "" || oauth.IDP.TokenURL == "" || oauth.IDP.UserInfoURL == "" {
+				return fmt.Errorf("idp.discoveryUrl or all of (authorizationUrl, tokenUrl, userInfoUrl) required for OIDC")
+			}
+		}
+	default:
+		return fmt.Errorf("unsupported idp.provider: %s (must be google, azure, github, or oidc)", oauth.IDP.Provider)
+	}
+
 	if len(oauth.JWTSecret) < 32 {
 		return fmt.Errorf("jwtSecret must be at least 32 characters (got %d). Generate with: openssl rand -base64 32", len(oauth.JWTSecret))
 	}
 	if len(oauth.EncryptionKey) != 32 {
 		return fmt.Errorf("encryptionKey must be exactly 32 characters (got %d). Generate with: openssl rand -base64 32 | head -c 32", len(oauth.EncryptionKey))
 	}
-	if len(oauth.AllowedDomains) == 0 {
-		return fmt.Errorf("at least one allowed domain is required")
+
+	// Domain or org validation - at least one access control mechanism required
+	if len(oauth.AllowedDomains) == 0 && len(oauth.IDP.AllowedOrgs) == 0 {
+		return fmt.Errorf("at least one of allowedDomains or idp.allowedOrgs is required")
 	}
+
 	if oauth.Storage == "firestore" {
 		if oauth.GCPProject == "" {
 			return fmt.Errorf("gcpProject is required when using firestore storage")

@@ -15,7 +15,11 @@ func TestSecurityScenarios(t *testing.T) {
 	waitForDB(t)
 
 	// Start mcp-front
-	startMCPFront(t, "config/config.test.json")
+	cfg := buildTestConfig("http://localhost:8080", "mcp-front-test",
+		nil,
+		map[string]any{"postgres": testPostgresServer(withBearerTokens("test-token", "alt-test-token"), withLogEnabled())},
+	)
+	startMCPFront(t, writeTestConfig(t, cfg))
 
 	// Wait for server to be ready
 	waitForMCPFront(t)
@@ -78,7 +82,7 @@ func TestSecurityScenarios(t *testing.T) {
 	})
 
 	t.Run("SQLInjectionAttempts", func(t *testing.T) {
-		t.Skip("Skipping SQL injection tests, it's not a responsibility of mcp-front to guard mcp/postgres")
+		t.Skip("Skipping SQL injection tests, it's not a responsibility of mcp-front to guard toolbox")
 
 		client := NewMCPSSEClient("http://localhost:8080")
 		_ = client.Authenticate()
@@ -101,7 +105,7 @@ func TestSecurityScenarios(t *testing.T) {
 
 			// Try to inject via the query parameter
 			_, err := client.SendMCPRequest("tools/call", map[string]any{
-				"name": "query",
+				"name": "execute_sql",
 				"arguments": map[string]any{
 					"query": payload,
 				},
@@ -297,7 +301,11 @@ func TestFailureScenarios(t *testing.T) {
 		// Database is already started by TestMain, just wait for readiness
 		waitForDB(t)
 
-		startMCPFront(t, "config/config.test.json")
+		cfg := buildTestConfig("http://localhost:8080", "mcp-front-test",
+			nil,
+			map[string]any{"postgres": testPostgresServer(withBearerTokens("test-token", "alt-test-token"), withLogEnabled())},
+		)
+		startMCPFront(t, writeTestConfig(t, cfg))
 
 		// Wait for server to be ready
 		waitForMCPFront(t)

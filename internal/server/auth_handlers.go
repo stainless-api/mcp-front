@@ -7,19 +7,19 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/dgellow/mcp-front/internal/auth"
-	"github.com/dgellow/mcp-front/internal/browserauth"
 	"github.com/dgellow/mcp-front/internal/config"
+	"github.com/dgellow/mcp-front/internal/cookie"
 	"github.com/dgellow/mcp-front/internal/crypto"
-	"github.com/dgellow/mcp-front/internal/envutil"
-	"github.com/dgellow/mcp-front/internal/googleauth"
+	"github.com/dgellow/mcp-front/internal/idp"
 	jsonwriter "github.com/dgellow/mcp-front/internal/json"
 	"github.com/dgellow/mcp-front/internal/log"
 	"github.com/dgellow/mcp-front/internal/oauth"
-	"github.com/dgellow/mcp-front/internal/oauthsession"
+	"github.com/dgellow/mcp-front/internal/session"
 	"github.com/dgellow/mcp-front/internal/storage"
 	"github.com/ory/fosite"
 )
@@ -28,6 +28,7 @@ import (
 type AuthHandlers struct {
 	oauthProvider      fosite.OAuth2Provider
 	authConfig         config.OAuthAuthConfig
+	idpProvider        idp.Provider
 	storage            storage.Storage
 	sessionEncryptor   crypto.Encryptor
 	mcpServers         map[string]*config.MCPClientConfig
@@ -37,18 +38,19 @@ type AuthHandlers struct {
 
 // UpstreamOAuthState stores OAuth state during upstream authentication flow (MCP host → mcp-front)
 type UpstreamOAuthState struct {
-	UserInfo     googleauth.UserInfo `json:"user_info"`
-	ClientID     string              `json:"client_id"`
-	RedirectURI  string              `json:"redirect_uri"`
-	Scopes       []string            `json:"scopes"`
-	State        string              `json:"state"`
-	ResponseType string              `json:"response_type"`
+	Identity     idp.Identity `json:"identity"`
+	ClientID     string       `json:"client_id"`
+	RedirectURI  string       `json:"redirect_uri"`
+	Scopes       []string     `json:"scopes"`
+	State        string       `json:"state"`
+	ResponseType string       `json:"response_type"`
 }
 
 // NewAuthHandlers creates new auth handlers with dependency injection
 func NewAuthHandlers(
 	oauthProvider fosite.OAuth2Provider,
 	authConfig config.OAuthAuthConfig,
+	idpProvider idp.Provider,
 	storage storage.Storage,
 	sessionEncryptor crypto.Encryptor,
 	mcpServers map[string]*config.MCPClientConfig,
@@ -57,6 +59,7 @@ func NewAuthHandlers(
 	return &AuthHandlers{
 		oauthProvider:      oauthProvider,
 		authConfig:         authConfig,
+		idpProvider:        idpProvider,
 		storage:            storage,
 		sessionEncryptor:   sessionEncryptor,
 		mcpServers:         mcpServers,
@@ -98,16 +101,29 @@ func (h *AuthHandlers) ProtectedResourceMetadataHandler(w http.ResponseWriter, r
 		return
 	}
 
-	// Workaround mode: return base issuer metadata for broken clients
+	// Workaround mode: return base issuer metadata for broken clients.
+	// This intentionally uses the issuer as the resource (no per-service scoping)
+	// because broken clients don't implement RFC 8707 resource indicators.
+	issuer := h.authConfig.Issuer
 	log.LogWarnWithFields("oauth", "Serving base protected resource metadata (dangerouslyAcceptIssuerAudience enabled)", map[string]any{
-		"issuer": h.authConfig.Issuer,
+		"issuer": issuer,
 	})
 
-	metadata, err := oauth.ProtectedResourceMetadata(h.authConfig.Issuer)
+	authzServerURL, err := oauth.AuthorizationServerMetadataURI(issuer)
 	if err != nil {
 		log.LogError("Failed to build protected resource metadata: %v", err)
 		jsonwriter.WriteInternalServerError(w, "Internal server error")
 		return
+	}
+
+	metadata := map[string]any{
+		"resource":              issuer,
+		"authorization_servers": []string{issuer},
+		"_links": map[string]any{
+			"oauth-authorization-server": map[string]string{
+				"href": authzServerURL,
+			},
+		},
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -207,7 +223,7 @@ func (h *AuthHandlers) AuthorizeHandler(w http.ResponseWriter, r *http.Request) 
 	// In development mode, generate a secure state parameter if missing
 	// This works around bugs in OAuth clients that don't send state
 	stateParam := r.URL.Query().Get("state")
-	if envutil.IsDev() && len(stateParam) == 0 {
+	if config.IsDev() && len(stateParam) == 0 {
 		generatedState := crypto.GenerateSecureToken()
 		log.LogWarn("Development mode: generating state parameter '%s' for buggy client", generatedState)
 		q := r.URL.Query()
@@ -259,14 +275,19 @@ func (h *AuthHandlers) AuthorizeHandler(w http.ResponseWriter, r *http.Request) 
 	}
 
 	state := ar.GetState()
-	h.storage.StoreAuthorizeRequest(state, ar)
+	if err := h.storage.StoreAuthorizeRequest(state, ar); err != nil {
+		log.LogError("Failed to store authorize request: %v", err)
+		h.oauthProvider.WriteAuthorizeError(ctx, w, ar, fosite.ErrServerError.WithHint("Failed to store authorization request"))
+		return
+	}
 
-	authURL := googleauth.GoogleAuthURL(h.authConfig, state)
+	authURL := h.idpProvider.AuthURL(state)
 	http.Redirect(w, r, authURL, http.StatusFound)
 }
 
-// GoogleCallbackHandler handles the callback from Google OAuth
-func (h *AuthHandlers) GoogleCallbackHandler(w http.ResponseWriter, r *http.Request) {
+// IDPCallbackHandler handles the callback from the identity provider.
+// It dispatches to handleBrowserCallback or handleOAuthClientCallback based on the flow type.
+func (h *AuthHandlers) IDPCallbackHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	state := r.URL.Query().Get("state")
@@ -274,7 +295,7 @@ func (h *AuthHandlers) GoogleCallbackHandler(w http.ResponseWriter, r *http.Requ
 
 	if errMsg := r.URL.Query().Get("error"); errMsg != "" {
 		errDesc := r.URL.Query().Get("error_description")
-		log.LogError("Google OAuth error: %s - %s", errMsg, errDesc)
+		log.LogError("OAuth error: %s - %s", errMsg, errDesc)
 		jsonwriter.WriteBadRequest(w, fmt.Sprintf("Authentication failed: %s", errMsg))
 		return
 	}
@@ -293,7 +314,7 @@ func (h *AuthHandlers) GoogleCallbackHandler(w http.ResponseWriter, r *http.Requ
 		isBrowserFlow = true
 		stateToken := strings.TrimPrefix(state, "browser:")
 
-		var browserState browserauth.AuthorizationState
+		var browserState session.AuthorizationState
 		if err := h.oauthStateToken.Verify(stateToken, &browserState); err != nil {
 			log.LogError("Invalid browser state: %v", err)
 			jsonwriter.WriteBadRequest(w, "Invalid state parameter")
@@ -301,7 +322,6 @@ func (h *AuthHandlers) GoogleCallbackHandler(w http.ResponseWriter, r *http.Requ
 		}
 		returnURL = browserState.ReturnURL
 	} else {
-		// OAuth client flow - retrieve stored authorize request
 		var found bool
 		ar, found = h.storage.GetAuthorizeRequest(state)
 		if !found {
@@ -315,7 +335,7 @@ func (h *AuthHandlers) GoogleCallbackHandler(w http.ResponseWriter, r *http.Requ
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	token, err := googleauth.ExchangeCodeForToken(ctx, h.authConfig, code)
+	token, err := h.idpProvider.ExchangeCode(ctx, code)
 	if err != nil {
 		log.LogError("Failed to exchange code: %v", err)
 		if !isBrowserFlow && ar != nil {
@@ -326,10 +346,19 @@ func (h *AuthHandlers) GoogleCallbackHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Validate user
-	userInfo, err := googleauth.ValidateUser(ctx, h.authConfig, token)
+	identity, err := h.idpProvider.UserInfo(ctx, token)
 	if err != nil {
-		log.LogError("User validation failed: %v", err)
+		log.LogError("Failed to fetch user identity: %v", err)
+		if !isBrowserFlow && ar != nil {
+			h.oauthProvider.WriteAuthorizeError(ctx, w, ar, fosite.ErrServerError.WithHint("Failed to fetch user identity"))
+		} else {
+			jsonwriter.WriteInternalServerError(w, "Authentication failed")
+		}
+		return
+	}
+
+	if err := h.validateAccess(identity); err != nil {
+		log.LogError("Access denied: %v", err)
 		if !isBrowserFlow && ar != nil {
 			h.oauthProvider.WriteAuthorizeError(ctx, w, ar, fosite.ErrAccessDenied.WithHint(err.Error()))
 		} else {
@@ -338,65 +367,61 @@ func (h *AuthHandlers) GoogleCallbackHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	log.Logf("User authenticated: %s", userInfo.Email)
+	log.Logf("User authenticated: %s", identity.Email)
 
-	// Store user in database
-	if err := h.storage.UpsertUser(ctx, userInfo.Email); err != nil {
+	if err := h.storage.UpsertUser(ctx, identity.Email); err != nil {
 		log.LogWarnWithFields("auth", "Failed to track user", map[string]any{
-			"email": userInfo.Email,
+			"email": identity.Email,
 			"error": err.Error(),
 		})
 	}
 
 	if isBrowserFlow {
-		// Browser SSO flow - set encrypted session cookie
-		// Browser sessions should last longer than API tokens for better UX
-		sessionDuration := 24 * time.Hour
+		h.handleBrowserCallback(w, r, identity, returnURL)
+	} else {
+		h.handleOAuthClientCallback(ctx, w, r, ar, identity)
+	}
+}
 
-		sessionData := browserauth.SessionCookie{
-			Email:   userInfo.Email,
-			Expires: time.Now().Add(sessionDuration),
-		}
+// handleBrowserCallback handles the browser SSO callback flow: creates an encrypted
+// session cookie and redirects to the return URL.
+func (h *AuthHandlers) handleBrowserCallback(w http.ResponseWriter, r *http.Request, identity *idp.Identity, returnURL string) {
+	sessionDuration := 24 * time.Hour
 
-		// Marshal session data to JSON
-		jsonData, err := json.Marshal(sessionData)
-		if err != nil {
-			log.LogError("Failed to marshal session data: %v", err)
-			jsonwriter.WriteInternalServerError(w, "Failed to create session")
-			return
-		}
+	sessionData := session.BrowserCookie{
+		Email:    identity.Email,
+		Provider: identity.ProviderType,
+		Expires:  time.Now().Add(sessionDuration),
+	}
 
-		// Encrypt session data
-		encryptedData, err := h.sessionEncryptor.Encrypt(string(jsonData))
-		if err != nil {
-			log.LogError("Failed to encrypt session: %v", err)
-			jsonwriter.WriteInternalServerError(w, "Failed to create session")
-			return
-		}
-
-		// Set secure session cookie
-		http.SetCookie(w, &http.Cookie{
-			Name:     "mcp_session",
-			Value:    encryptedData,
-			Path:     "/",
-			HttpOnly: true,
-			Secure:   !envutil.IsDev(),
-			SameSite: http.SameSiteStrictMode,
-			MaxAge:   int(sessionDuration.Seconds()),
-		})
-
-		log.LogInfoWithFields("auth", "Browser SSO session created", map[string]any{
-			"user":      userInfo.Email,
-			"duration":  sessionDuration,
-			"returnURL": returnURL,
-		})
-
-		// Redirect to return URL
-		http.Redirect(w, r, returnURL, http.StatusFound)
+	jsonData, err := json.Marshal(sessionData)
+	if err != nil {
+		log.LogError("Failed to marshal session data: %v", err)
+		jsonwriter.WriteInternalServerError(w, "Failed to create session")
 		return
 	}
 
-	// OAuth client flow - check if any services need OAuth
+	encryptedData, err := h.sessionEncryptor.Encrypt(string(jsonData))
+	if err != nil {
+		log.LogError("Failed to encrypt session: %v", err)
+		jsonwriter.WriteInternalServerError(w, "Failed to create session")
+		return
+	}
+
+	cookie.SetSession(w, encryptedData, sessionDuration)
+
+	log.LogInfoWithFields("auth", "Browser SSO session created", map[string]any{
+		"user":      identity.Email,
+		"duration":  sessionDuration,
+		"returnURL": returnURL,
+	})
+
+	http.Redirect(w, r, returnURL, http.StatusFound)
+}
+
+// handleOAuthClientCallback handles the OAuth client callback flow: checks for
+// service auth needs, creates a fosite session, and issues the authorize response.
+func (h *AuthHandlers) handleOAuthClientCallback(ctx context.Context, w http.ResponseWriter, r *http.Request, ar fosite.AuthorizeRequester, identity *idp.Identity) {
 	needsServiceAuth := false
 	for _, serverConfig := range h.mcpServers {
 		if serverConfig.RequiresUserToken &&
@@ -408,7 +433,7 @@ func (h *AuthHandlers) GoogleCallbackHandler(w http.ResponseWriter, r *http.Requ
 	}
 
 	if needsServiceAuth {
-		stateData, err := h.signUpstreamOAuthState(ar, userInfo)
+		stateData, err := h.signUpstreamOAuthState(ar, *identity)
 		if err != nil {
 			log.LogError("Failed to sign OAuth state: %v", err)
 			h.oauthProvider.WriteAuthorizeError(ctx, w, ar, fosite.ErrServerError.WithHint("Failed to prepare service authentication"))
@@ -419,20 +444,16 @@ func (h *AuthHandlers) GoogleCallbackHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Create session for token issuance
-	// Note: Audience claims are stored in the authorize request (ar.GetGrantedAudience())
-	// and will be automatically propagated to access tokens by fosite
-	session := &oauthsession.Session{
+	session := &session.OAuthSession{
 		DefaultSession: &fosite.DefaultSession{
 			ExpiresAt: map[fosite.TokenType]time.Time{
 				fosite.AccessToken:  time.Now().Add(h.authConfig.TokenTTL),
 				fosite.RefreshToken: time.Now().Add(h.authConfig.RefreshTokenTTL),
 			},
 		},
-		UserInfo: userInfo,
+		Identity: *identity,
 	}
 
-	// Accept the authorization request
 	response, err := h.oauthProvider.NewAuthorizeResponse(ctx, ar, session)
 	if err != nil {
 		log.LogError("Authorize response error: %v", err)
@@ -451,7 +472,7 @@ func (h *AuthHandlers) TokenHandler(w http.ResponseWriter, r *http.Request) {
 	// Create session for the token exchange
 	// Note: We create our custom Session type here, and fosite will populate it
 	// with the session data from the authorization code during NewAccessRequest
-	session := &oauthsession.Session{DefaultSession: &fosite.DefaultSession{}}
+	session := &session.OAuthSession{DefaultSession: &fosite.DefaultSession{}}
 
 	// Handle token request - this retrieves the session from the authorization code
 	accessRequest, err := h.oauthProvider.NewAccessRequest(ctx, r, session)
@@ -511,7 +532,7 @@ func (h *AuthHandlers) RegisterHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Parse client request
-	redirectURIs, scopes, err := googleauth.ParseClientRequest(metadata)
+	redirectURIs, scopes, err := oauth.ParseClientRegistration(metadata)
 	if err != nil {
 		log.LogError("Client request parsing error: %v", err)
 		jsonwriter.WriteBadRequest(w, err.Error())
@@ -560,9 +581,9 @@ func (h *AuthHandlers) RegisterHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // signUpstreamOAuthState signs upstream OAuth state for secure storage
-func (h *AuthHandlers) signUpstreamOAuthState(ar fosite.AuthorizeRequester, userInfo googleauth.UserInfo) (string, error) {
+func (h *AuthHandlers) signUpstreamOAuthState(ar fosite.AuthorizeRequester, identity idp.Identity) (string, error) {
 	state := UpstreamOAuthState{
-		UserInfo:     userInfo,
+		Identity:     identity,
 		ClientID:     ar.GetClient().GetID(),
 		RedirectURI:  ar.GetRedirectURI().String(),
 		Scopes:       ar.GetRequestedScopes(),
@@ -580,6 +601,28 @@ func (h *AuthHandlers) verifyUpstreamOAuthState(signedState string) (*UpstreamOA
 		return nil, err
 	}
 	return &state, nil
+}
+
+// validateAccess checks whether an authenticated identity meets the configured access policy.
+func (h *AuthHandlers) validateAccess(identity *idp.Identity) error {
+	if len(h.authConfig.AllowedDomains) > 0 &&
+		!slices.Contains(h.authConfig.AllowedDomains, identity.Domain) {
+		return fmt.Errorf("domain '%s' is not allowed. Contact your administrator", identity.Domain)
+	}
+	if len(h.authConfig.IDP.AllowedOrgs) > 0 &&
+		!hasOverlap(identity.Organizations, h.authConfig.IDP.AllowedOrgs) {
+		return fmt.Errorf("user is not a member of any allowed organization. Contact your administrator")
+	}
+	return nil
+}
+
+func hasOverlap(a, b []string) bool {
+	for _, x := range a {
+		if slices.Contains(b, x) {
+			return true
+		}
+	}
+	return false
 }
 
 // ServiceSelectionHandler shows the interstitial page for selecting services to connect
@@ -602,7 +645,7 @@ func (h *AuthHandlers) ServiceSelectionHandler(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	userEmail := upstreamOAuthState.UserInfo.Email
+	userEmail := upstreamOAuthState.Identity.Email
 
 	// Prepare template data
 	returnURL := fmt.Sprintf("/oauth/services?state=%s", url.QueryEscape(signedState))
@@ -724,7 +767,7 @@ func (h *AuthHandlers) CompleteOAuthHandler(w http.ResponseWriter, r *http.Reque
 			Client:         client,
 			RequestedScope: upstreamOAuthState.Scopes,
 			GrantedScope:   upstreamOAuthState.Scopes,
-			Session:        &oauthsession.Session{DefaultSession: &fosite.DefaultSession{}},
+			Session:        &session.OAuthSession{DefaultSession: &fosite.DefaultSession{}},
 		},
 	}
 
@@ -737,14 +780,14 @@ func (h *AuthHandlers) CompleteOAuthHandler(w http.ResponseWriter, r *http.Reque
 	ar.RedirectURI = redirectURI
 
 	// Create session with user info
-	session := &oauthsession.Session{
+	session := &session.OAuthSession{
 		DefaultSession: &fosite.DefaultSession{
 			ExpiresAt: map[fosite.TokenType]time.Time{
 				fosite.AccessToken:  time.Now().Add(h.authConfig.TokenTTL),
 				fosite.RefreshToken: time.Now().Add(h.authConfig.RefreshTokenTTL),
 			},
 		},
-		UserInfo: upstreamOAuthState.UserInfo,
+		Identity: upstreamOAuthState.Identity,
 	}
 	ar.SetSession(session)
 

@@ -39,15 +39,26 @@ Create `config.json`:
 
 ```json
 {
-  "version": "1.0",
+  "version": "v0.0.1-DEV_EDITION_EXPECT_CHANGES",
   "proxy": {
     "name": "Company MCP Proxy",
-    "baseUrl": "https://mcp.company.com",
+    "baseURL": "https://mcp.company.com",
     "addr": ":8080",
     "auth": {
       "kind": "oauth",
       "issuer": "https://mcp.company.com",
-      "allowedDomains": ["company.com"]
+      "idp": {
+        "provider": "google",
+        "clientId": { "$env": "GOOGLE_CLIENT_ID" },
+        "clientSecret": { "$env": "GOOGLE_CLIENT_SECRET" },
+        "redirectUri": "https://mcp.company.com/oauth/callback"
+      },
+      "allowedDomains": ["company.com"],
+      "allowedOrigins": ["https://claude.ai"],
+      "tokenTtl": "24h",
+      "storage": "memory",
+      "jwtSecret": { "$env": "JWT_SECRET" },
+      "encryptionKey": { "$env": "ENCRYPTION_KEY" }
     }
   },
   "mcpServers": {
@@ -80,6 +91,7 @@ Create `config.json`:
 export GOOGLE_CLIENT_ID="your-client-id.apps.googleusercontent.com"
 export GOOGLE_CLIENT_SECRET="your-client-secret"
 export JWT_SECRET=$(openssl rand -base64 32)
+export ENCRYPTION_KEY=$(openssl rand -base64 32)
 ```
 
 ## 4. Run with Docker
@@ -89,6 +101,7 @@ docker run -p 8080:8080 \
   -e GOOGLE_CLIENT_ID \
   -e GOOGLE_CLIENT_SECRET \
   -e JWT_SECRET \
+  -e ENCRYPTION_KEY \
   -v $(pwd)/config.json:/config.json \
   ghcr.io/dgellow/mcp-front:latest
 ```

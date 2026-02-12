@@ -49,13 +49,16 @@ For production, use OAuth with Google. Claude redirects users to Google for auth
   "auth": {
     "kind": "oauth",
     "issuer": "https://mcp.company.com",
+    "idp": {
+      "provider": "google",
+      "clientId": { "$env": "GOOGLE_CLIENT_ID" },
+      "clientSecret": { "$env": "GOOGLE_CLIENT_SECRET" },
+      "redirectUri": "https://mcp.company.com/oauth/callback"
+    },
     "allowedDomains": ["company.com"],
     "allowedOrigins": ["https://claude.ai"],
     "tokenTtl": "24h",
     "storage": "memory",
-    "googleClientId": { "$env": "GOOGLE_CLIENT_ID" },
-    "googleClientSecret": { "$env": "GOOGLE_CLIENT_SECRET" },
-    "googleRedirectUri": "https://mcp.company.com/oauth/callback",
     "jwtSecret": { "$env": "JWT_SECRET" },
     "encryptionKey": { "$env": "ENCRYPTION_KEY" }
   }
@@ -66,7 +69,7 @@ The `issuer` should match your `baseURL`. `allowedDomains` restricts access to s
 
 `tokenTtl` controls how long JWT tokens are valid. Shorter times are more secure but require more frequent logins.
 
-Security requirements: `googleClientSecret`, `jwtSecret`, and `encryptionKey` must be environment variables. The JWT secret must be at least 32 bytes. The encryption key must be exactly 32 bytes.
+Security requirements: `idp.clientSecret`, `jwtSecret`, and `encryptionKey` must be environment variables. The JWT secret must be at least 32 bytes. The encryption key must be exactly 32 bytes.
 
 For production, set `storage` to "firestore" and add `gcpProject`, `firestoreDatabase`, and `firestoreCollection` fields.
 
@@ -345,13 +348,16 @@ Set `MCP_FRONT_ENV=development` when testing OAuth locally. It allows http:// UR
     "auth": {
       "kind": "oauth",
       "issuer": "https://mcp.company.com",
+      "idp": {
+        "provider": "google",
+        "clientId": { "$env": "GOOGLE_CLIENT_ID" },
+        "clientSecret": { "$env": "GOOGLE_CLIENT_SECRET" },
+        "redirectUri": "https://mcp.company.com/oauth/callback"
+      },
       "allowedDomains": ["company.com"],
       "allowedOrigins": ["https://claude.ai"],
       "tokenTtl": "4h",
       "storage": "firestore",
-      "googleClientId": { "$env": "GOOGLE_CLIENT_ID" },
-      "googleClientSecret": { "$env": "GOOGLE_CLIENT_SECRET" },
-      "googleRedirectUri": "https://mcp.company.com/oauth/callback",
       "jwtSecret": { "$env": "JWT_SECRET" },
       "encryptionKey": { "$env": "ENCRYPTION_KEY" },
       "gcpProject": { "$env": "GOOGLE_CLOUD_PROJECT" },

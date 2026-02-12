@@ -37,17 +37,20 @@ func TestHealthEndpoint(t *testing.T) {
 func TestOAuthEndpointsCORS(t *testing.T) {
 	// Setup OAuth config
 	oauthConfig := config.OAuthAuthConfig{
-		Kind:               config.AuthKindOAuth,
-		Issuer:             "https://test.example.com",
-		GoogleClientID:     "test-client-id",
-		GoogleClientSecret: config.Secret("test-client-secret"),
-		GoogleRedirectURI:  "https://test.example.com/oauth/callback",
-		JWTSecret:          config.Secret(strings.Repeat("a", 32)),
-		EncryptionKey:      config.Secret(strings.Repeat("b", 32)),
-		TokenTTL:           time.Hour,
-		RefreshTokenTTL:    30 * 24 * time.Hour,
-		Storage:            "memory",
-		AllowedOrigins:     []string{"http://localhost:6274"},
+		Kind:   config.AuthKindOAuth,
+		Issuer: "https://test.example.com",
+		IDP: config.IDPConfig{
+			Provider:     "google",
+			ClientID:     "test-client-id",
+			ClientSecret: config.Secret("test-client-secret"),
+			RedirectURI:  "https://test.example.com/oauth/callback",
+		},
+		JWTSecret:       config.Secret(strings.Repeat("a", 32)),
+		EncryptionKey:   config.Secret(strings.Repeat("b", 32)),
+		TokenTTL:        time.Hour,
+		RefreshTokenTTL: 30 * 24 * time.Hour,
+		Storage:         "memory",
+		AllowedOrigins:  []string{"http://localhost:6274"},
 	}
 
 	store := storage.NewMemoryStorage()
@@ -58,10 +61,12 @@ func TestOAuthEndpointsCORS(t *testing.T) {
 	sessionEncryptor, err := oauth.NewSessionEncryptor([]byte(oauthConfig.EncryptionKey))
 	require.NoError(t, err)
 	serviceOAuthClient := auth.NewServiceOAuthClient(store, "https://test.example.com", []byte(strings.Repeat("k", 32)))
+	mockIDP := &mockIDPProvider{}
 
 	authHandlers := NewAuthHandlers(
 		oauthProvider,
 		oauthConfig,
+		mockIDP,
 		store,
 		sessionEncryptor,
 		map[string]*config.MCPClientConfig{},

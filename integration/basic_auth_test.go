@@ -10,8 +10,11 @@ import (
 )
 
 func TestBasicAuth(t *testing.T) {
-	// Start mcp-front with basic auth config
-	startMCPFront(t, "config/config.basic-auth-test.json",
+	cfg := buildTestConfig("http://localhost:8080", "mcp-front-basic-auth-test",
+		nil,
+		map[string]any{"postgres": testPostgresServer(withBasicAuth("admin", "ADMIN_PASSWORD"), withBasicAuth("user", "USER_PASSWORD"))},
+	)
+	startMCPFront(t, writeTestConfig(t, cfg),
 		"ADMIN_PASSWORD=adminpass123",
 		"USER_PASSWORD=userpass456",
 	)

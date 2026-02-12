@@ -14,6 +14,7 @@ import (
 	"github.com/dgellow/mcp-front/internal/client"
 	"github.com/dgellow/mcp-front/internal/config"
 	"github.com/dgellow/mcp-front/internal/crypto"
+	"github.com/dgellow/mcp-front/internal/idp"
 	"github.com/dgellow/mcp-front/internal/inline"
 	"github.com/dgellow/mcp-front/internal/log"
 	"github.com/dgellow/mcp-front/internal/oauth"
@@ -52,7 +53,7 @@ func NewMCPFront(ctx context.Context, cfg config.Config) (*MCPFront, error) {
 	}
 
 	// Setup authentication (OAuth components and service client)
-	oauthProvider, sessionEncryptor, authConfig, serviceOAuthClient, err := setupAuthentication(ctx, cfg, store)
+	oauthProvider, idpProvider, sessionEncryptor, authConfig, serviceOAuthClient, err := setupAuthentication(ctx, cfg, store)
 	if err != nil {
 		return nil, fmt.Errorf("failed to setup authentication: %w", err)
 	}
@@ -98,6 +99,7 @@ func NewMCPFront(ctx context.Context, cfg config.Config) (*MCPFront, error) {
 		cfg,
 		store,
 		oauthProvider,
+		idpProvider,
 		sessionEncryptor,
 		authConfig,
 		serviceOAuthClient,
@@ -227,32 +229,42 @@ func setupStorage(ctx context.Context, cfg config.Config) (storage.Storage, erro
 }
 
 // setupAuthentication creates individual OAuth components using clean constructors
-func setupAuthentication(ctx context.Context, cfg config.Config, store storage.Storage) (fosite.OAuth2Provider, crypto.Encryptor, config.OAuthAuthConfig, *auth.ServiceOAuthClient, error) {
+func setupAuthentication(ctx context.Context, cfg config.Config, store storage.Storage) (fosite.OAuth2Provider, idp.Provider, crypto.Encryptor, config.OAuthAuthConfig, *auth.ServiceOAuthClient, error) {
 	oauthAuth := cfg.Proxy.Auth
 	if oauthAuth == nil {
 		// OAuth not configured
-		return nil, nil, config.OAuthAuthConfig{}, nil, nil
+		return nil, nil, nil, config.OAuthAuthConfig{}, nil, nil
 	}
 
 	log.LogDebug("initializing OAuth components")
 
+	// Create identity provider
+	idpProvider, err := idp.NewProvider(oauthAuth.IDP)
+	if err != nil {
+		return nil, nil, nil, config.OAuthAuthConfig{}, nil, fmt.Errorf("failed to create identity provider: %w", err)
+	}
+
+	log.LogInfoWithFields("mcpfront", "Identity provider configured", map[string]any{
+		"type": idpProvider.Type(),
+	})
+
 	// Generate or validate JWT secret using clean constructor
 	jwtSecret, err := oauth.GenerateJWTSecret(string(oauthAuth.JWTSecret))
 	if err != nil {
-		return nil, nil, config.OAuthAuthConfig{}, nil, fmt.Errorf("failed to setup JWT secret: %w", err)
+		return nil, nil, nil, config.OAuthAuthConfig{}, nil, fmt.Errorf("failed to setup JWT secret: %w", err)
 	}
 
 	// Create session encryptor using clean constructor
 	encryptionKey := []byte(oauthAuth.EncryptionKey)
 	sessionEncryptor, err := oauth.NewSessionEncryptor(encryptionKey)
 	if err != nil {
-		return nil, nil, config.OAuthAuthConfig{}, nil, fmt.Errorf("failed to create session encryptor: %w", err)
+		return nil, nil, nil, config.OAuthAuthConfig{}, nil, fmt.Errorf("failed to create session encryptor: %w", err)
 	}
 
 	// Create OAuth provider using clean constructor
 	oauthProvider, err := oauth.NewOAuthProvider(*oauthAuth, store, jwtSecret)
 	if err != nil {
-		return nil, nil, config.OAuthAuthConfig{}, nil, fmt.Errorf("failed to create OAuth provider: %w", err)
+		return nil, nil, nil, config.OAuthAuthConfig{}, nil, fmt.Errorf("failed to create OAuth provider: %w", err)
 	}
 
 	// Create OAuth client for service authentication and token refresh
@@ -279,7 +291,7 @@ func setupAuthentication(ctx context.Context, cfg config.Config, store storage.S
 		}
 	}
 
-	return oauthProvider, sessionEncryptor, *oauthAuth, serviceOAuthClient, nil
+	return oauthProvider, idpProvider, sessionEncryptor, *oauthAuth, serviceOAuthClient, nil
 }
 
 // buildHTTPHandler creates the complete HTTP handler with all routing and middleware
@@ -287,6 +299,7 @@ func buildHTTPHandler(
 	cfg config.Config,
 	storage storage.Storage,
 	oauthProvider fosite.OAuth2Provider,
+	idpProvider idp.Provider,
 	sessionEncryptor crypto.Encryptor,
 	authConfig config.OAuthAuthConfig,
 	serviceOAuthClient *auth.ServiceOAuthClient,
@@ -337,6 +350,7 @@ func buildHTTPHandler(
 		authHandlers := server.NewAuthHandlers(
 			oauthProvider,
 			authConfig,
+			idpProvider,
 			storage,
 			sessionEncryptor,
 			cfg.MCPServers,
@@ -352,7 +366,7 @@ func buildHTTPHandler(
 		// Returns 404 by default, or base issuer metadata if dangerouslyAcceptIssuerAudience is enabled
 		mux.Handle(route("/.well-known/oauth-protected-resource"), server.ChainMiddleware(http.HandlerFunc(authHandlers.ProtectedResourceMetadataHandler), oauthMiddleware...))
 		mux.Handle(route("/authorize"), server.ChainMiddleware(http.HandlerFunc(authHandlers.AuthorizeHandler), oauthMiddleware...))
-		mux.Handle(route("/oauth/callback"), server.ChainMiddleware(http.HandlerFunc(authHandlers.GoogleCallbackHandler), oauthMiddleware...))
+		mux.Handle(route("/oauth/callback"), server.ChainMiddleware(http.HandlerFunc(authHandlers.IDPCallbackHandler), oauthMiddleware...))
 		mux.Handle(route("/token"), server.ChainMiddleware(http.HandlerFunc(authHandlers.TokenHandler), oauthMiddleware...))
 		mux.Handle(route("/register"), server.ChainMiddleware(http.HandlerFunc(authHandlers.RegisterHandler), oauthMiddleware...))
 		mux.Handle(route("/clients/{client_id}"), server.ChainMiddleware(http.HandlerFunc(authHandlers.ClientMetadataHandler), oauthMiddleware...))
@@ -361,12 +375,12 @@ func buildHTTPHandler(
 		tokenMiddleware := []server.MiddlewareFunc{
 			corsMiddleware,
 			tokenLogger,
-			server.NewBrowserSSOMiddleware(authConfig, sessionEncryptor, browserStateToken),
+			server.NewBrowserSSOMiddleware(authConfig, idpProvider, sessionEncryptor, browserStateToken),
 			mcpRecover,
 		}
 
 		// Create token handlers
-		tokenHandlers := server.NewTokenHandlers(storage, cfg.MCPServers, true, serviceOAuthClient)
+		tokenHandlers := server.NewTokenHandlers(storage, cfg.MCPServers, true, serviceOAuthClient, []byte(authConfig.EncryptionKey))
 
 		// Token management UI endpoints
 		mux.Handle(route("/my/tokens"), server.ChainMiddleware(http.HandlerFunc(tokenHandlers.ListTokensHandler), tokenMiddleware...))
@@ -407,7 +421,7 @@ func buildHTTPHandler(
 			}
 		} else {
 			// For stdio/SSE servers
-			if isStdioServer(serverConfig) {
+			if serverConfig.IsStdio() {
 				sseServer, mcpServer, err = buildStdioSSEServer(serverName, baseURL, sessionManager)
 				if err != nil {
 					return nil, fmt.Errorf("failed to create SSE server for %s: %w", serverName, err)
@@ -475,7 +489,7 @@ func buildHTTPHandler(
 		// Add browser SSO if OAuth is enabled
 		if oauthProvider != nil {
 			// Reuse the same browserStateToken created earlier for consistency
-			adminMiddleware = append(adminMiddleware, server.NewBrowserSSOMiddleware(authConfig, sessionEncryptor, browserStateToken))
+			adminMiddleware = append(adminMiddleware, server.NewBrowserSSOMiddleware(authConfig, idpProvider, sessionEncryptor, browserStateToken))
 		}
 
 		// Add admin check middleware
@@ -590,9 +604,4 @@ func buildStdioSSEServer(serverName, baseURL string, sessionManager *client.Stdi
 	)
 
 	return sseServer, mcpServer, nil
-}
-
-// isStdioServer checks if this is a stdio-based server
-func isStdioServer(cfg *config.MCPClientConfig) bool {
-	return cfg.TransportType == config.MCPClientTypeStdio
 }

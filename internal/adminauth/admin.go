@@ -22,8 +22,16 @@ func IsAdmin(ctx context.Context, email string, adminConfig *config.AdminConfig,
 		return true
 	}
 
-	// Check if user is a promoted admin in storage
+	// Check if user is a promoted admin in storage.
+	// Try exact match first (O(1)), fall back to case-insensitive scan
+	// since emails may be stored with different casing.
 	if store != nil {
+		user, err := store.GetUser(ctx, normalizedEmail)
+		if err == nil {
+			return user.IsAdmin
+		}
+
+		// Fallback: case-insensitive scan for emails stored with different casing
 		users, err := store.GetAllUsers(ctx)
 		if err == nil {
 			for _, user := range users {
