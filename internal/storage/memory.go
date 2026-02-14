@@ -3,89 +3,57 @@ package storage
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/dgellow/mcp-front/internal/log"
-	"github.com/ory/fosite"
-	"github.com/ory/fosite/storage"
+	"github.com/dgellow/mcp-front/internal/oauth"
 )
 
-// Ensure MemoryStorage implements required interfaces
 var _ Storage = (*MemoryStorage)(nil)
-var _ fosite.Storage = (*MemoryStorage)(nil)
 
-// MemoryStorage is a simple storage layer - only stores and retrieves data
-// It extends the MemoryStore with thread-safe client management
 type MemoryStorage struct {
-	*storage.MemoryStore
-	stateCache      sync.Map                // map[string]fosite.AuthorizeRequester
-	clients         map[string]*Client      // Our client storage with metadata
-	clientsMutex    sync.RWMutex            // For thread-safe client access
-	userTokens      map[string]*StoredToken // map["email:service"] = token
+	clients         map[string]*Client
+	clientsMutex    sync.RWMutex
+	grants          map[string]*oauth.Grant
+	grantsMutex     sync.Mutex
+	userTokens      map[string]*StoredToken
 	userTokensMutex sync.RWMutex
-	users           map[string]*UserInfo // map[email] = UserInfo
+	users           map[string]*UserInfo
 	usersMutex      sync.RWMutex
-	sessions        map[string]*ActiveSession // map[sessionID] = ActiveSession
+	sessions        map[string]*ActiveSession
 	sessionsMutex   sync.RWMutex
 }
 
-// NewMemoryStorage creates a new storage instance
 func NewMemoryStorage() *MemoryStorage {
 	return &MemoryStorage{
-		MemoryStore: storage.NewMemoryStore(),
-		clients:     make(map[string]*Client),
-		userTokens:  make(map[string]*StoredToken),
-		users:       make(map[string]*UserInfo),
-		sessions:    make(map[string]*ActiveSession),
+		clients:    make(map[string]*Client),
+		grants:     make(map[string]*oauth.Grant),
+		userTokens: make(map[string]*StoredToken),
+		users:      make(map[string]*UserInfo),
+		sessions:   make(map[string]*ActiveSession),
 	}
 }
 
-// StoreAuthorizeRequest stores an authorize request with state
-func (s *MemoryStorage) StoreAuthorizeRequest(state string, req fosite.AuthorizeRequester) error {
-	s.stateCache.Store(state, req)
-	return nil
-}
-
-// GetAuthorizeRequest retrieves an authorize request by state (one-time use)
-func (s *MemoryStorage) GetAuthorizeRequest(state string) (fosite.AuthorizeRequester, bool) {
-	if req, ok := s.stateCache.Load(state); ok {
-		s.stateCache.Delete(state) // One-time use
-		return req.(fosite.AuthorizeRequester), true
-	}
-	return nil, false
-}
-
-// GetClient implements fosite.Storage interface
-func (s *MemoryStorage) GetClient(_ context.Context, id string) (fosite.Client, error) {
+func (s *MemoryStorage) GetClient(_ context.Context, id string) (*Client, error) {
 	s.clientsMutex.RLock()
 	defer s.clientsMutex.RUnlock()
 
 	client, ok := s.clients[id]
 	if !ok {
-		return nil, fosite.ErrNotFound
+		return nil, ErrClientNotFound
 	}
-	return client.ToFositeClient(), nil
-}
-
-func (s *MemoryStorage) GetClientWithMetadata(ctx context.Context, clientID string) (*Client, error) {
-	s.clientsMutex.RLock()
-	defer s.clientsMutex.RUnlock()
-
-	client, ok := s.clients[clientID]
-	if !ok {
-		return nil, fosite.ErrNotFound
-	}
-	return client, nil
+	return client.clone(), nil
 }
 
 func (s *MemoryStorage) CreateClient(ctx context.Context, clientID string, redirectURIs []string, scopes []string, issuer string) (*Client, error) {
 	client := &Client{
 		ID:            clientID,
 		Secret:        nil,
-		RedirectURIs:  redirectURIs,
-		Scopes:        scopes,
+		RedirectURIs:  slices.Clone(redirectURIs),
+		Scopes:        slices.Clone(scopes),
 		GrantTypes:    []string{"authorization_code", "refresh_token"},
 		ResponseTypes: []string{"code"},
 		Audience:      []string{issuer},
@@ -100,15 +68,15 @@ func (s *MemoryStorage) CreateClient(ctx context.Context, clientID string, redir
 
 	log.Logf("Created client %s, redirect_uris: %v, scopes: %v", clientID, redirectURIs, scopes)
 	log.Logf("Total clients in storage: %d", clientCount)
-	return client, nil
+	return client.clone(), nil
 }
 
 func (s *MemoryStorage) CreateConfidentialClient(ctx context.Context, clientID string, hashedSecret []byte, redirectURIs []string, scopes []string, issuer string) (*Client, error) {
 	client := &Client{
 		ID:            clientID,
-		Secret:        hashedSecret,
-		RedirectURIs:  redirectURIs,
-		Scopes:        scopes,
+		Secret:        slices.Clone(hashedSecret),
+		RedirectURIs:  slices.Clone(redirectURIs),
+		Scopes:        slices.Clone(scopes),
 		GrantTypes:    []string{"authorization_code", "refresh_token"},
 		ResponseTypes: []string{"code"},
 		Audience:      []string{issuer},
@@ -123,17 +91,34 @@ func (s *MemoryStorage) CreateConfidentialClient(ctx context.Context, clientID s
 
 	log.Logf("Created confidential client %s, redirect_uris: %v, scopes: %v", clientID, redirectURIs, scopes)
 	log.Logf("Total clients in storage: %d", clientCount)
-	return client, nil
+	return client.clone(), nil
+}
+
+func (s *MemoryStorage) StoreGrant(ctx context.Context, code string, grant *oauth.Grant) error {
+	s.grantsMutex.Lock()
+	defer s.grantsMutex.Unlock()
+	s.grants[code] = grant
+	return nil
+}
+
+func (s *MemoryStorage) ConsumeGrant(ctx context.Context, code string) (*oauth.Grant, error) {
+	s.grantsMutex.Lock()
+	defer s.grantsMutex.Unlock()
+
+	grant, ok := s.grants[code]
+	if !ok {
+		return nil, ErrGrantNotFound
+	}
+	delete(s.grants, code)
+	return grant, nil
 }
 
 // User token methods
 
-// makeUserTokenKey creates a key for the user token map
 func (s *MemoryStorage) makeUserTokenKey(userEmail, service string) string {
 	return userEmail + ":" + service
 }
 
-// GetUserToken retrieves a user's token for a specific service
 func (s *MemoryStorage) GetUserToken(ctx context.Context, userEmail, service string) (*StoredToken, error) {
 	s.userTokensMutex.RLock()
 	defer s.userTokensMutex.RUnlock()
@@ -143,10 +128,10 @@ func (s *MemoryStorage) GetUserToken(ctx context.Context, userEmail, service str
 	if !exists {
 		return nil, ErrUserTokenNotFound
 	}
-	return token, nil
+	tokenCopy := *token
+	return &tokenCopy, nil
 }
 
-// SetUserToken stores or updates a user's token for a specific service
 func (s *MemoryStorage) SetUserToken(ctx context.Context, userEmail, service string, token *StoredToken) error {
 	if token == nil {
 		return fmt.Errorf("token cannot be nil")
@@ -160,7 +145,6 @@ func (s *MemoryStorage) SetUserToken(ctx context.Context, userEmail, service str
 	return nil
 }
 
-// DeleteUserToken removes a user's token for a specific service
 func (s *MemoryStorage) DeleteUserToken(ctx context.Context, userEmail, service string) error {
 	s.userTokensMutex.Lock()
 	defer s.userTokensMutex.Unlock()
@@ -170,7 +154,6 @@ func (s *MemoryStorage) DeleteUserToken(ctx context.Context, userEmail, service 
 	return nil
 }
 
-// ListUserServices returns all services for which a user has configured tokens
 func (s *MemoryStorage) ListUserServices(ctx context.Context, userEmail string) ([]string, error) {
 	s.userTokensMutex.RLock()
 	defer s.userTokensMutex.RUnlock()
@@ -186,7 +169,6 @@ func (s *MemoryStorage) ListUserServices(ctx context.Context, userEmail string) 
 	return services, nil
 }
 
-// UpsertUser creates or updates a user's last seen time
 func (s *MemoryStorage) UpsertUser(ctx context.Context, email string) error {
 	s.usersMutex.Lock()
 	defer s.usersMutex.Unlock()
@@ -205,7 +187,6 @@ func (s *MemoryStorage) UpsertUser(ctx context.Context, email string) error {
 	return nil
 }
 
-// GetUser returns a single user by email
 func (s *MemoryStorage) GetUser(ctx context.Context, email string) (*UserInfo, error) {
 	s.usersMutex.RLock()
 	defer s.usersMutex.RUnlock()
@@ -218,7 +199,6 @@ func (s *MemoryStorage) GetUser(ctx context.Context, email string) (*UserInfo, e
 	return &userCopy, nil
 }
 
-// GetAllUsers returns all users
 func (s *MemoryStorage) GetAllUsers(ctx context.Context) ([]UserInfo, error) {
 	s.usersMutex.RLock()
 	defer s.usersMutex.RUnlock()
@@ -230,7 +210,6 @@ func (s *MemoryStorage) GetAllUsers(ctx context.Context) ([]UserInfo, error) {
 	return users, nil
 }
 
-// UpdateUserStatus updates a user's enabled status
 func (s *MemoryStorage) UpdateUserStatus(ctx context.Context, email string, enabled bool) error {
 	s.usersMutex.Lock()
 	defer s.usersMutex.Unlock()
@@ -239,35 +218,29 @@ func (s *MemoryStorage) UpdateUserStatus(ctx context.Context, email string, enab
 	if !exists {
 		return ErrUserNotFound
 	}
-	// Create a copy to avoid modifying the struct directly
 	userCopy := *user
 	userCopy.Enabled = enabled
 	s.users[email] = &userCopy
 	return nil
 }
 
-// DeleteUser removes a user from storage
 func (s *MemoryStorage) DeleteUser(ctx context.Context, email string) error {
-	s.usersMutex.Lock()
-	defer s.usersMutex.Unlock()
-
-	delete(s.users, email)
-
-	// Also delete all user tokens
 	s.userTokensMutex.Lock()
-	defer s.userTokensMutex.Unlock()
-
 	prefix := email + ":"
 	for key := range s.userTokens {
 		if strings.HasPrefix(key, prefix) {
 			delete(s.userTokens, key)
 		}
 	}
+	s.userTokensMutex.Unlock()
+
+	s.usersMutex.Lock()
+	delete(s.users, email)
+	s.usersMutex.Unlock()
 
 	return nil
 }
 
-// SetUserAdmin updates a user's admin status
 func (s *MemoryStorage) SetUserAdmin(ctx context.Context, email string, isAdmin bool) error {
 	s.usersMutex.Lock()
 	defer s.usersMutex.Unlock()
@@ -276,14 +249,12 @@ func (s *MemoryStorage) SetUserAdmin(ctx context.Context, email string, isAdmin 
 	if !exists {
 		return ErrUserNotFound
 	}
-	// Create a copy to avoid modifying the struct directly
 	userCopy := *user
 	userCopy.IsAdmin = isAdmin
 	s.users[email] = &userCopy
 	return nil
 }
 
-// TrackSession creates or updates a session
 func (s *MemoryStorage) TrackSession(ctx context.Context, session ActiveSession) error {
 	s.sessionsMutex.Lock()
 	defer s.sessionsMutex.Unlock()
@@ -299,7 +270,6 @@ func (s *MemoryStorage) TrackSession(ctx context.Context, session ActiveSession)
 	return nil
 }
 
-// GetActiveSessions returns all active sessions
 func (s *MemoryStorage) GetActiveSessions(ctx context.Context) ([]ActiveSession, error) {
 	s.sessionsMutex.RLock()
 	defer s.sessionsMutex.RUnlock()
@@ -311,7 +281,6 @@ func (s *MemoryStorage) GetActiveSessions(ctx context.Context) ([]ActiveSession,
 	return sessions, nil
 }
 
-// RevokeSession removes a session
 func (s *MemoryStorage) RevokeSession(ctx context.Context, sessionID string) error {
 	s.sessionsMutex.Lock()
 	defer s.sessionsMutex.Unlock()

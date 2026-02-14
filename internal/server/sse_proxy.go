@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"io"
+	"mime"
 	"net/http"
 
 	"github.com/dgellow/mcp-front/internal/config"
@@ -65,7 +66,8 @@ func forwardSSEToBackend(ctx context.Context, w http.ResponseWriter, r *http.Req
 
 	// Check if we got an SSE response
 	contentType := resp.Header.Get("Content-Type")
-	if resp.StatusCode != http.StatusOK || contentType != "text/event-stream" {
+	mediaType, _, _ := mime.ParseMediaType(contentType)
+	if resp.StatusCode != http.StatusOK || mediaType != "text/event-stream" {
 		log.LogWarnWithFields("sse_proxy", "Backend did not return SSE response", map[string]any{
 			"status":      resp.StatusCode,
 			"contentType": contentType,

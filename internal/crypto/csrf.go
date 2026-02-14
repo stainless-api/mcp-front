@@ -24,9 +24,9 @@ func NewCSRFProtection(signingKey []byte, ttl time.Duration) CSRFProtection {
 
 // Generate creates a new CSRF token
 func (c *CSRFProtection) Generate() (string, error) {
-	nonce := GenerateSecureToken()
-	if nonce == "" {
-		return "", fmt.Errorf("failed to generate nonce")
+	nonce, err := GenerateSecureToken()
+	if err != nil {
+		return "", fmt.Errorf("failed to generate nonce: %w", err)
 	}
 
 	timestamp := strconv.FormatInt(time.Now().Unix(), 10)

@@ -3,14 +3,18 @@ package storage
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/dgellow/mcp-front/internal/crypto"
+	"github.com/dgellow/mcp-front/internal/idp"
+	"github.com/dgellow/mcp-front/internal/oauth"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/bcrypt"
 )
 
 func TestMemoryStorageConfidentialClient(t *testing.T) {
-	storage := NewMemoryStorage()
+	store := NewMemoryStorage()
 
 	clientID := "test-client-123"
 	secret, err := crypto.GenerateClientSecret()
@@ -22,7 +26,7 @@ func TestMemoryStorageConfidentialClient(t *testing.T) {
 	scopes := []string{"read", "write"}
 	issuer := "https://issuer.example.com"
 
-	client, err := storage.CreateConfidentialClient(context.Background(), clientID, hashedSecret, redirectURIs, scopes, issuer)
+	client, err := store.CreateConfidentialClient(context.Background(), clientID, hashedSecret, redirectURIs, scopes, issuer)
 	assert.NoError(t, err)
 
 	assert.Equal(t, clientID, client.ID)
@@ -33,28 +37,110 @@ func TestMemoryStorageConfidentialClient(t *testing.T) {
 	assert.False(t, client.Public)
 
 	ctx := context.Background()
-	storedClient, err := storage.GetClient(ctx, clientID)
+	storedClient, err := store.GetClient(ctx, clientID)
 	assert.NoError(t, err)
 	assert.NotNil(t, storedClient)
 	assert.Equal(t, clientID, storedClient.GetID())
 	assert.False(t, storedClient.IsPublic())
 
-	err = bcrypt.CompareHashAndPassword(storedClient.GetHashedSecret(), []byte(secret))
+	err = bcrypt.CompareHashAndPassword(storedClient.GetSecret(), []byte(secret))
 	assert.NoError(t, err, "Original secret should verify against stored hash")
 }
 
 func TestMemoryStoragePublicVsConfidential(t *testing.T) {
-	storage := NewMemoryStorage()
+	store := NewMemoryStorage()
 
-	publicClient, err := storage.CreateClient(context.Background(), "public-123", []string{"https://public.com/callback"}, []string{"read"}, "https://issuer.com")
+	publicClient, err := store.CreateClient(context.Background(), "public-123", []string{"https://public.com/callback"}, []string{"read"}, "https://issuer.com")
 	assert.NoError(t, err)
 	assert.True(t, publicClient.Public)
 	assert.Nil(t, publicClient.Secret)
 
 	hashedSecret := []byte("hashed-secret")
-	confidentialClient, err := storage.CreateConfidentialClient(context.Background(), "confidential-123", hashedSecret, []string{"https://confidential.com/callback"}, []string{"read"}, "https://issuer.com")
+	confidentialClient, err := store.CreateConfidentialClient(context.Background(), "confidential-123", hashedSecret, []string{"https://confidential.com/callback"}, []string{"read"}, "https://issuer.com")
 	assert.NoError(t, err)
 	assert.False(t, confidentialClient.Public)
 	assert.NotNil(t, confidentialClient.Secret)
 	assert.Equal(t, hashedSecret, confidentialClient.Secret)
+}
+
+func TestMemoryStorageGrants(t *testing.T) {
+	store := NewMemoryStorage()
+	ctx := context.Background()
+
+	grant := &oauth.Grant{
+		Code:        "test-code",
+		ClientID:    "client-123",
+		RedirectURI: "https://example.com/callback",
+		Identity: idp.Identity{
+			Email:  "user@example.com",
+			Domain: "example.com",
+		},
+		Scopes:        []string{"read", "write"},
+		Audience:      []string{"https://issuer.com"},
+		PKCEChallenge: "challenge-value",
+		CreatedAt:     time.Now(),
+		ExpiresAt:     time.Now().Add(10 * time.Minute),
+	}
+
+	t.Run("store and consume", func(t *testing.T) {
+		err := store.StoreGrant(ctx, grant.Code, grant)
+		require.NoError(t, err)
+
+		consumed, err := store.ConsumeGrant(ctx, grant.Code)
+		require.NoError(t, err)
+		assert.Equal(t, grant.ClientID, consumed.ClientID)
+		assert.Equal(t, grant.Identity.Email, consumed.Identity.Email)
+		assert.Equal(t, grant.Scopes, consumed.Scopes)
+		assert.Equal(t, grant.PKCEChallenge, consumed.PKCEChallenge)
+	})
+
+	t.Run("consume is one-time", func(t *testing.T) {
+		err := store.StoreGrant(ctx, "one-time-code", grant)
+		require.NoError(t, err)
+
+		_, err = store.ConsumeGrant(ctx, "one-time-code")
+		require.NoError(t, err)
+
+		_, err = store.ConsumeGrant(ctx, "one-time-code")
+		require.ErrorIs(t, err, ErrGrantNotFound)
+	})
+
+	t.Run("consume nonexistent grant", func(t *testing.T) {
+		_, err := store.ConsumeGrant(ctx, "nonexistent")
+		require.ErrorIs(t, err, ErrGrantNotFound)
+	})
+}
+
+func TestMemoryStorageClientIsolation(t *testing.T) {
+	store := NewMemoryStorage()
+	ctx := context.Background()
+
+	uris := []string{"https://example.com/callback"}
+	scopes := []string{"read", "write"}
+
+	_, err := store.CreateClient(ctx, "client-1", uris, scopes, "https://issuer.com")
+	require.NoError(t, err)
+
+	uris[0] = "https://attacker.com/callback"
+	scopes[0] = "admin"
+
+	stored, err := store.GetClient(ctx, "client-1")
+	require.NoError(t, err)
+	assert.Equal(t, "https://example.com/callback", stored.RedirectURIs[0], "stored client should not be affected by caller mutation")
+	assert.Equal(t, "read", stored.Scopes[0], "stored client should not be affected by caller mutation")
+}
+
+func TestMemoryStorageGetClientIsolation(t *testing.T) {
+	store := NewMemoryStorage()
+	ctx := context.Background()
+
+	_, err := store.CreateClient(ctx, "client-2", []string{"https://example.com/callback"}, []string{"read"}, "https://issuer.com")
+	require.NoError(t, err)
+
+	c1, _ := store.GetClient(ctx, "client-2")
+	c2, _ := store.GetClient(ctx, "client-2")
+
+	c1.RedirectURIs[0] = "https://attacker.com"
+
+	assert.Equal(t, "https://example.com/callback", c2.RedirectURIs[0], "mutating one copy should not affect another")
 }

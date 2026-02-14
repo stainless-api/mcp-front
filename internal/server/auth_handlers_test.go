@@ -96,10 +96,15 @@ func TestAuthenticationBoundaries(t *testing.T) {
 	// Create storage
 	store := storage.NewMemoryStorage()
 
-	// Create OAuth provider
+	// Create authorization server
 	jwtSecret, err := oauth.GenerateJWTSecret(string(oauthConfig.JWTSecret))
 	require.NoError(t, err)
-	oauthProvider, err := oauth.NewOAuthProvider(oauthConfig, store, jwtSecret)
+	authServer, err := oauth.NewAuthorizationServer(oauth.AuthorizationServerConfig{
+		JWTSecret:       jwtSecret,
+		Issuer:          oauthConfig.Issuer,
+		AccessTokenTTL:  oauthConfig.TokenTTL,
+		RefreshTokenTTL: oauthConfig.RefreshTokenTTL,
+	})
 	require.NoError(t, err)
 
 	// Create session encryptor
@@ -114,7 +119,7 @@ func TestAuthenticationBoundaries(t *testing.T) {
 
 	// Create handlers
 	authHandlers := NewAuthHandlers(
-		oauthProvider,
+		authServer,
 		oauthConfig,
 		mockIDP,
 		store,
@@ -243,7 +248,12 @@ func TestOAuthEndpointHandlers(t *testing.T) {
 	store := storage.NewMemoryStorage()
 	jwtSecret, err := oauth.GenerateJWTSecret(string(oauthConfig.JWTSecret))
 	require.NoError(t, err)
-	oauthProvider, err := oauth.NewOAuthProvider(oauthConfig, store, jwtSecret)
+	authServer, err := oauth.NewAuthorizationServer(oauth.AuthorizationServerConfig{
+		JWTSecret:       jwtSecret,
+		Issuer:          oauthConfig.Issuer,
+		AccessTokenTTL:  oauthConfig.TokenTTL,
+		RefreshTokenTTL: oauthConfig.RefreshTokenTTL,
+	})
 	require.NoError(t, err)
 	sessionEncryptor, err := oauth.NewSessionEncryptor([]byte(oauthConfig.EncryptionKey))
 	require.NoError(t, err)
@@ -251,7 +261,7 @@ func TestOAuthEndpointHandlers(t *testing.T) {
 	mockIDP := &mockIDPProvider{}
 
 	authHandlers := NewAuthHandlers(
-		oauthProvider,
+		authServer,
 		oauthConfig,
 		mockIDP,
 		store,

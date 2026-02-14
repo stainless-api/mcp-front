@@ -5,20 +5,18 @@ import (
 	"encoding/base64"
 	"fmt"
 
-	"github.com/dgellow/mcp-front/internal/log"
 	"golang.org/x/crypto/bcrypt"
 )
 
-// GenerateSecureToken creates a cryptographically secure random token
+// GenerateSecureToken creates a cryptographically secure random token.
 // Returns a base64 URL-encoded string suitable for use as OAuth state parameters,
 // client IDs, CSRF tokens, etc.
-func GenerateSecureToken() string {
+func GenerateSecureToken() (string, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
-		log.LogError("Failed to generate random token: %v", err)
-		return "" // Returns empty string to fail validation
+		return "", fmt.Errorf("failed to generate random bytes: %w", err)
 	}
-	return base64.URLEncoding.EncodeToString(b)
+	return base64.URLEncoding.EncodeToString(b), nil
 }
 
 // GenerateClientSecret creates a cryptographically secure client secret
@@ -26,7 +24,6 @@ func GenerateSecureToken() string {
 func GenerateClientSecret() (string, error) {
 	b := make([]byte, 32) // 32 bytes = 256 bits of entropy
 	if _, err := rand.Read(b); err != nil {
-		log.LogError("Failed to generate client secret: %v", err)
 		return "", fmt.Errorf("failed to generate random bytes: %w", err)
 	}
 	return base64.URLEncoding.EncodeToString(b), nil

@@ -1,6 +1,6 @@
 package storage
 
-import "github.com/ory/fosite"
+import "slices"
 
 type Client struct {
 	ID            string
@@ -15,29 +15,22 @@ type Client struct {
 	CreatedAt int64
 }
 
-func (c *Client) ToFositeClient() *fosite.DefaultClient {
-	return &fosite.DefaultClient{
-		ID:            c.ID,
-		Secret:        c.Secret,
-		RedirectURIs:  c.RedirectURIs,
-		Scopes:        c.Scopes,
-		GrantTypes:    c.GrantTypes,
-		ResponseTypes: c.ResponseTypes,
-		Audience:      c.Audience,
-		Public:        c.Public,
-	}
-}
+func (c *Client) GetID() string              { return c.ID }
+func (c *Client) GetSecret() []byte          { return c.Secret }
+func (c *Client) GetRedirectURIs() []string  { return c.RedirectURIs }
+func (c *Client) GetScopes() []string        { return c.Scopes }
+func (c *Client) GetGrantTypes() []string    { return c.GrantTypes }
+func (c *Client) GetResponseTypes() []string { return c.ResponseTypes }
+func (c *Client) GetAudience() []string      { return c.Audience }
+func (c *Client) IsPublic() bool             { return c.Public }
 
-func FromFositeClient(fc *fosite.DefaultClient, createdAt int64) *Client {
-	return &Client{
-		ID:            fc.ID,
-		Secret:        fc.Secret,
-		RedirectURIs:  fc.RedirectURIs,
-		Scopes:        fc.Scopes,
-		GrantTypes:    fc.GrantTypes,
-		ResponseTypes: fc.ResponseTypes,
-		Audience:      fc.Audience,
-		Public:        fc.Public,
-		CreatedAt:     createdAt,
-	}
+func (c *Client) clone() *Client {
+	cp := *c
+	cp.Secret = slices.Clone(c.Secret)
+	cp.RedirectURIs = slices.Clone(c.RedirectURIs)
+	cp.Scopes = slices.Clone(c.Scopes)
+	cp.GrantTypes = slices.Clone(c.GrantTypes)
+	cp.ResponseTypes = slices.Clone(c.ResponseTypes)
+	cp.Audience = slices.Clone(c.Audience)
+	return &cp
 }

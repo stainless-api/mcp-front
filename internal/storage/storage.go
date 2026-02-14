@@ -5,19 +5,15 @@ import (
 	"errors"
 	"time"
 
-	"github.com/ory/fosite"
+	"github.com/dgellow/mcp-front/internal/oauth"
 )
 
-// ErrUserTokenNotFound is returned when a user token doesn't exist
 var ErrUserTokenNotFound = errors.New("user token not found")
-
-// ErrUserNotFound is returned when a user doesn't exist
 var ErrUserNotFound = errors.New("user not found")
-
-// ErrSessionNotFound is returned when a session doesn't exist
 var ErrSessionNotFound = errors.New("session not found")
+var ErrClientNotFound = errors.New("client not found")
+var ErrGrantNotFound = errors.New("grant not found")
 
-// UserInfo represents a user who has authenticated via OAuth
 type UserInfo struct {
 	Email     string    `json:"email"`
 	FirstSeen time.Time `json:"first_seen"`
@@ -26,7 +22,6 @@ type UserInfo struct {
 	IsAdmin   bool      `json:"is_admin"`
 }
 
-// TokenType represents the type of stored token
 type TokenType string
 
 const (
@@ -34,7 +29,6 @@ const (
 	TokenTypeOAuth  TokenType = "oauth"
 )
 
-// OAuthTokenData represents OAuth token metadata
 type OAuthTokenData struct {
 	AccessToken  string    `json:"access_token"`
 	RefreshToken string    `json:"refresh_token,omitempty"`
@@ -43,15 +37,13 @@ type OAuthTokenData struct {
 	Scopes       []string  `json:"scopes,omitempty"`
 }
 
-// StoredToken represents a token with its metadata
 type StoredToken struct {
 	Type      TokenType       `json:"type"`
-	Value     string          `json:"value,omitempty"` // For manual tokens
-	OAuthData *OAuthTokenData `json:"oauth,omitempty"` // For OAuth tokens
+	Value     string          `json:"value,omitempty"`
+	OAuthData *OAuthTokenData `json:"oauth,omitempty"`
 	UpdatedAt time.Time       `json:"updated_at"`
 }
 
-// ActiveSession represents an active MCP session
 type ActiveSession struct {
 	SessionID  string    `json:"session_id"`
 	UserEmail  string    `json:"user_email"`
@@ -60,9 +52,6 @@ type ActiveSession struct {
 	LastActive time.Time `json:"last_active"`
 }
 
-// UserTokenStore defines methods for managing user tokens.
-// This interface is used by handlers that need to access user-specific tokens
-// for external services (e.g., Notion, GitHub).
 type UserTokenStore interface {
 	GetUserToken(ctx context.Context, userEmail, service string) (*StoredToken, error)
 	SetUserToken(ctx context.Context, userEmail, service string, token *StoredToken) error
@@ -70,24 +59,20 @@ type UserTokenStore interface {
 	ListUserServices(ctx context.Context, userEmail string) ([]string, error)
 }
 
-// Storage combines all storage capabilities needed by mcp-front
 type Storage interface {
-	// OAuth storage requirements
-	fosite.Storage
-
-	// OAuth state management
-	StoreAuthorizeRequest(state string, req fosite.AuthorizeRequester) error
-	GetAuthorizeRequest(state string) (fosite.AuthorizeRequester, bool)
-
 	// OAuth client management
+	GetClient(ctx context.Context, clientID string) (*Client, error)
 	CreateClient(ctx context.Context, clientID string, redirectURIs []string, scopes []string, issuer string) (*Client, error)
 	CreateConfidentialClient(ctx context.Context, clientID string, hashedSecret []byte, redirectURIs []string, scopes []string, issuer string) (*Client, error)
-	GetClientWithMetadata(ctx context.Context, clientID string) (*Client, error)
+
+	// Grant management (authorization codes)
+	StoreGrant(ctx context.Context, code string, grant *oauth.Grant) error
+	ConsumeGrant(ctx context.Context, code string) (*oauth.Grant, error)
 
 	// User token storage
 	UserTokenStore
 
-	// User tracking (upserted when users access MCP endpoints)
+	// User tracking
 	UpsertUser(ctx context.Context, email string) error
 	GetUser(ctx context.Context, email string) (*UserInfo, error)
 	GetAllUsers(ctx context.Context) ([]UserInfo, error)
