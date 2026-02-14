@@ -545,28 +545,29 @@ type SessionDoc struct {
 }
 
 func (s *FirestoreStorage) UpsertUser(ctx context.Context, email string) error {
-	userDoc := UserDoc{
-		Email:    email,
-		LastSeen: time.Now(),
-	}
+	now := time.Now()
+	docRef := s.client.Collection(usersCollection).Doc(email)
 
-	doc, err := s.client.Collection(usersCollection).Doc(email).Get(ctx)
-	if err == nil {
-		_, err = doc.Ref.Update(ctx, []firestore.Update{
-			{Path: "last_seen", Value: time.Now()},
+	return s.client.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+		doc, err := tx.Get(docRef)
+		if err != nil && status.Code(err) != codes.NotFound {
+			return fmt.Errorf("failed to get user: %w", err)
+		}
+
+		if doc.Exists() {
+			return tx.Update(docRef, []firestore.Update{
+				{Path: "last_seen", Value: now},
+			})
+		}
+
+		return tx.Set(docRef, UserDoc{
+			Email:     email,
+			FirstSeen: now,
+			LastSeen:  now,
+			Enabled:   true,
+			IsAdmin:   false,
 		})
-		return err
-	}
-
-	if status.Code(err) == codes.NotFound {
-		userDoc.FirstSeen = time.Now()
-		userDoc.Enabled = true
-		userDoc.IsAdmin = false
-		_, err = s.client.Collection(usersCollection).Doc(email).Set(ctx, userDoc)
-		return err
-	}
-
-	return err
+	})
 }
 
 func (s *FirestoreStorage) GetUser(ctx context.Context, email string) (*UserInfo, error) {
@@ -629,11 +630,11 @@ func (s *FirestoreStorage) DeleteUser(ctx context.Context, email string) error {
 		return err
 	}
 
-	iter := s.client.Collection(s.tokenCollection).Where("user_email", "==", email).Documents(ctx)
-	defer iter.Stop()
+	tokenIter := s.client.Collection(s.tokenCollection).Where("user_email", "==", email).Documents(ctx)
+	defer tokenIter.Stop()
 
 	for {
-		doc, err := iter.Next()
+		doc, err := tokenIter.Next()
 		if err == iterator.Done {
 			break
 		}
@@ -645,6 +646,25 @@ func (s *FirestoreStorage) DeleteUser(ctx context.Context, email string) error {
 		_, err = doc.Ref.Delete(ctx)
 		if err != nil {
 			log.LogError("Failed to delete user token: %v", err)
+		}
+	}
+
+	sessionIter := s.client.Collection(sessionsCollection).Where("user_email", "==", email).Documents(ctx)
+	defer sessionIter.Stop()
+
+	for {
+		doc, err := sessionIter.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			log.LogError("Failed to iterate user sessions for deletion: %v", err)
+			continue
+		}
+
+		_, err = doc.Ref.Delete(ctx)
+		if err != nil {
+			log.LogError("Failed to delete user session: %v", err)
 		}
 	}
 
@@ -662,28 +682,20 @@ func (s *FirestoreStorage) SetUserAdmin(ctx context.Context, email string, isAdm
 }
 
 func (s *FirestoreStorage) TrackSession(ctx context.Context, session ActiveSession) error {
+	now := time.Now()
+	if session.Created.IsZero() {
+		session.Created = now
+	}
+
 	sessionDoc := SessionDoc{
 		SessionID:  session.SessionID,
 		UserEmail:  session.UserEmail,
 		ServerName: session.ServerName,
 		Created:    session.Created,
-		LastActive: time.Now(),
+		LastActive: now,
 	}
 
-	doc, err := s.client.Collection(sessionsCollection).Doc(session.SessionID).Get(ctx)
-	if err == nil {
-		_, err = doc.Ref.Update(ctx, []firestore.Update{
-			{Path: "last_active", Value: time.Now()},
-		})
-		return err
-	}
-
-	if status.Code(err) == codes.NotFound {
-		sessionDoc.Created = time.Now()
-		_, err = s.client.Collection(sessionsCollection).Doc(session.SessionID).Set(ctx, sessionDoc)
-		return err
-	}
-
+	_, err := s.client.Collection(sessionsCollection).Doc(session.SessionID).Set(ctx, sessionDoc)
 	return err
 }
 

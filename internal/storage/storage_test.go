@@ -144,3 +144,138 @@ func TestMemoryStorageGetClientIsolation(t *testing.T) {
 
 	assert.Equal(t, "https://example.com/callback", c2.RedirectURIs[0], "mutating one copy should not affect another")
 }
+
+func TestMemoryStorageSessions(t *testing.T) {
+	store := NewMemoryStorage()
+	ctx := context.Background()
+
+	t.Run("track new session", func(t *testing.T) {
+		created := time.Now().Add(-1 * time.Minute)
+		err := store.TrackSession(ctx, ActiveSession{
+			SessionID:  "sess-1",
+			UserEmail:  "user@example.com",
+			ServerName: "postgres",
+			Created:    created,
+		})
+		require.NoError(t, err)
+
+		sessions, err := store.GetActiveSessions(ctx)
+		require.NoError(t, err)
+		require.Len(t, sessions, 1)
+		assert.Equal(t, "sess-1", sessions[0].SessionID)
+		assert.Equal(t, "user@example.com", sessions[0].UserEmail)
+		assert.Equal(t, "postgres", sessions[0].ServerName)
+		assert.WithinDuration(t, created, sessions[0].Created, time.Second)
+		assert.WithinDuration(t, time.Now(), sessions[0].LastActive, time.Second)
+	})
+
+	t.Run("track session sets Created when zero", func(t *testing.T) {
+		err := store.TrackSession(ctx, ActiveSession{
+			SessionID:  "sess-zero",
+			UserEmail:  "user@example.com",
+			ServerName: "linear",
+		})
+		require.NoError(t, err)
+
+		sessions, err := store.GetActiveSessions(ctx)
+		require.NoError(t, err)
+
+		var found *ActiveSession
+		for _, s := range sessions {
+			if s.SessionID == "sess-zero" {
+				found = &s
+				break
+			}
+		}
+		require.NotNil(t, found)
+		assert.WithinDuration(t, time.Now(), found.Created, time.Second)
+	})
+
+	t.Run("track existing session updates LastActive", func(t *testing.T) {
+		sessions, _ := store.GetActiveSessions(ctx)
+		var before ActiveSession
+		for _, s := range sessions {
+			if s.SessionID == "sess-1" {
+				before = s
+				break
+			}
+		}
+
+		time.Sleep(10 * time.Millisecond)
+		err := store.TrackSession(ctx, ActiveSession{
+			SessionID:  "sess-1",
+			UserEmail:  "user@example.com",
+			ServerName: "postgres",
+		})
+		require.NoError(t, err)
+
+		sessions, _ = store.GetActiveSessions(ctx)
+		var after ActiveSession
+		for _, s := range sessions {
+			if s.SessionID == "sess-1" {
+				after = s
+				break
+			}
+		}
+		assert.True(t, after.LastActive.After(before.LastActive))
+	})
+
+	t.Run("revoke session", func(t *testing.T) {
+		err := store.RevokeSession(ctx, "sess-1")
+		require.NoError(t, err)
+
+		sessions, err := store.GetActiveSessions(ctx)
+		require.NoError(t, err)
+		for _, s := range sessions {
+			assert.NotEqual(t, "sess-1", s.SessionID)
+		}
+	})
+
+	t.Run("revoke nonexistent session is idempotent", func(t *testing.T) {
+		err := store.RevokeSession(ctx, "nonexistent")
+		require.NoError(t, err)
+	})
+
+	t.Run("delete user cascades to sessions", func(t *testing.T) {
+		err := store.TrackSession(ctx, ActiveSession{
+			SessionID:  "sess-del-1",
+			UserEmail:  "delete-me@example.com",
+			ServerName: "postgres",
+		})
+		require.NoError(t, err)
+
+		err = store.TrackSession(ctx, ActiveSession{
+			SessionID:  "sess-del-2",
+			UserEmail:  "delete-me@example.com",
+			ServerName: "linear",
+		})
+		require.NoError(t, err)
+
+		err = store.TrackSession(ctx, ActiveSession{
+			SessionID:  "sess-keep",
+			UserEmail:  "keep-me@example.com",
+			ServerName: "postgres",
+		})
+		require.NoError(t, err)
+
+		err = store.UpsertUser(ctx, "delete-me@example.com")
+		require.NoError(t, err)
+
+		err = store.DeleteUser(ctx, "delete-me@example.com")
+		require.NoError(t, err)
+
+		sessions, err := store.GetActiveSessions(ctx)
+		require.NoError(t, err)
+		for _, s := range sessions {
+			assert.NotEqual(t, "delete-me@example.com", s.UserEmail)
+		}
+
+		var keepFound bool
+		for _, s := range sessions {
+			if s.SessionID == "sess-keep" {
+				keepFound = true
+			}
+		}
+		assert.True(t, keepFound, "other user's sessions should not be affected")
+	})
+}

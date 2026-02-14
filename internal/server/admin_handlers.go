@@ -16,6 +16,11 @@ import (
 	"github.com/dgellow/mcp-front/internal/storage"
 )
 
+// Sessions inactive for this many multiples of the session timeout are
+// considered stale and filtered from the admin dashboard. This accounts
+// for clock skew and cleanup races after server restarts.
+const staleSessionTimeoutMultiplier = 2
+
 // AdminHandlers handles the admin UI
 type AdminHandlers struct {
 	storage        storage.Storage
@@ -82,12 +87,25 @@ func (h *AdminHandlers) DashboardHandler(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	sessions, err := h.storage.GetActiveSessions(r.Context())
+	allSessions, err := h.storage.GetActiveSessions(r.Context())
 	if err != nil {
 		log.LogErrorWithFields("admin", "Failed to get sessions", map[string]any{
 			"error": err.Error(),
 		})
-		sessions = []storage.ActiveSession{} // Empty list on error
+		allSessions = []storage.ActiveSession{}
+	}
+
+	sessionTimeout := client.DefaultSessionTimeout
+	if h.config.Proxy.Sessions != nil && h.config.Proxy.Sessions.Timeout > 0 {
+		sessionTimeout = h.config.Proxy.Sessions.Timeout
+	}
+	staleThreshold := time.Now().Add(-staleSessionTimeoutMultiplier * sessionTimeout)
+
+	sessions := make([]storage.ActiveSession, 0, len(allSessions))
+	for _, s := range allSessions {
+		if s.LastActive.After(staleThreshold) {
+			sessions = append(sessions, s)
+		}
 	}
 
 	currentLogLevel := log.GetLogLevel()
@@ -207,12 +225,33 @@ func (h *AdminHandlers) UserActionHandler(w http.ResponseWriter, r *http.Request
 		}
 
 	case "delete":
+		// Terminate any active stdio sessions for this user
+		sessions, sessErr := h.storage.GetActiveSessions(r.Context())
+		if sessErr == nil {
+			for _, s := range sessions {
+				if s.UserEmail == targetEmail {
+					key := client.SessionKey{
+						UserEmail:  s.UserEmail,
+						ServerName: s.ServerName,
+						SessionID:  s.SessionID,
+					}
+					if err := h.sessionManager.RemoveSession(key); err != nil {
+						log.LogErrorWithFields("admin", "Failed to remove session during user deletion", map[string]any{
+							"sessionID": s.SessionID,
+							"server":    s.ServerName,
+							"user":      s.UserEmail,
+							"error":     err.Error(),
+						})
+					}
+				}
+			}
+		}
+
 		if err := h.storage.DeleteUser(r.Context(), targetEmail); err != nil {
 			message = fmt.Sprintf("Failed to delete user: %v", err)
 			messageType = "error"
 		} else {
 			message = fmt.Sprintf("User %s deleted", targetEmail)
-			// Audit log
 			log.LogInfoWithFields("admin", "User deleted", map[string]any{
 				"admin_email":  userEmail,
 				"target_email": targetEmail,

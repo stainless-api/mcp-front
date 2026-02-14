@@ -328,7 +328,7 @@ func NewBrowserSSOMiddleware(authConfig config.OAuthAuthConfig, idpProvider idp.
 			}
 
 			// Check expiration
-			if time.Now().After(sessionData.Expires) {
+			if sessionData.IsExpired() {
 				log.LogDebug("Session expired for user %s", sessionData.Email)
 				cookie.ClearSession(w)
 				// Redirect directly to OAuth

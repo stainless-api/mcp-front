@@ -8,6 +8,10 @@ type BrowserCookie struct {
 	Expires  time.Time `json:"expires"`
 }
 
+func (c BrowserCookie) IsExpired() bool {
+	return time.Now().After(c.Expires)
+}
+
 type AuthorizationState struct {
 	Nonce     string `json:"nonce"`
 	ReturnURL string `json:"return_url"`

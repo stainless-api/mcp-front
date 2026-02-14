@@ -234,6 +234,14 @@ func (s *MemoryStorage) DeleteUser(ctx context.Context, email string) error {
 	}
 	s.userTokensMutex.Unlock()
 
+	s.sessionsMutex.Lock()
+	for id, sess := range s.sessions {
+		if sess.UserEmail == email {
+			delete(s.sessions, id)
+		}
+	}
+	s.sessionsMutex.Unlock()
+
 	s.usersMutex.Lock()
 	delete(s.users, email)
 	s.usersMutex.Unlock()
@@ -259,12 +267,15 @@ func (s *MemoryStorage) TrackSession(ctx context.Context, session ActiveSession)
 	s.sessionsMutex.Lock()
 	defer s.sessionsMutex.Unlock()
 
+	now := time.Now()
 	if existing, exists := s.sessions[session.SessionID]; exists {
-		existing.LastActive = time.Now()
+		existing.LastActive = now
 	} else {
 		sessionCopy := session
-		sessionCopy.Created = time.Now()
-		sessionCopy.LastActive = time.Now()
+		if sessionCopy.Created.IsZero() {
+			sessionCopy.Created = now
+		}
+		sessionCopy.LastActive = now
 		s.sessions[session.SessionID] = &sessionCopy
 	}
 	return nil
