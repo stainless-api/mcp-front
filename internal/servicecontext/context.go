@@ -17,11 +17,6 @@ type Info struct {
 	UserToken   string
 }
 
-// WithUser adds a username to the context (for basic auth)
-func WithUser(ctx context.Context, username string) context.Context {
-	return context.WithValue(ctx, userKey, username)
-}
-
 // GetUser retrieves the username from context (for basic auth)
 func GetUser(ctx context.Context) (string, bool) {
 	username, ok := ctx.Value(userKey).(string)

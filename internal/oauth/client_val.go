@@ -32,13 +32,3 @@ func ValidateClientSecret(providedSecret string, client Client) error {
 	}
 	return nil
 }
-
-func ValidateScopes(requested []string, client Client) error {
-	allowed := client.GetScopes()
-	for _, scope := range requested {
-		if !slices.Contains(allowed, scope) {
-			return fmt.Errorf("scope %q not allowed for this client", scope)
-		}
-	}
-	return nil
-}

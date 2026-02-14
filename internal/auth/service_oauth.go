@@ -2,11 +2,9 @@ package auth
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
 
 	"github.com/dgellow/mcp-front/internal/config"
@@ -296,37 +294,4 @@ func (c *ServiceOAuthClient) GetConnectURL(serviceName string, returnPath string
 		params.Set("return", returnPath)
 	}
 	return fmt.Sprintf("%s/oauth/connect?%s", c.baseURL, params.Encode())
-}
-
-// ParseTokenResponse parses a token response for custom OAuth implementations
-func ParseTokenResponse(body []byte) (*oauth2.Token, error) {
-	var resp struct {
-		AccessToken  string `json:"access_token"`
-		RefreshToken string `json:"refresh_token"`
-		ExpiresIn    int    `json:"expires_in"`
-		TokenType    string `json:"token_type"`
-		Scope        string `json:"scope"`
-	}
-
-	if err := json.Unmarshal(body, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse token response: %w", err)
-	}
-
-	token := &oauth2.Token{
-		AccessToken:  resp.AccessToken,
-		RefreshToken: resp.RefreshToken,
-		TokenType:    resp.TokenType,
-	}
-
-	if resp.ExpiresIn > 0 {
-		token.Expiry = time.Now().Add(time.Duration(resp.ExpiresIn) * time.Second)
-	}
-
-	if resp.Scope != "" {
-		token = token.WithExtra(map[string]any{
-			"scope": strings.Split(resp.Scope, " "),
-		})
-	}
-
-	return token, nil
 }

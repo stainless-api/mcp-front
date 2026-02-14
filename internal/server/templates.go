@@ -8,14 +8,10 @@ import (
 //go:embed templates/tokens.html
 var tokenPageTemplateHTML string
 
-//go:embed templates/admin.html
-var adminPageTemplateHTML string
-
 //go:embed templates/services.html
 var servicesPageTemplateHTML string
 
 var tokenPageTemplate = template.Must(template.New("tokens").Parse(tokenPageTemplateHTML))
-var adminPageTemplate = template.Must(template.New("admin").Parse(adminPageTemplateHTML))
 var servicesPageTemplate = template.Must(template.New("services").Parse(servicesPageTemplateHTML))
 
 // TokenPageData represents the data for the token management page

@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	emailutil "github.com/dgellow/mcp-front/internal/emailutil"
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/dgellow/mcp-front/internal/log"
@@ -336,7 +335,6 @@ func (p *ProxyConfig) UnmarshalJSON(data []byte) error {
 		Addr     json.RawMessage `json:"addr"`
 		Name     string          `json:"name"`
 		Auth     json.RawMessage `json:"auth"`
-		Admin    *AdminConfig    `json:"admin"`
 		Sessions *SessionConfig  `json:"sessions"`
 	}
 
@@ -346,17 +344,7 @@ func (p *ProxyConfig) UnmarshalJSON(data []byte) error {
 	}
 
 	p.Name = raw.Name
-	p.Admin = raw.Admin
 	p.Sessions = raw.Sessions
-
-	// Normalize admin emails for consistent comparison
-	if p.Admin != nil && len(p.Admin.AdminEmails) > 0 {
-		normalizedEmails := make([]string, len(p.Admin.AdminEmails))
-		for i, emailAddr := range p.Admin.AdminEmails {
-			normalizedEmails[i] = emailutil.Normalize(emailAddr)
-		}
-		p.Admin.AdminEmails = normalizedEmails
-	}
 
 	// Parse BaseURL
 	if raw.BaseURL != nil {

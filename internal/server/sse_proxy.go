@@ -100,13 +100,16 @@ func forwardSSEToBackend(ctx context.Context, w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	// Stream the response
+	streamSSEResponse(w, flusher, resp.Body, "sse_proxy")
+}
+
+func streamSSEResponse(w http.ResponseWriter, flusher http.Flusher, body io.Reader, logPrefix string) {
 	buf := make([]byte, 4096)
 	for {
-		n, err := resp.Body.Read(buf)
+		n, err := body.Read(buf)
 		if n > 0 {
 			if _, writeErr := w.Write(buf[:n]); writeErr != nil {
-				log.LogDebugWithFields("sse_proxy", "Client disconnected", map[string]any{
+				log.LogDebugWithFields(logPrefix, "Client disconnected", map[string]any{
 					"error": writeErr.Error(),
 				})
 				return
@@ -115,7 +118,7 @@ func forwardSSEToBackend(ctx context.Context, w http.ResponseWriter, r *http.Req
 		}
 		if err != nil {
 			if err != io.EOF {
-				log.LogErrorWithFields("sse_proxy", "Error reading from backend", map[string]any{
+				log.LogErrorWithFields(logPrefix, "Error reading from backend", map[string]any{
 					"error": err.Error(),
 				})
 			}

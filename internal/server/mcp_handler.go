@@ -150,24 +150,8 @@ func (h *MCPHandler) isMessageRequest(r *http.Request) bool {
 	return strings.HasSuffix(path, "/message") || strings.Contains(path, "/message?")
 }
 
-// trackUserAccess tracks user access if user email is provided
-func (h *MCPHandler) trackUserAccess(ctx context.Context, userEmail string) {
-	if userEmail != "" {
-		if h.storage != nil {
-			if err := h.storage.UpsertUser(ctx, userEmail); err != nil {
-				log.LogWarnWithFields("mcp", "Failed to track user", map[string]any{
-					"error": err.Error(),
-					"user":  userEmail,
-				})
-			}
-		}
-	}
-}
-
 // handleSSERequest handles SSE connection requests for stdio servers
 func (h *MCPHandler) handleSSERequest(ctx context.Context, w http.ResponseWriter, r *http.Request, userEmail string, config *config.MCPClientConfig) {
-	h.trackUserAccess(ctx, userEmail)
-
 	if !config.IsStdio() {
 		// For non-stdio servers, handle normally
 		h.handleNonStdioSSERequest(ctx, w, r, userEmail, config)
@@ -204,8 +188,6 @@ func (h *MCPHandler) handleSSERequest(ctx context.Context, w http.ResponseWriter
 
 // handleMessageRequest handles message endpoint requests
 func (h *MCPHandler) handleMessageRequest(ctx context.Context, w http.ResponseWriter, r *http.Request, userEmail string, config *config.MCPClientConfig) {
-	h.trackUserAccess(ctx, userEmail)
-
 	if config.IsStdio() {
 		sessionID := r.URL.Query().Get("sessionId")
 		if sessionID == "" {
@@ -297,33 +279,7 @@ func (h *MCPHandler) getUserTokenIfAvailable(ctx context.Context, userEmail stri
 		"user":        userEmail,
 	})
 
-	// Fall back to OAuth user token lookup in storage
-	if h.storage == nil {
-		return "", fmt.Errorf("storage not configured")
-	}
-
-	storedToken, err := h.storage.GetUserToken(ctx, userEmail, h.serverName)
-	if err != nil {
-		return "", err
-	}
-
-	// Use injected function to get formatted token with refresh handling
-	if h.getUserToken != nil {
-		return h.getUserToken(ctx, userEmail, h.serverName, h.serverConfig)
-	}
-
-	// Fallback: extract raw token without refresh (for backwards compatibility)
-	var tokenString string
-	switch storedToken.Type {
-	case storage.TokenTypeManual:
-		tokenString = storedToken.Value
-	case storage.TokenTypeOAuth:
-		if storedToken.OAuthData != nil {
-			tokenString = storedToken.OAuthData.AccessToken
-		}
-	}
-
-	return tokenString, nil
+	return h.getUserToken(ctx, userEmail, h.serverName, h.serverConfig)
 }
 
 func (h *MCPHandler) forwardMessageToBackend(ctx context.Context, w http.ResponseWriter, r *http.Request, config *config.MCPClientConfig) {
@@ -388,9 +344,9 @@ func (h *MCPHandler) forwardMessageToBackend(ctx context.Context, w http.Respons
 	}
 	defer resp.Body.Close()
 
-	w.WriteHeader(resp.StatusCode)
-
 	maps.Copy(w.Header(), resp.Header)
+
+	w.WriteHeader(resp.StatusCode)
 
 	if _, err := io.Copy(w, resp.Body); err != nil {
 		log.LogErrorWithFields("mcp", "Failed to copy response body", map[string]any{
@@ -402,8 +358,6 @@ func (h *MCPHandler) forwardMessageToBackend(ctx context.Context, w http.Respons
 
 // handleStreamablePost handles POST requests for streamable-http transport
 func (h *MCPHandler) handleStreamablePost(ctx context.Context, w http.ResponseWriter, r *http.Request, userEmail string, config *config.MCPClientConfig) {
-	h.trackUserAccess(ctx, userEmail)
-
 	log.LogInfoWithFields("mcp", "Proxying streamable POST request to backend", map[string]any{
 		"service": h.serverName,
 		"user":    userEmail,
@@ -415,8 +369,6 @@ func (h *MCPHandler) handleStreamablePost(ctx context.Context, w http.ResponseWr
 
 // handleStreamableGet handles GET requests for streamable-http transport
 func (h *MCPHandler) handleStreamableGet(ctx context.Context, w http.ResponseWriter, r *http.Request, userEmail string, config *config.MCPClientConfig) {
-	h.trackUserAccess(ctx, userEmail)
-
 	acceptHeader := r.Header.Get("Accept")
 	if !strings.Contains(acceptHeader, "text/event-stream") {
 		http.Error(w, "GET requests must accept text/event-stream", http.StatusNotAcceptable)

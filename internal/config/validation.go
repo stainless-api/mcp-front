@@ -105,26 +105,6 @@ func validateProxyStructure(rawConfig map[string]any, result *ValidationResult) 
 		validateSessionsConfig(sessions, result)
 	}
 
-	// Check admin if present
-	if admin, ok := proxy["admin"].(map[string]any); ok {
-		validateAdminStructure(admin, result)
-
-		// If admin is enabled, ensure OAuth is configured
-		if enabled, ok := admin["enabled"].(bool); ok && enabled {
-			hasOAuth := false
-			if auth, ok := proxy["auth"].(map[string]any); ok {
-				if kind, ok := auth["kind"].(string); ok && kind == "oauth" {
-					hasOAuth = true
-				}
-			}
-			if !hasOAuth {
-				result.Errors = append(result.Errors, ValidationError{
-					Path:    "proxy.admin",
-					Message: "admin UI requires OAuth authentication to be configured. Set proxy.auth.kind to 'oauth'",
-				})
-			}
-		}
-	}
 }
 
 // validateAuthStructure checks auth configuration structure
@@ -252,47 +232,6 @@ func validateIDPStructure(idp map[string]any, result *ValidationResult) {
 			Path:    "proxy.auth.idp.provider",
 			Message: fmt.Sprintf("unknown provider '%s' - supported providers: google, azure, github, oidc", provider),
 		})
-	}
-}
-
-// validateAdminStructure checks admin configuration structure
-func validateAdminStructure(admin map[string]any, result *ValidationResult) {
-	enabled, ok := admin["enabled"].(bool)
-	if !ok {
-		result.Errors = append(result.Errors, ValidationError{
-			Path:    "proxy.admin.enabled",
-			Message: "enabled field is required and must be a boolean",
-		})
-		return
-	}
-
-	if enabled {
-		// Check adminEmails when enabled
-		emails, ok := admin["adminEmails"].([]any)
-		if !ok {
-			result.Errors = append(result.Errors, ValidationError{
-				Path:    "proxy.admin.adminEmails",
-				Message: "adminEmails is required when admin is enabled",
-			})
-		} else if len(emails) == 0 {
-			result.Errors = append(result.Errors, ValidationError{
-				Path:    "proxy.admin.adminEmails",
-				Message: "at least one admin email is required when admin is enabled",
-			})
-		} else {
-			// Validate each email is a string
-			for i, email := range emails {
-				if _, ok := email.(string); !ok {
-					result.Errors = append(result.Errors, ValidationError{
-						Path:    fmt.Sprintf("proxy.admin.adminEmails[%d]", i),
-						Message: fmt.Sprintf("admin email must be a string, got %T - use \"user@example.com\" format", email),
-					})
-				}
-			}
-		}
-
-		// Check that OAuth is configured (required for admin functionality)
-		// Note: We check this at the parent level since auth is a sibling of admin
 	}
 }
 

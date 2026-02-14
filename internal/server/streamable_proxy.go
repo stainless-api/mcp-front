@@ -84,32 +84,11 @@ func forwardStreamablePostToBackend(ctx context.Context, w http.ResponseWriter, 
 			return
 		}
 
-		buf := make([]byte, 4096)
-		for {
-			n, err := resp.Body.Read(buf)
-			if n > 0 {
-				if _, writeErr := w.Write(buf[:n]); writeErr != nil {
-					log.LogDebugWithFields("streamable_proxy", "Client disconnected", map[string]any{
-						"error": writeErr.Error(),
-					})
-					return
-				}
-				flusher.Flush()
-			}
-			if err == io.EOF {
-				break
-			}
-			if err != nil {
-				log.LogErrorWithFields("streamable_proxy", "Error reading SSE stream", map[string]any{
-					"error": err.Error(),
-				})
-				return
-			}
-		}
+		streamSSEResponse(w, flusher, resp.Body, "streamable_proxy")
 	} else {
-		w.WriteHeader(resp.StatusCode)
-
 		maps.Copy(w.Header(), resp.Header)
+
+		w.WriteHeader(resp.StatusCode)
 
 		if _, err := io.Copy(w, resp.Body); err != nil {
 			log.LogErrorWithFields("streamable_proxy", "Failed to copy response body", map[string]any{

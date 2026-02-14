@@ -77,19 +77,15 @@ func HandleSessionRegistration(
 	})
 
 	var userToken string
-	if handler.config.RequiresUserToken && handler.userEmail != "" && handler.h.storage != nil {
-		storedToken, err := handler.h.storage.GetUserToken(sessionCtx, handler.userEmail, handler.h.serverName)
+	if handler.config.RequiresUserToken && handler.userEmail != "" {
+		token, err := handler.h.getUserToken(sessionCtx, handler.userEmail, handler.h.serverName, handler.config)
 		if err != nil {
 			log.LogDebugWithFields("server", "No user token found", map[string]any{
 				"server": handler.h.serverName,
 				"user":   handler.userEmail,
 			})
-		} else if storedToken != nil {
-			if handler.config.UserAuthentication != nil {
-				userToken = formatUserToken(storedToken, handler.config.UserAuthentication)
-			} else {
-				userToken = storedToken.Value
-			}
+		} else {
+			userToken = token
 		}
 	}
 

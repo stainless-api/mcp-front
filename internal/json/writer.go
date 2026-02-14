@@ -27,11 +27,6 @@ func WriteResponse(w http.ResponseWriter, statusCode int, data any) error {
 	return nil
 }
 
-// Write writes a JSON response with 200 OK status
-func Write(w http.ResponseWriter, data any) error {
-	return WriteResponse(w, http.StatusOK, data)
-}
-
 // WriteError writes a JSON error response
 func WriteError(w http.ResponseWriter, statusCode int, error string, message string) {
 	response := ErrorResponse{
