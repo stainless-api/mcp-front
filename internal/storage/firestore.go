@@ -19,7 +19,6 @@ import (
 )
 
 const (
-	usersCollection    = "mcp_front_users"
 	sessionsCollection = "mcp_front_sessions"
 	grantsCollection   = "mcp_front_grants"
 )
@@ -528,157 +527,12 @@ func (s *FirestoreStorage) ListUserServices(ctx context.Context, userEmail strin
 	return services, nil
 }
 
-type UserDoc struct {
-	Email     string    `firestore:"email"`
-	FirstSeen time.Time `firestore:"first_seen"`
-	LastSeen  time.Time `firestore:"last_seen"`
-	Enabled   bool      `firestore:"enabled"`
-	IsAdmin   bool      `firestore:"is_admin"`
-}
-
 type SessionDoc struct {
 	SessionID  string    `firestore:"session_id"`
 	UserEmail  string    `firestore:"user_email"`
 	ServerName string    `firestore:"server_name"`
 	Created    time.Time `firestore:"created"`
 	LastActive time.Time `firestore:"last_active"`
-}
-
-func (s *FirestoreStorage) UpsertUser(ctx context.Context, email string) error {
-	now := time.Now()
-	docRef := s.client.Collection(usersCollection).Doc(email)
-
-	return s.client.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
-		doc, err := tx.Get(docRef)
-		if err != nil && status.Code(err) != codes.NotFound {
-			return fmt.Errorf("failed to get user: %w", err)
-		}
-
-		if doc.Exists() {
-			return tx.Update(docRef, []firestore.Update{
-				{Path: "last_seen", Value: now},
-			})
-		}
-
-		return tx.Set(docRef, UserDoc{
-			Email:     email,
-			FirstSeen: now,
-			LastSeen:  now,
-			Enabled:   true,
-			IsAdmin:   false,
-		})
-	})
-}
-
-func (s *FirestoreStorage) GetUser(ctx context.Context, email string) (*UserInfo, error) {
-	doc, err := s.client.Collection(usersCollection).Doc(email).Get(ctx)
-	if err != nil {
-		if status.Code(err) == codes.NotFound {
-			return nil, ErrUserNotFound
-		}
-		return nil, fmt.Errorf("failed to get user from Firestore: %w", err)
-	}
-
-	var userDoc UserDoc
-	if err := doc.DataTo(&userDoc); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal user: %w", err)
-	}
-
-	user := UserInfo(userDoc)
-	return &user, nil
-}
-
-func (s *FirestoreStorage) GetAllUsers(ctx context.Context) ([]UserInfo, error) {
-	iter := s.client.Collection(usersCollection).Documents(ctx)
-	defer iter.Stop()
-
-	var users []UserInfo
-	for {
-		doc, err := iter.Next()
-		if err == iterator.Done {
-			break
-		}
-		if err != nil {
-			return nil, fmt.Errorf("failed to iterate users: %w", err)
-		}
-
-		var userDoc UserDoc
-		if err := doc.DataTo(&userDoc); err != nil {
-			log.LogError("Failed to unmarshal user: %v", err)
-			continue
-		}
-
-		users = append(users, UserInfo(userDoc))
-	}
-
-	return users, nil
-}
-
-func (s *FirestoreStorage) UpdateUserStatus(ctx context.Context, email string, enabled bool) error {
-	_, err := s.client.Collection(usersCollection).Doc(email).Update(ctx, []firestore.Update{
-		{Path: "enabled", Value: enabled},
-	})
-	if status.Code(err) == codes.NotFound {
-		return ErrUserNotFound
-	}
-	return err
-}
-
-func (s *FirestoreStorage) DeleteUser(ctx context.Context, email string) error {
-	_, err := s.client.Collection(usersCollection).Doc(email).Delete(ctx)
-	if err != nil && status.Code(err) != codes.NotFound {
-		return err
-	}
-
-	tokenIter := s.client.Collection(s.tokenCollection).Where("user_email", "==", email).Documents(ctx)
-	defer tokenIter.Stop()
-
-	for {
-		doc, err := tokenIter.Next()
-		if err == iterator.Done {
-			break
-		}
-		if err != nil {
-			log.LogError("Failed to iterate user tokens for deletion: %v", err)
-			continue
-		}
-
-		_, err = doc.Ref.Delete(ctx)
-		if err != nil {
-			log.LogError("Failed to delete user token: %v", err)
-		}
-	}
-
-	sessionIter := s.client.Collection(sessionsCollection).Where("user_email", "==", email).Documents(ctx)
-	defer sessionIter.Stop()
-
-	for {
-		doc, err := sessionIter.Next()
-		if err == iterator.Done {
-			break
-		}
-		if err != nil {
-			log.LogError("Failed to iterate user sessions for deletion: %v", err)
-			continue
-		}
-
-		_, err = doc.Ref.Delete(ctx)
-		if err != nil {
-			log.LogError("Failed to delete user session: %v", err)
-		}
-	}
-
-	return nil
-}
-
-func (s *FirestoreStorage) SetUserAdmin(ctx context.Context, email string, isAdmin bool) error {
-	_, err := s.client.Collection(usersCollection).Doc(email).Update(ctx, []firestore.Update{
-		{Path: "is_admin", Value: isAdmin},
-	})
-	if status.Code(err) == codes.NotFound {
-		return ErrUserNotFound
-	}
-	return err
 }
 
 func (s *FirestoreStorage) TrackSession(ctx context.Context, session ActiveSession) error {
@@ -697,32 +551,6 @@ func (s *FirestoreStorage) TrackSession(ctx context.Context, session ActiveSessi
 
 	_, err := s.client.Collection(sessionsCollection).Doc(session.SessionID).Set(ctx, sessionDoc)
 	return err
-}
-
-func (s *FirestoreStorage) GetActiveSessions(ctx context.Context) ([]ActiveSession, error) {
-	iter := s.client.Collection(sessionsCollection).Documents(ctx)
-	defer iter.Stop()
-
-	var sessions []ActiveSession
-	for {
-		doc, err := iter.Next()
-		if err == iterator.Done {
-			break
-		}
-		if err != nil {
-			return nil, fmt.Errorf("failed to iterate sessions: %w", err)
-		}
-
-		var sessionDoc SessionDoc
-		if err := doc.DataTo(&sessionDoc); err != nil {
-			log.LogError("Failed to unmarshal session: %v", err)
-			continue
-		}
-
-		sessions = append(sessions, ActiveSession(sessionDoc))
-	}
-
-	return sessions, nil
 }
 
 func (s *FirestoreStorage) RevokeSession(ctx context.Context, sessionID string) error {

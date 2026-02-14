@@ -21,8 +21,6 @@ type MemoryStorage struct {
 	grantsMutex     sync.Mutex
 	userTokens      map[string]*StoredToken
 	userTokensMutex sync.RWMutex
-	users           map[string]*UserInfo
-	usersMutex      sync.RWMutex
 	sessions        map[string]*ActiveSession
 	sessionsMutex   sync.RWMutex
 }
@@ -32,7 +30,6 @@ func NewMemoryStorage() *MemoryStorage {
 		clients:    make(map[string]*Client),
 		grants:     make(map[string]*oauth.Grant),
 		userTokens: make(map[string]*StoredToken),
-		users:      make(map[string]*UserInfo),
 		sessions:   make(map[string]*ActiveSession),
 	}
 }
@@ -169,100 +166,6 @@ func (s *MemoryStorage) ListUserServices(ctx context.Context, userEmail string) 
 	return services, nil
 }
 
-func (s *MemoryStorage) UpsertUser(ctx context.Context, email string) error {
-	s.usersMutex.Lock()
-	defer s.usersMutex.Unlock()
-
-	if user, exists := s.users[email]; exists {
-		user.LastSeen = time.Now()
-	} else {
-		s.users[email] = &UserInfo{
-			Email:     email,
-			FirstSeen: time.Now(),
-			LastSeen:  time.Now(),
-			Enabled:   true,
-			IsAdmin:   false,
-		}
-	}
-	return nil
-}
-
-func (s *MemoryStorage) GetUser(ctx context.Context, email string) (*UserInfo, error) {
-	s.usersMutex.RLock()
-	defer s.usersMutex.RUnlock()
-
-	user, exists := s.users[email]
-	if !exists {
-		return nil, ErrUserNotFound
-	}
-	userCopy := *user
-	return &userCopy, nil
-}
-
-func (s *MemoryStorage) GetAllUsers(ctx context.Context) ([]UserInfo, error) {
-	s.usersMutex.RLock()
-	defer s.usersMutex.RUnlock()
-
-	users := make([]UserInfo, 0, len(s.users))
-	for _, user := range s.users {
-		users = append(users, *user)
-	}
-	return users, nil
-}
-
-func (s *MemoryStorage) UpdateUserStatus(ctx context.Context, email string, enabled bool) error {
-	s.usersMutex.Lock()
-	defer s.usersMutex.Unlock()
-
-	user, exists := s.users[email]
-	if !exists {
-		return ErrUserNotFound
-	}
-	userCopy := *user
-	userCopy.Enabled = enabled
-	s.users[email] = &userCopy
-	return nil
-}
-
-func (s *MemoryStorage) DeleteUser(ctx context.Context, email string) error {
-	s.userTokensMutex.Lock()
-	prefix := email + ":"
-	for key := range s.userTokens {
-		if strings.HasPrefix(key, prefix) {
-			delete(s.userTokens, key)
-		}
-	}
-	s.userTokensMutex.Unlock()
-
-	s.sessionsMutex.Lock()
-	for id, sess := range s.sessions {
-		if sess.UserEmail == email {
-			delete(s.sessions, id)
-		}
-	}
-	s.sessionsMutex.Unlock()
-
-	s.usersMutex.Lock()
-	delete(s.users, email)
-	s.usersMutex.Unlock()
-
-	return nil
-}
-
-func (s *MemoryStorage) SetUserAdmin(ctx context.Context, email string, isAdmin bool) error {
-	s.usersMutex.Lock()
-	defer s.usersMutex.Unlock()
-
-	user, exists := s.users[email]
-	if !exists {
-		return ErrUserNotFound
-	}
-	userCopy := *user
-	userCopy.IsAdmin = isAdmin
-	s.users[email] = &userCopy
-	return nil
-}
-
 func (s *MemoryStorage) TrackSession(ctx context.Context, session ActiveSession) error {
 	s.sessionsMutex.Lock()
 	defer s.sessionsMutex.Unlock()
@@ -279,17 +182,6 @@ func (s *MemoryStorage) TrackSession(ctx context.Context, session ActiveSession)
 		s.sessions[session.SessionID] = &sessionCopy
 	}
 	return nil
-}
-
-func (s *MemoryStorage) GetActiveSessions(ctx context.Context) ([]ActiveSession, error) {
-	s.sessionsMutex.RLock()
-	defer s.sessionsMutex.RUnlock()
-
-	sessions := make([]ActiveSession, 0, len(s.sessions))
-	for _, session := range s.sessions {
-		sessions = append(sessions, *session)
-	}
-	return sessions, nil
 }
 
 func (s *MemoryStorage) RevokeSession(ctx context.Context, sessionID string) error {

@@ -336,13 +336,6 @@ func (h *AuthHandlers) IDPCallbackHandler(w http.ResponseWriter, r *http.Request
 
 	log.Logf("User authenticated: %s", identity.Email)
 
-	if err := h.storage.UpsertUser(ctx, identity.Email); err != nil {
-		log.LogWarnWithFields("auth", "Failed to track user", map[string]any{
-			"email": identity.Email,
-			"error": err.Error(),
-		})
-	}
-
 	if isBrowserFlow {
 		h.handleBrowserCallback(w, r, identity, returnURL)
 	} else {

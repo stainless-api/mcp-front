@@ -42,14 +42,6 @@ func (m *mockStorage) GetUserToken(ctx context.Context, userEmail, service strin
 	return m.MemoryStorage.GetUserToken(ctx, userEmail, service)
 }
 
-func (m *mockStorage) UpsertUser(ctx context.Context, email string) error {
-	if m.Mock.ExpectedCalls != nil {
-		args := m.Called(ctx, email)
-		return args.Error(0)
-	}
-	return m.MemoryStorage.UpsertUser(ctx, email)
-}
-
 func (m *mockSessionManager) GetSession(key client.SessionKey) (*client.StdioSession, bool) {
 	args := m.Called(key)
 	if args.Get(0) == nil {

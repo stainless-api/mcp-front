@@ -199,12 +199,6 @@ type SessionConfig struct {
 	MaxPerUser      int
 }
 
-// AdminConfig represents admin UI configuration
-type AdminConfig struct {
-	Enabled     bool     `json:"enabled"`
-	AdminEmails []string `json:"adminEmails"`
-}
-
 // IDPConfig represents identity provider configuration.
 type IDPConfig struct {
 	// Provider type: "google", "azure", "github", or "oidc"
@@ -261,7 +255,6 @@ type ProxyConfig struct {
 	Addr     string           `json:"addr"`
 	Name     string           `json:"name"`
 	Auth     *OAuthAuthConfig `json:"auth,omitempty"` // Only OAuth is supported
-	Admin    *AdminConfig     `json:"admin,omitempty"`
 	Sessions *SessionConfig   `json:"sessions,omitempty"`
 }
 

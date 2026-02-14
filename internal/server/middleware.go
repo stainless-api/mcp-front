@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dgellow/mcp-front/internal/adminauth"
 	"github.com/dgellow/mcp-front/internal/config"
 	"github.com/dgellow/mcp-front/internal/cookie"
 	"github.com/dgellow/mcp-front/internal/crypto"
@@ -19,7 +18,6 @@ import (
 	"github.com/dgellow/mcp-front/internal/oauth"
 	"github.com/dgellow/mcp-front/internal/servicecontext"
 	"github.com/dgellow/mcp-front/internal/session"
-	"github.com/dgellow/mcp-front/internal/storage"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -268,26 +266,6 @@ func newServiceAuthMiddleware(serviceAuths []config.ServiceAuth) MiddlewareFunc 
 	}
 }
 
-// adminMiddleware creates middleware for admin access control
-func adminMiddleware(adminConfig *config.AdminConfig, store storage.Storage) MiddlewareFunc {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			userEmail, ok := oauth.GetUserFromContext(r.Context())
-			if !ok {
-				jsonwriter.WriteUnauthorized(w, "Unauthorized")
-				return
-			}
-
-			if !adminauth.IsAdmin(r.Context(), userEmail, adminConfig, store) {
-				jsonwriter.WriteForbidden(w, "Forbidden - Admin access required")
-				return
-			}
-
-			next.ServeHTTP(w, r)
-		})
-	}
-}
-
 // NewBrowserSSOMiddleware creates middleware for browser-based SSO authentication
 func NewBrowserSSOMiddleware(authConfig config.OAuthAuthConfig, idpProvider idp.Provider, sessionEncryptor crypto.Encryptor, browserStateToken *crypto.TokenSigner) MiddlewareFunc {
 	return func(next http.Handler) http.Handler {
@@ -375,9 +353,4 @@ func generateBrowserState(browserStateToken *crypto.TokenSigner, returnURL strin
 // NewServiceAuthMiddleware creates middleware for service-to-service authentication
 func NewServiceAuthMiddleware(serviceAuths []config.ServiceAuth) MiddlewareFunc {
 	return newServiceAuthMiddleware(serviceAuths)
-}
-
-// NewAdminMiddleware creates middleware for admin access control
-func NewAdminMiddleware(adminConfig *config.AdminConfig, store storage.Storage) MiddlewareFunc {
-	return adminMiddleware(adminConfig, store)
 }

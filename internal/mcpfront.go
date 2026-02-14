@@ -250,24 +250,6 @@ func setupAuthentication(ctx context.Context, cfg config.Config, store storage.S
 
 	serviceOAuthClient := auth.NewServiceOAuthClient(store, cfg.Proxy.BaseURL, encryptionKey)
 
-	if cfg.Proxy.Admin != nil && cfg.Proxy.Admin.Enabled {
-		for _, adminEmail := range cfg.Proxy.Admin.AdminEmails {
-			if err := store.UpsertUser(ctx, adminEmail); err != nil {
-				log.LogWarnWithFields("mcpfront", "Failed to initialize admin user", map[string]any{
-					"email": adminEmail,
-					"error": err.Error(),
-				})
-				continue
-			}
-			if err := store.SetUserAdmin(ctx, adminEmail, true); err != nil {
-				log.LogWarnWithFields("mcpfront", "Failed to set user as admin", map[string]any{
-					"email": adminEmail,
-					"error": err.Error(),
-				})
-			}
-		}
-	}
-
 	return authServer, idpProvider, sessionEncryptor, *oauthAuth, serviceOAuthClient, nil
 }
 
@@ -298,7 +280,6 @@ func buildHTTPHandler(
 	oauthLogger := server.NewLoggerMiddleware("oauth")
 	mcpLogger := server.NewLoggerMiddleware("mcp")
 	tokenLogger := server.NewLoggerMiddleware("tokens")
-	adminLogger := server.NewLoggerMiddleware("admin")
 	mcpRecover := server.NewRecoverMiddleware("mcp")
 	oauthRecover := server.NewRecoverMiddleware("oauth")
 
@@ -415,36 +396,6 @@ func buildHTTPHandler(
 		mcpMiddlewares = append(mcpMiddlewares, mcpRecover)
 
 		mux.Handle(route("/"+serverName+"/"), server.ChainMiddleware(handler, mcpMiddlewares...))
-	}
-
-	if cfg.Proxy.Admin != nil && cfg.Proxy.Admin.Enabled {
-		log.LogInfoWithFields("server", "Admin UI enabled", map[string]any{
-			"admin_emails": cfg.Proxy.Admin.AdminEmails,
-		})
-
-		var encryptionKey string
-		if oauthAuth := cfg.Proxy.Auth; oauthAuth != nil {
-			encryptionKey = string(oauthAuth.EncryptionKey)
-		}
-
-		adminHandlers := server.NewAdminHandlers(storage, cfg, sessionManager, encryptionKey)
-
-		adminMiddleware := []server.MiddlewareFunc{
-			corsMiddleware,
-			adminLogger,
-		}
-
-		if authServer != nil {
-			adminMiddleware = append(adminMiddleware, server.NewBrowserSSOMiddleware(authConfig, idpProvider, sessionEncryptor, browserStateToken))
-		}
-
-		adminMiddleware = append(adminMiddleware, server.NewAdminMiddleware(cfg.Proxy.Admin, storage))
-		adminMiddleware = append(adminMiddleware, mcpRecover)
-
-		mux.Handle(route("/admin"), server.ChainMiddleware(http.HandlerFunc(adminHandlers.DashboardHandler), adminMiddleware...))
-		mux.Handle(route("/admin/users"), server.ChainMiddleware(http.HandlerFunc(adminHandlers.UserActionHandler), adminMiddleware...))
-		mux.Handle(route("/admin/sessions"), server.ChainMiddleware(http.HandlerFunc(adminHandlers.SessionActionHandler), adminMiddleware...))
-		mux.Handle(route("/admin/logging"), server.ChainMiddleware(http.HandlerFunc(adminHandlers.LoggingActionHandler), adminMiddleware...))
 	}
 
 	log.LogInfoWithFields("server", "MCP proxy server initialized", nil)

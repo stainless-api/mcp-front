@@ -159,14 +159,16 @@ func TestMemoryStorageSessions(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		sessions, err := store.GetActiveSessions(ctx)
-		require.NoError(t, err)
-		require.Len(t, sessions, 1)
-		assert.Equal(t, "sess-1", sessions[0].SessionID)
-		assert.Equal(t, "user@example.com", sessions[0].UserEmail)
-		assert.Equal(t, "postgres", sessions[0].ServerName)
-		assert.WithinDuration(t, created, sessions[0].Created, time.Second)
-		assert.WithinDuration(t, time.Now(), sessions[0].LastActive, time.Second)
+		store.sessionsMutex.RLock()
+		require.Len(t, store.sessions, 1)
+		sess := store.sessions["sess-1"]
+		store.sessionsMutex.RUnlock()
+		require.NotNil(t, sess)
+		assert.Equal(t, "sess-1", sess.SessionID)
+		assert.Equal(t, "user@example.com", sess.UserEmail)
+		assert.Equal(t, "postgres", sess.ServerName)
+		assert.WithinDuration(t, created, sess.Created, time.Second)
+		assert.WithinDuration(t, time.Now(), sess.LastActive, time.Second)
 	})
 
 	t.Run("track session sets Created when zero", func(t *testing.T) {
@@ -177,29 +179,17 @@ func TestMemoryStorageSessions(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		sessions, err := store.GetActiveSessions(ctx)
-		require.NoError(t, err)
-
-		var found *ActiveSession
-		for _, s := range sessions {
-			if s.SessionID == "sess-zero" {
-				found = &s
-				break
-			}
-		}
-		require.NotNil(t, found)
-		assert.WithinDuration(t, time.Now(), found.Created, time.Second)
+		store.sessionsMutex.RLock()
+		sess := store.sessions["sess-zero"]
+		store.sessionsMutex.RUnlock()
+		require.NotNil(t, sess)
+		assert.WithinDuration(t, time.Now(), sess.Created, time.Second)
 	})
 
 	t.Run("track existing session updates LastActive", func(t *testing.T) {
-		sessions, _ := store.GetActiveSessions(ctx)
-		var before ActiveSession
-		for _, s := range sessions {
-			if s.SessionID == "sess-1" {
-				before = s
-				break
-			}
-		}
+		store.sessionsMutex.RLock()
+		before := *store.sessions["sess-1"]
+		store.sessionsMutex.RUnlock()
 
 		time.Sleep(10 * time.Millisecond)
 		err := store.TrackSession(ctx, ActiveSession{
@@ -209,14 +199,9 @@ func TestMemoryStorageSessions(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		sessions, _ = store.GetActiveSessions(ctx)
-		var after ActiveSession
-		for _, s := range sessions {
-			if s.SessionID == "sess-1" {
-				after = s
-				break
-			}
-		}
+		store.sessionsMutex.RLock()
+		after := *store.sessions["sess-1"]
+		store.sessionsMutex.RUnlock()
 		assert.True(t, after.LastActive.After(before.LastActive))
 	})
 
@@ -224,58 +209,14 @@ func TestMemoryStorageSessions(t *testing.T) {
 		err := store.RevokeSession(ctx, "sess-1")
 		require.NoError(t, err)
 
-		sessions, err := store.GetActiveSessions(ctx)
-		require.NoError(t, err)
-		for _, s := range sessions {
-			assert.NotEqual(t, "sess-1", s.SessionID)
-		}
+		store.sessionsMutex.RLock()
+		_, exists := store.sessions["sess-1"]
+		store.sessionsMutex.RUnlock()
+		assert.False(t, exists)
 	})
 
 	t.Run("revoke nonexistent session is idempotent", func(t *testing.T) {
 		err := store.RevokeSession(ctx, "nonexistent")
 		require.NoError(t, err)
-	})
-
-	t.Run("delete user cascades to sessions", func(t *testing.T) {
-		err := store.TrackSession(ctx, ActiveSession{
-			SessionID:  "sess-del-1",
-			UserEmail:  "delete-me@example.com",
-			ServerName: "postgres",
-		})
-		require.NoError(t, err)
-
-		err = store.TrackSession(ctx, ActiveSession{
-			SessionID:  "sess-del-2",
-			UserEmail:  "delete-me@example.com",
-			ServerName: "linear",
-		})
-		require.NoError(t, err)
-
-		err = store.TrackSession(ctx, ActiveSession{
-			SessionID:  "sess-keep",
-			UserEmail:  "keep-me@example.com",
-			ServerName: "postgres",
-		})
-		require.NoError(t, err)
-
-		err = store.UpsertUser(ctx, "delete-me@example.com")
-		require.NoError(t, err)
-
-		err = store.DeleteUser(ctx, "delete-me@example.com")
-		require.NoError(t, err)
-
-		sessions, err := store.GetActiveSessions(ctx)
-		require.NoError(t, err)
-		for _, s := range sessions {
-			assert.NotEqual(t, "delete-me@example.com", s.UserEmail)
-		}
-
-		var keepFound bool
-		for _, s := range sessions {
-			if s.SessionID == "sess-keep" {
-				keepFound = true
-			}
-		}
-		assert.True(t, keepFound, "other user's sessions should not be affected")
 	})
 }

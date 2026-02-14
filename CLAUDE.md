@@ -164,7 +164,6 @@ internal/
 ├── config/         # Configuration parsing and validation
 ├── oauth/          # OAuth provider, JWT, middleware
 ├── googleauth/     # Google OAuth integration (pure functions)
-├── adminauth/      # Admin authorization logic
 ├── browserauth/    # Browser session types (SessionCookie, AuthorizationState)
 ├── oauthsession/   # OAuth session types for fosite
 ├── servicecontext/ # Service authentication context utilities
