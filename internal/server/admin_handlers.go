@@ -227,7 +227,12 @@ func (h *AdminHandlers) UserActionHandler(w http.ResponseWriter, r *http.Request
 	case "delete":
 		// Terminate any active stdio sessions for this user
 		sessions, sessErr := h.storage.GetActiveSessions(r.Context())
-		if sessErr == nil {
+		if sessErr != nil {
+			log.LogErrorWithFields("admin", "Failed to get active sessions for user deletion", map[string]any{
+				"error": sessErr.Error(),
+				"user":  targetEmail,
+			})
+		} else {
 			for _, s := range sessions {
 				if s.UserEmail == targetEmail {
 					key := client.SessionKey{
