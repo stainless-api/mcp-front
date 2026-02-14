@@ -21,12 +21,10 @@ import (
 	"github.com/dgellow/mcp-front/internal/oauth"
 	"github.com/dgellow/mcp-front/internal/session"
 	"github.com/dgellow/mcp-front/internal/storage"
-	"github.com/ory/fosite"
 )
 
-// AuthHandlers provides OAuth HTTP handlers with dependency injection
 type AuthHandlers struct {
-	oauthProvider      fosite.OAuth2Provider
+	authServer         *oauth.AuthorizationServer
 	authConfig         config.OAuthAuthConfig
 	idpProvider        idp.Provider
 	storage            storage.Storage
@@ -36,19 +34,17 @@ type AuthHandlers struct {
 	serviceOAuthClient *auth.ServiceOAuthClient
 }
 
-// UpstreamOAuthState stores OAuth state during upstream authentication flow (MCP host → mcp-front)
 type UpstreamOAuthState struct {
-	Identity     idp.Identity `json:"identity"`
-	ClientID     string       `json:"client_id"`
-	RedirectURI  string       `json:"redirect_uri"`
-	Scopes       []string     `json:"scopes"`
-	State        string       `json:"state"`
-	ResponseType string       `json:"response_type"`
+	Identity    idp.Identity `json:"identity"`
+	ClientID    string       `json:"client_id"`
+	RedirectURI string       `json:"redirect_uri"`
+	Scopes      []string     `json:"scopes"`
+	Audience    []string     `json:"audience"`
+	State       string       `json:"state"`
 }
 
-// NewAuthHandlers creates new auth handlers with dependency injection
 func NewAuthHandlers(
-	oauthProvider fosite.OAuth2Provider,
+	authServer *oauth.AuthorizationServer,
 	authConfig config.OAuthAuthConfig,
 	idpProvider idp.Provider,
 	storage storage.Storage,
@@ -57,7 +53,7 @@ func NewAuthHandlers(
 	serviceOAuthClient *auth.ServiceOAuthClient,
 ) *AuthHandlers {
 	return &AuthHandlers{
-		oauthProvider:      oauthProvider,
+		authServer:         authServer,
 		authConfig:         authConfig,
 		idpProvider:        idpProvider,
 		storage:            storage,
@@ -68,7 +64,6 @@ func NewAuthHandlers(
 	}
 }
 
-// WellKnownHandler serves OAuth 2.0 Authorization Server Metadata (RFC 8414)
 func (h *AuthHandlers) WellKnownHandler(w http.ResponseWriter, r *http.Request) {
 	log.Logf("Well-known handler called: %s %s", r.Method, r.URL.Path)
 
@@ -86,24 +81,14 @@ func (h *AuthHandlers) WellKnownHandler(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
-// ProtectedResourceMetadataHandler serves OAuth 2.0 Protected Resource Metadata (RFC 9728)
-// This endpoint helps clients discover which authorization servers this resource server trusts
-//
-// By default, this returns 404 directing clients to per-service metadata endpoints.
-// When DangerouslyAcceptIssuerAudience is enabled, it returns base issuer metadata as a
-// workaround for MCP clients that don't properly implement RFC 8707 resource indicators.
 func (h *AuthHandlers) ProtectedResourceMetadataHandler(w http.ResponseWriter, r *http.Request) {
 	log.Logf("Protected resource metadata handler called: %s %s", r.Method, r.URL.Path)
 
-	// By default, return 404 to direct clients to per-service metadata
 	if !h.authConfig.DangerouslyAcceptIssuerAudience {
 		jsonwriter.WriteNotFound(w, "Use /.well-known/oauth-protected-resource/{service} for per-service metadata")
 		return
 	}
 
-	// Workaround mode: return base issuer metadata for broken clients.
-	// This intentionally uses the issuer as the resource (no per-service scoping)
-	// because broken clients don't implement RFC 8707 resource indicators.
 	issuer := h.authConfig.Issuer
 	log.LogWarnWithFields("oauth", "Serving base protected resource metadata (dangerouslyAcceptIssuerAudience enabled)", map[string]any{
 		"issuer": issuer,
@@ -133,14 +118,6 @@ func (h *AuthHandlers) ProtectedResourceMetadataHandler(w http.ResponseWriter, r
 	}
 }
 
-// ServiceProtectedResourceMetadataHandler serves per-service OAuth 2.0 Protected Resource
-// Metadata (RFC 9728). Per RFC 9728 Section 5.2, multiple resources on a single host use
-// path-based differentiation, with each resource having its own metadata endpoint.
-//
-// This endpoint returns service-specific resource URIs that support per-service audience
-// validation per RFC 8707.
-//
-// Route: /.well-known/oauth-protected-resource/{service}
 func (h *AuthHandlers) ServiceProtectedResourceMetadataHandler(w http.ResponseWriter, r *http.Request) {
 	serviceName := r.PathValue("service")
 	if serviceName == "" {
@@ -150,7 +127,6 @@ func (h *AuthHandlers) ServiceProtectedResourceMetadataHandler(w http.ResponseWr
 
 	log.Logf("Service protected resource metadata handler called for service: %s", serviceName)
 
-	// Validate service exists in configuration
 	if _, exists := h.mcpServers[serviceName]; !exists {
 		log.LogWarnWithFields("oauth", "Unknown service requested in metadata", map[string]any{
 			"service": serviceName,
@@ -182,10 +158,10 @@ func (h *AuthHandlers) ClientMetadataHandler(w http.ResponseWriter, r *http.Requ
 
 	log.Logf("Client metadata handler called for client: %s", clientID)
 
-	client, err := h.storage.GetClientWithMetadata(r.Context(), clientID)
+	client, err := h.storage.GetClient(r.Context(), clientID)
 	if err != nil {
 		log.LogError("Failed to get client %s: %v", clientID, err)
-		if errors.Is(err, fosite.ErrNotFound) {
+		if errors.Is(err, storage.ErrClientNotFound) {
 			jsonwriter.WriteNotFound(w, "Client not found")
 		} else {
 			jsonwriter.WriteInternalServerError(w, "Failed to retrieve client")
@@ -215,78 +191,67 @@ func (h *AuthHandlers) ClientMetadataHandler(w http.ResponseWriter, r *http.Requ
 	}
 }
 
-// AuthorizeHandler handles OAuth 2.0 authorization requests
 func (h *AuthHandlers) AuthorizeHandler(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
 	log.Logf("Authorize handler called: %s %s", r.Method, r.URL.Path)
 
-	// In development mode, generate a secure state parameter if missing
-	// This works around bugs in OAuth clients that don't send state
 	stateParam := r.URL.Query().Get("state")
 	if config.IsDev() && len(stateParam) == 0 {
-		generatedState := crypto.GenerateSecureToken()
+		generatedState, err := crypto.GenerateSecureToken()
+		if err != nil {
+			log.LogError("Failed to generate state parameter: %v", err)
+			jsonwriter.WriteInternalServerError(w, "Internal server error")
+			return
+		}
 		log.LogWarn("Development mode: generating state parameter '%s' for buggy client", generatedState)
 		q := r.URL.Query()
 		q.Set("state", generatedState)
 		r.URL.RawQuery = q.Encode()
-		// Also update the form values
 		if r.Form == nil {
 			_ = r.ParseForm()
 		}
 		r.Form.Set("state", generatedState)
 	}
 
-	// Parse the authorize request
-	ar, err := h.oauthProvider.NewAuthorizeRequest(ctx, r)
-	if err != nil {
-		log.LogError("Authorize request error: %v", err)
-		h.oauthProvider.WriteAuthorizeError(ctx, w, ar, err)
+	clientID := r.URL.Query().Get("client_id")
+	if clientID == "" {
+		jsonwriter.WriteBadRequest(w, "Missing client_id parameter")
 		return
 	}
 
-	// Extract and validate resource parameters (RFC 8707)
-	resources, err := oauth.ExtractResourceParameters(r)
+	client, err := h.storage.GetClient(r.Context(), clientID)
 	if err != nil {
-		log.LogError("Failed to extract resource parameters: %v", err)
-		h.oauthProvider.WriteAuthorizeError(ctx, w, ar, fosite.ErrInvalidRequest.WithHint("Invalid resource parameter"))
-		return
-	}
-
-	// Validate each resource URI per RFC 8707
-	for _, resource := range resources {
-		if err := oauth.ValidateResourceURI(resource, h.authConfig.Issuer); err != nil {
-			log.LogErrorWithFields("auth", "Invalid resource URI in authorization request", map[string]any{
-				"resource": resource,
-				"error":    err.Error(),
-			})
-			h.oauthProvider.WriteAuthorizeError(ctx, w, ar, fosite.ErrInvalidRequest.WithHintf("Invalid resource: %v", err))
-			return
+		if errors.Is(err, storage.ErrClientNotFound) {
+			jsonwriter.WriteBadRequest(w, "Unknown client_id")
+		} else {
+			jsonwriter.WriteInternalServerError(w, "Failed to retrieve client")
 		}
-	}
-
-	// Grant audiences for requested resources (RFC 8707)
-	// These audience claims will be included in issued tokens
-	for _, resource := range resources {
-		ar.GrantAudience(resource)
-		log.LogInfoWithFields("auth", "Granted audience for resource", map[string]any{
-			"resource": resource,
-			"client":   ar.GetClient().GetID(),
-		})
-	}
-
-	state := ar.GetState()
-	if err := h.storage.StoreAuthorizeRequest(state, ar); err != nil {
-		log.LogError("Failed to store authorize request: %v", err)
-		h.oauthProvider.WriteAuthorizeError(ctx, w, ar, fosite.ErrServerError.WithHint("Failed to store authorization request"))
 		return
 	}
 
-	authURL := h.idpProvider.AuthURL(state)
+	params, err := h.authServer.ValidateAuthorizeRequest(r, client)
+	if err != nil {
+		var oauthErr *oauth.OAuthError
+		if errors.As(err, &oauthErr) {
+			redirectURI := r.URL.Query().Get("redirect_uri")
+			state := r.URL.Query().Get("state")
+			oauth.WriteAuthorizeError(w, r, redirectURI, state, oauthErr)
+		} else {
+			jsonwriter.WriteBadRequest(w, err.Error())
+		}
+		return
+	}
+
+	signedParams, err := h.oauthStateToken.Sign(params)
+	if err != nil {
+		log.LogError("Failed to sign authorize params: %v", err)
+		jsonwriter.WriteInternalServerError(w, "Internal server error")
+		return
+	}
+
+	authURL := h.idpProvider.AuthURL(signedParams)
 	http.Redirect(w, r, authURL, http.StatusFound)
 }
 
-// IDPCallbackHandler handles the callback from the identity provider.
-// It dispatches to handleBrowserCallback or handleOAuthClientCallback based on the flow type.
 func (h *AuthHandlers) IDPCallbackHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -306,9 +271,9 @@ func (h *AuthHandlers) IDPCallbackHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	var ar fosite.AuthorizeRequester
 	var isBrowserFlow bool
 	var returnURL string
+	var authorizeParams *oauth.AuthorizeParams
 
 	if strings.HasPrefix(state, "browser:") {
 		isBrowserFlow = true
@@ -322,24 +287,24 @@ func (h *AuthHandlers) IDPCallbackHandler(w http.ResponseWriter, r *http.Request
 		}
 		returnURL = browserState.ReturnURL
 	} else {
-		var found bool
-		ar, found = h.storage.GetAuthorizeRequest(state)
-		if !found {
-			log.LogError("Invalid or expired state: %s", state)
+		var params oauth.AuthorizeParams
+		if err := h.oauthStateToken.Verify(state, &params); err != nil {
+			log.LogError("Invalid or expired state: %v", err)
 			jsonwriter.WriteBadRequest(w, "Invalid or expired authorization request")
 			return
 		}
+		authorizeParams = &params
 	}
 
-	// Exchange code for token with timeout
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	token, err := h.idpProvider.ExchangeCode(ctx, code)
 	if err != nil {
 		log.LogError("Failed to exchange code: %v", err)
-		if !isBrowserFlow && ar != nil {
-			h.oauthProvider.WriteAuthorizeError(ctx, w, ar, fosite.ErrServerError.WithHint("Failed to exchange authorization code"))
+		if !isBrowserFlow && authorizeParams != nil {
+			oauth.WriteAuthorizeError(w, r, authorizeParams.RedirectURI, authorizeParams.State,
+				oauth.NewOAuthError(oauth.ErrServerError, "Failed to exchange authorization code"))
 		} else {
 			jsonwriter.WriteInternalServerError(w, "Authentication failed")
 		}
@@ -349,8 +314,9 @@ func (h *AuthHandlers) IDPCallbackHandler(w http.ResponseWriter, r *http.Request
 	identity, err := h.idpProvider.UserInfo(ctx, token)
 	if err != nil {
 		log.LogError("Failed to fetch user identity: %v", err)
-		if !isBrowserFlow && ar != nil {
-			h.oauthProvider.WriteAuthorizeError(ctx, w, ar, fosite.ErrServerError.WithHint("Failed to fetch user identity"))
+		if !isBrowserFlow && authorizeParams != nil {
+			oauth.WriteAuthorizeError(w, r, authorizeParams.RedirectURI, authorizeParams.State,
+				oauth.NewOAuthError(oauth.ErrServerError, "Failed to fetch user identity"))
 		} else {
 			jsonwriter.WriteInternalServerError(w, "Authentication failed")
 		}
@@ -359,8 +325,9 @@ func (h *AuthHandlers) IDPCallbackHandler(w http.ResponseWriter, r *http.Request
 
 	if err := h.validateAccess(identity); err != nil {
 		log.LogError("Access denied: %v", err)
-		if !isBrowserFlow && ar != nil {
-			h.oauthProvider.WriteAuthorizeError(ctx, w, ar, fosite.ErrAccessDenied.WithHint(err.Error()))
+		if !isBrowserFlow && authorizeParams != nil {
+			oauth.WriteAuthorizeError(w, r, authorizeParams.RedirectURI, authorizeParams.State,
+				oauth.NewOAuthError(oauth.ErrAccessDenied, err.Error()))
 		} else {
 			jsonwriter.WriteForbidden(w, "Access denied")
 		}
@@ -379,12 +346,10 @@ func (h *AuthHandlers) IDPCallbackHandler(w http.ResponseWriter, r *http.Request
 	if isBrowserFlow {
 		h.handleBrowserCallback(w, r, identity, returnURL)
 	} else {
-		h.handleOAuthClientCallback(ctx, w, r, ar, identity)
+		h.handleOAuthClientCallback(ctx, w, r, authorizeParams, identity)
 	}
 }
 
-// handleBrowserCallback handles the browser SSO callback flow: creates an encrypted
-// session cookie and redirects to the return URL.
 func (h *AuthHandlers) handleBrowserCallback(w http.ResponseWriter, r *http.Request, identity *idp.Identity, returnURL string) {
 	sessionDuration := 24 * time.Hour
 
@@ -419,9 +384,7 @@ func (h *AuthHandlers) handleBrowserCallback(w http.ResponseWriter, r *http.Requ
 	http.Redirect(w, r, returnURL, http.StatusFound)
 }
 
-// handleOAuthClientCallback handles the OAuth client callback flow: checks for
-// service auth needs, creates a fosite session, and issues the authorize response.
-func (h *AuthHandlers) handleOAuthClientCallback(ctx context.Context, w http.ResponseWriter, r *http.Request, ar fosite.AuthorizeRequester, identity *idp.Identity) {
+func (h *AuthHandlers) handleOAuthClientCallback(ctx context.Context, w http.ResponseWriter, r *http.Request, params *oauth.AuthorizeParams, identity *idp.Identity) {
 	needsServiceAuth := false
 	for _, serverConfig := range h.mcpServers {
 		if serverConfig.RequiresUserToken &&
@@ -433,10 +396,11 @@ func (h *AuthHandlers) handleOAuthClientCallback(ctx context.Context, w http.Res
 	}
 
 	if needsServiceAuth {
-		stateData, err := h.signUpstreamOAuthState(ar, *identity)
+		stateData, err := h.signUpstreamOAuthState(params, *identity)
 		if err != nil {
 			log.LogError("Failed to sign OAuth state: %v", err)
-			h.oauthProvider.WriteAuthorizeError(ctx, w, ar, fosite.ErrServerError.WithHint("Failed to prepare service authentication"))
+			oauth.WriteAuthorizeError(w, r, params.RedirectURI, params.State,
+				oauth.NewOAuthError(oauth.ErrServerError, "Failed to prepare service authentication"))
 			return
 		}
 
@@ -444,57 +408,124 @@ func (h *AuthHandlers) handleOAuthClientCallback(ctx context.Context, w http.Res
 		return
 	}
 
-	session := &session.OAuthSession{
-		DefaultSession: &fosite.DefaultSession{
-			ExpiresAt: map[fosite.TokenType]time.Time{
-				fosite.AccessToken:  time.Now().Add(h.authConfig.TokenTTL),
-				fosite.RefreshToken: time.Now().Add(h.authConfig.RefreshTokenTTL),
-			},
-		},
-		Identity: *identity,
-	}
-
-	response, err := h.oauthProvider.NewAuthorizeResponse(ctx, ar, session)
+	grant, err := h.authServer.IssueCode(params, *identity)
 	if err != nil {
-		log.LogError("Authorize response error: %v", err)
-		h.oauthProvider.WriteAuthorizeError(ctx, w, ar, err)
+		log.LogError("Failed to issue authorization code: %v", err)
+		oauth.WriteAuthorizeError(w, r, params.RedirectURI, params.State,
+			oauth.NewOAuthError(oauth.ErrServerError, "Failed to issue authorization code"))
 		return
 	}
 
-	h.oauthProvider.WriteAuthorizeResponse(ctx, w, ar, response)
+	if err := h.storage.StoreGrant(ctx, grant.Code, grant); err != nil {
+		log.LogError("Failed to store grant: %v", err)
+		oauth.WriteAuthorizeError(w, r, params.RedirectURI, params.State,
+			oauth.NewOAuthError(oauth.ErrServerError, "Failed to store authorization grant"))
+		return
+	}
+
+	redirectURL, _ := url.Parse(params.RedirectURI)
+	q := redirectURL.Query()
+	q.Set("code", grant.Code)
+	if params.State != "" {
+		q.Set("state", params.State)
+	}
+	redirectURL.RawQuery = q.Encode()
+
+	http.Redirect(w, r, redirectURL.String(), http.StatusFound)
 }
 
-// TokenHandler handles OAuth 2.0 token requests
 func (h *AuthHandlers) TokenHandler(w http.ResponseWriter, r *http.Request) {
 	log.Logf("Token handler called: %s %s", r.Method, r.URL.Path)
-	ctx := r.Context()
 
-	// Create session for the token exchange
-	// Note: We create our custom Session type here, and fosite will populate it
-	// with the session data from the authorization code during NewAccessRequest
-	session := &session.OAuthSession{DefaultSession: &fosite.DefaultSession{}}
-
-	// Handle token request - this retrieves the session from the authorization code
-	accessRequest, err := h.oauthProvider.NewAccessRequest(ctx, r, session)
-	if err != nil {
-		log.LogError("Access request error: %v", err)
-		h.oauthProvider.WriteAccessError(ctx, w, accessRequest, err)
+	if r.Method != http.MethodPost {
+		jsonwriter.WriteError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
 		return
 	}
 
-	// At this point, accessRequest.GetSession() contains the session data from
-	// the authorization phase (including our custom UserInfo). Fosite handles
-	// the session propagation internally when creating the access token.
-
-	// Generate tokens
-	response, err := h.oauthProvider.NewAccessResponse(ctx, accessRequest)
-	if err != nil {
-		log.LogError("Access response error: %v", err)
-		h.oauthProvider.WriteAccessError(ctx, w, accessRequest, err)
+	if err := r.ParseForm(); err != nil {
+		oauth.WriteTokenError(w, http.StatusBadRequest, oauth.NewOAuthError(oauth.ErrInvalidRequest, "Failed to parse form"))
 		return
 	}
 
-	h.oauthProvider.WriteAccessResponse(ctx, w, accessRequest, response)
+	grantType := r.FormValue("grant_type")
+	clientID := r.FormValue("client_id")
+
+	if clientID == "" {
+		oauth.WriteTokenError(w, http.StatusBadRequest, oauth.NewOAuthError(oauth.ErrInvalidRequest, "Missing client_id"))
+		return
+	}
+
+	client, err := h.storage.GetClient(r.Context(), clientID)
+	if err != nil {
+		if errors.Is(err, storage.ErrClientNotFound) {
+			oauth.WriteTokenError(w, http.StatusUnauthorized, oauth.NewOAuthError(oauth.ErrInvalidClient, "Unknown client"))
+		} else {
+			oauth.WriteTokenError(w, http.StatusInternalServerError, oauth.NewOAuthError(oauth.ErrServerError, "Failed to retrieve client"))
+		}
+		return
+	}
+
+	var pair *oauth.TokenPair
+
+	switch grantType {
+	case "authorization_code":
+		code := r.FormValue("code")
+		if code == "" {
+			oauth.WriteTokenError(w, http.StatusBadRequest, oauth.NewOAuthError(oauth.ErrInvalidRequest, "Missing code"))
+			return
+		}
+
+		grant, err := h.storage.ConsumeGrant(r.Context(), code)
+		if err != nil {
+			if errors.Is(err, storage.ErrGrantNotFound) {
+				oauth.WriteTokenError(w, http.StatusBadRequest, oauth.NewOAuthError(oauth.ErrInvalidGrant, "Invalid or expired authorization code"))
+			} else {
+				oauth.WriteTokenError(w, http.StatusInternalServerError, oauth.NewOAuthError(oauth.ErrServerError, "Failed to retrieve grant"))
+			}
+			return
+		}
+
+		pair, err = h.authServer.ExchangeCode(grant, &oauth.ExchangeCodeRequest{
+			RedirectURI:  r.FormValue("redirect_uri"),
+			CodeVerifier: r.FormValue("code_verifier"),
+			ClientSecret: r.FormValue("client_secret"),
+		}, client)
+		if err != nil {
+			var oauthErr *oauth.OAuthError
+			if errors.As(err, &oauthErr) {
+				oauth.WriteTokenError(w, http.StatusBadRequest, oauthErr)
+			} else {
+				oauth.WriteTokenError(w, http.StatusInternalServerError, oauth.NewOAuthError(oauth.ErrServerError, err.Error()))
+			}
+			return
+		}
+
+	case "refresh_token":
+		refreshToken := r.FormValue("refresh_token")
+		if refreshToken == "" {
+			oauth.WriteTokenError(w, http.StatusBadRequest, oauth.NewOAuthError(oauth.ErrInvalidRequest, "Missing refresh_token"))
+			return
+		}
+
+		pair, err = h.authServer.RefreshTokens(refreshToken, client, &oauth.RefreshRequest{
+			ClientSecret: r.FormValue("client_secret"),
+		})
+		if err != nil {
+			var oauthErr *oauth.OAuthError
+			if errors.As(err, &oauthErr) {
+				oauth.WriteTokenError(w, http.StatusBadRequest, oauthErr)
+			} else {
+				oauth.WriteTokenError(w, http.StatusInternalServerError, oauth.NewOAuthError(oauth.ErrServerError, err.Error()))
+			}
+			return
+		}
+
+	default:
+		oauth.WriteTokenError(w, http.StatusBadRequest, oauth.NewOAuthError(oauth.ErrUnsupportedGrantType, fmt.Sprintf("Unsupported grant_type: %s", grantType)))
+		return
+	}
+
+	oauth.WriteTokenResponse(w, pair)
 }
 
 func (h *AuthHandlers) buildClientRegistrationResponse(client *storage.Client, tokenEndpointAuthMethod string, clientSecret string) map[string]any {
@@ -515,7 +546,6 @@ func (h *AuthHandlers) buildClientRegistrationResponse(client *storage.Client, t
 	return response
 }
 
-// RegisterHandler handles dynamic client registration (RFC 7591)
 func (h *AuthHandlers) RegisterHandler(w http.ResponseWriter, r *http.Request) {
 	log.Logf("Register handler called: %s %s", r.Method, r.URL.Path)
 
@@ -524,14 +554,12 @@ func (h *AuthHandlers) RegisterHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse client metadata
 	var metadata map[string]any
 	if err := json.NewDecoder(r.Body).Decode(&metadata); err != nil {
 		jsonwriter.WriteBadRequest(w, "Invalid request body")
 		return
 	}
 
-	// Parse client request
 	redirectURIs, scopes, err := oauth.ParseClientRegistration(metadata)
 	if err != nil {
 		log.LogError("Client request parsing error: %v", err)
@@ -542,10 +570,20 @@ func (h *AuthHandlers) RegisterHandler(w http.ResponseWriter, r *http.Request) {
 	tokenEndpointAuthMethod := "none"
 	var client *storage.Client
 	var plaintextSecret string
-	clientID := crypto.GenerateSecureToken()
+	clientID, err := crypto.GenerateSecureToken()
+	if err != nil {
+		log.LogError("Failed to generate client ID: %v", err)
+		jsonwriter.WriteInternalServerError(w, "Failed to create client")
+		return
+	}
 
 	if authMethod, ok := metadata["token_endpoint_auth_method"].(string); ok && authMethod == "client_secret_post" {
-		plaintextSecret = crypto.GenerateSecureToken()
+		plaintextSecret, err = crypto.GenerateSecureToken()
+		if err != nil {
+			log.LogError("Failed to generate client secret: %v", err)
+			jsonwriter.WriteInternalServerError(w, "Failed to create client")
+			return
+		}
 		hashedSecret, err := crypto.HashClientSecret(plaintextSecret)
 		if err != nil {
 			log.LogError("Failed to hash client secret: %v", err)
@@ -580,21 +618,19 @@ func (h *AuthHandlers) RegisterHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// signUpstreamOAuthState signs upstream OAuth state for secure storage
-func (h *AuthHandlers) signUpstreamOAuthState(ar fosite.AuthorizeRequester, identity idp.Identity) (string, error) {
+func (h *AuthHandlers) signUpstreamOAuthState(params *oauth.AuthorizeParams, identity idp.Identity) (string, error) {
 	state := UpstreamOAuthState{
-		Identity:     identity,
-		ClientID:     ar.GetClient().GetID(),
-		RedirectURI:  ar.GetRedirectURI().String(),
-		Scopes:       ar.GetRequestedScopes(),
-		State:        ar.GetState(),
-		ResponseType: ar.GetResponseTypes()[0],
+		Identity:    identity,
+		ClientID:    params.ClientID,
+		RedirectURI: params.RedirectURI,
+		Scopes:      params.Scopes,
+		Audience:    params.Audience,
+		State:       params.State,
 	}
 
 	return h.oauthStateToken.Sign(state)
 }
 
-// verifyUpstreamOAuthState verifies and validates upstream OAuth state
 func (h *AuthHandlers) verifyUpstreamOAuthState(signedState string) (*UpstreamOAuthState, error) {
 	var state UpstreamOAuthState
 	if err := h.oauthStateToken.Verify(signedState, &state); err != nil {
@@ -603,7 +639,6 @@ func (h *AuthHandlers) verifyUpstreamOAuthState(signedState string) (*UpstreamOA
 	return &state, nil
 }
 
-// validateAccess checks whether an authenticated identity meets the configured access policy.
 func (h *AuthHandlers) validateAccess(identity *idp.Identity) error {
 	if len(h.authConfig.AllowedDomains) > 0 &&
 		!slices.Contains(h.authConfig.AllowedDomains, identity.Domain) {
@@ -625,7 +660,6 @@ func hasOverlap(a, b []string) bool {
 	return false
 }
 
-// ServiceSelectionHandler shows the interstitial page for selecting services to connect
 func (h *AuthHandlers) ServiceSelectionHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		jsonwriter.WriteError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
@@ -647,17 +681,14 @@ func (h *AuthHandlers) ServiceSelectionHandler(w http.ResponseWriter, r *http.Re
 
 	userEmail := upstreamOAuthState.Identity.Email
 
-	// Prepare template data
 	returnURL := fmt.Sprintf("/oauth/services?state=%s", url.QueryEscape(signedState))
 
-	// Prepare service list
 	var services []ServiceSelectionData
 	for name, serverConfig := range h.mcpServers {
 		if serverConfig.RequiresUserToken &&
 			serverConfig.UserAuthentication != nil &&
 			serverConfig.UserAuthentication.Type == config.UserAuthTypeOAuth {
 
-			// Check if user already has valid token
 			token, _ := h.storage.GetUserToken(r.Context(), userEmail, name)
 			status := "not_connected"
 			if token != nil {
@@ -669,11 +700,9 @@ func (h *AuthHandlers) ServiceSelectionHandler(w http.ResponseWriter, r *http.Re
 				displayName = serverConfig.UserAuthentication.DisplayName
 			}
 
-			// Check for error from callback
 			errorMsg := ""
 			if r.URL.Query().Get("error") != "" && r.URL.Query().Get("service") == name {
 				status = "error"
-				// Use error_msg if available, fallback to error_description
 				errorMsg = r.URL.Query().Get("error_msg")
 				if errorMsg == "" {
 					errorMsg = r.URL.Query().Get("error_description")
@@ -683,7 +712,6 @@ func (h *AuthHandlers) ServiceSelectionHandler(w http.ResponseWriter, r *http.Re
 				}
 			}
 
-			// Generate OAuth connect URL if OAuth client is available
 			connectURL := ""
 			if h.serviceOAuthClient != nil {
 				connectURL = h.serviceOAuthClient.GetConnectURL(name, returnURL)
@@ -699,11 +727,10 @@ func (h *AuthHandlers) ServiceSelectionHandler(w http.ResponseWriter, r *http.Re
 		}
 	}
 
-	// Get message and type from query params
 	message := r.URL.Query().Get("message")
 	messageType := r.URL.Query().Get("type")
 	if messageType == "" && message != "" {
-		messageType = "error" // Default to error if type not specified
+		messageType = "error"
 	}
 
 	pageData := ServicesPageData{
@@ -714,7 +741,6 @@ func (h *AuthHandlers) ServiceSelectionHandler(w http.ResponseWriter, r *http.Re
 		MessageType: messageType,
 	}
 
-	// Render template
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := servicesPageTemplate.Execute(w, pageData); err != nil {
 		log.LogError("Failed to render services page: %v", err)
@@ -722,7 +748,6 @@ func (h *AuthHandlers) ServiceSelectionHandler(w http.ResponseWriter, r *http.Re
 	}
 }
 
-// CompleteOAuthHandler completes the original OAuth flow after service selection
 func (h *AuthHandlers) CompleteOAuthHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		jsonwriter.WriteError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
@@ -742,63 +767,42 @@ func (h *AuthHandlers) CompleteOAuthHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Recreate the authorize request
 	ctx := r.Context()
-	client, err := h.storage.GetClient(ctx, upstreamOAuthState.ClientID)
+
+	params := &oauth.AuthorizeParams{
+		ClientID:    upstreamOAuthState.ClientID,
+		RedirectURI: upstreamOAuthState.RedirectURI,
+		State:       upstreamOAuthState.State,
+		Scopes:      upstreamOAuthState.Scopes,
+		Audience:    upstreamOAuthState.Audience,
+	}
+
+	grant, err := h.authServer.IssueCode(params, upstreamOAuthState.Identity)
 	if err != nil {
-		log.LogError("Failed to get client: %v", err)
-		if errors.Is(err, fosite.ErrNotFound) {
-			jsonwriter.WriteNotFound(w, "Client not found")
-		} else {
-			jsonwriter.WriteInternalServerError(w, "Failed to retrieve client")
-		}
+		log.LogError("Failed to issue authorization code: %v", err)
+		jsonwriter.WriteInternalServerError(w, "Failed to issue authorization code")
 		return
 	}
 
-	// Create a new authorize request with the stored parameters
-	ar := &fosite.AuthorizeRequest{
-		ResponseTypes:        fosite.Arguments{upstreamOAuthState.ResponseType},
-		RedirectURI:          &url.URL{},
-		State:                upstreamOAuthState.State,
-		HandledResponseTypes: fosite.Arguments{},
-		Request: fosite.Request{
-			ID:             crypto.GenerateSecureToken(),
-			RequestedAt:    time.Now(),
-			Client:         client,
-			RequestedScope: upstreamOAuthState.Scopes,
-			GrantedScope:   upstreamOAuthState.Scopes,
-			Session:        &session.OAuthSession{DefaultSession: &fosite.DefaultSession{}},
-		},
+	if err := h.storage.StoreGrant(ctx, grant.Code, grant); err != nil {
+		log.LogError("Failed to store grant: %v", err)
+		jsonwriter.WriteInternalServerError(w, "Failed to store authorization grant")
+		return
 	}
 
-	redirectURI, err := url.Parse(upstreamOAuthState.RedirectURI)
+	redirectURL, err := url.Parse(upstreamOAuthState.RedirectURI)
 	if err != nil {
 		log.LogError("Failed to parse redirect URI: %v", err)
 		jsonwriter.WriteInternalServerError(w, "Invalid redirect URI")
 		return
 	}
-	ar.RedirectURI = redirectURI
 
-	// Create session with user info
-	session := &session.OAuthSession{
-		DefaultSession: &fosite.DefaultSession{
-			ExpiresAt: map[fosite.TokenType]time.Time{
-				fosite.AccessToken:  time.Now().Add(h.authConfig.TokenTTL),
-				fosite.RefreshToken: time.Now().Add(h.authConfig.RefreshTokenTTL),
-			},
-		},
-		Identity: upstreamOAuthState.Identity,
+	q := redirectURL.Query()
+	q.Set("code", grant.Code)
+	if upstreamOAuthState.State != "" {
+		q.Set("state", upstreamOAuthState.State)
 	}
-	ar.SetSession(session)
+	redirectURL.RawQuery = q.Encode()
 
-	// Accept the authorization request
-	response, err := h.oauthProvider.NewAuthorizeResponse(ctx, ar, session)
-	if err != nil {
-		log.LogError("Authorize response error: %v", err)
-		h.oauthProvider.WriteAuthorizeError(ctx, w, ar, err)
-		return
-	}
-
-	// Write the response (redirects to Claude)
-	h.oauthProvider.WriteAuthorizeResponse(ctx, w, ar, response)
+	http.Redirect(w, r, redirectURL.String(), http.StatusFound)
 }

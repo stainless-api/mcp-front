@@ -353,15 +353,20 @@ func NewBrowserSSOMiddleware(authConfig config.OAuthAuthConfig, idpProvider idp.
 
 // generateBrowserState creates a secure state parameter for browser SSO
 func generateBrowserState(browserStateToken *crypto.TokenSigner, returnURL string) string {
+	nonce, err := crypto.GenerateSecureToken()
+	if err != nil {
+		log.LogError("Failed to generate browser state nonce: %v", err)
+		return ""
+	}
+
 	state := session.AuthorizationState{
-		Nonce:     crypto.GenerateSecureToken(),
+		Nonce:     nonce,
 		ReturnURL: returnURL,
 	}
 
 	token, err := browserStateToken.Sign(state)
 	if err != nil {
 		log.LogError("Failed to sign browser state: %v", err)
-		// Return empty string to trigger auth failure - middleware will handle it
 		return ""
 	}
 	return "browser:" + token

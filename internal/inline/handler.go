@@ -60,8 +60,12 @@ func (h *Handler) handleSSE(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Generate a cryptographically secure session ID
-	sessionID := crypto.GenerateSecureToken()
+	sessionID, err := crypto.GenerateSecureToken()
+	if err != nil {
+		log.LogError("Failed to generate session ID: %v", err)
+		jsonwriter.WriteInternalServerError(w, "Failed to create session")
+		return
+	}
 
 	// Send initial endpoint message
 	endpoint := map[string]any{

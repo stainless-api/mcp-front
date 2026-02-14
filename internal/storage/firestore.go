@@ -6,11 +6,13 @@ import (
 	"sync"
 	"time"
 
+	"encoding/json"
+
 	"cloud.google.com/go/firestore"
 	"github.com/dgellow/mcp-front/internal/crypto"
+	"github.com/dgellow/mcp-front/internal/idp"
 	"github.com/dgellow/mcp-front/internal/log"
-	"github.com/ory/fosite"
-	"github.com/ory/fosite/storage"
+	"github.com/dgellow/mcp-front/internal/oauth"
 	"google.golang.org/api/iterator"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -19,47 +21,33 @@ import (
 const (
 	usersCollection    = "mcp_front_users"
 	sessionsCollection = "mcp_front_sessions"
+	grantsCollection   = "mcp_front_grants"
 )
 
-// FirestoreStorage implements OAuth client storage using Google Cloud Firestore.
-//
-// Error handling strategy:
-// - Read operations: Return errors (data must be available for auth to work)
-// - Critical writes (client creation): Return errors (must be durable)
-// - Ephemeral writes (session tracking): Log and continue (acceptable to lose)
-//
-// This ensures critical data is properly persisted while allowing the system
-// to function during transient Firestore issues for non-critical operations.
 type FirestoreStorage struct {
-	*storage.MemoryStore
 	client          *firestore.Client
-	stateCache      sync.Map           // In-memory cache for authorize requests (short-lived)
-	clients         map[string]*Client // Client cache with metadata
-	clientsMutex    sync.RWMutex       // For thread-safe client access
+	clients         map[string]*Client
+	clientsMutex    sync.RWMutex
 	projectID       string
 	collection      string
 	encryptor       crypto.Encryptor
-	tokenCollection string // Collection for user tokens
+	tokenCollection string
 }
 
-// Ensure FirestoreStorage implements Storage interface
 var _ Storage = (*FirestoreStorage)(nil)
-var _ fosite.Storage = (*FirestoreStorage)(nil)
 
-// UserTokenDoc represents a user token document in Firestore
 type UserTokenDoc struct {
 	UserEmail string          `firestore:"user_email"`
 	Service   string          `firestore:"service"`
 	Type      TokenType       `firestore:"type"`
-	Value     string          `firestore:"value,omitempty"`      // Encrypted manual token
-	OAuthData *OAuthTokenData `firestore:"oauth_data,omitempty"` // OAuth metadata (tokens encrypted)
+	Value     string          `firestore:"value,omitempty"`
+	OAuthData *OAuthTokenData `firestore:"oauth_data,omitempty"`
 	UpdatedAt time.Time       `firestore:"updated_at"`
 }
 
-// OAuthClientEntity represents the structure stored in Firestore
 type OAuthClientEntity struct {
 	ID            string   `firestore:"id"`
-	Secret        *string  `firestore:"secret,omitempty"` // nil for public clients
+	Secret        *string  `firestore:"secret,omitempty"`
 	RedirectURIs  []string `firestore:"redirect_uris"`
 	Scopes        []string `firestore:"scopes"`
 	GrantTypes    []string `firestore:"grant_types"`
@@ -115,13 +103,23 @@ func ClientToEntity(client *Client, encryptor crypto.Encryptor) (*OAuthClientEnt
 	}, nil
 }
 
-// NewFirestoreStorage creates a new Firestore storage instance
+type GrantEntity struct {
+	Code          string    `firestore:"code"`
+	ClientID      string    `firestore:"client_id"`
+	RedirectURI   string    `firestore:"redirect_uri"`
+	Identity      []byte    `firestore:"identity"`
+	Scopes        []string  `firestore:"scopes"`
+	Audience      []string  `firestore:"audience"`
+	PKCEChallenge string    `firestore:"pkce_challenge"`
+	CreatedAt     time.Time `firestore:"created_at"`
+	ExpiresAt     time.Time `firestore:"expires_at"`
+}
+
 func NewFirestoreStorage(ctx context.Context, projectID, database, collection string, encryptor crypto.Encryptor) (*FirestoreStorage, error) {
 	if encryptor == nil {
 		return nil, fmt.Errorf("encryptor is required")
 	}
 
-	// Validate required parameters
 	if projectID == "" {
 		return nil, fmt.Errorf("projectID is required")
 	}
@@ -132,7 +130,6 @@ func NewFirestoreStorage(ctx context.Context, projectID, database, collection st
 	var client *firestore.Client
 	var err error
 
-	// Firestore client with custom database
 	if database != "" && database != "(default)" {
 		client, err = firestore.NewClientWithDatabase(ctx, projectID, database)
 	} else {
@@ -144,7 +141,6 @@ func NewFirestoreStorage(ctx context.Context, projectID, database, collection st
 	}
 
 	storage := &FirestoreStorage{
-		MemoryStore:     storage.NewMemoryStore(),
 		client:          client,
 		clients:         make(map[string]*Client),
 		projectID:       projectID,
@@ -153,16 +149,13 @@ func NewFirestoreStorage(ctx context.Context, projectID, database, collection st
 		tokenCollection: "mcp_front_user_tokens",
 	}
 
-	// Load existing clients from Firestore into memory for fast access
 	if err := storage.loadClientsFromFirestore(ctx); err != nil {
 		log.LogError("Failed to load clients from Firestore: %v", err)
-		// Don't fail startup, just log the error
 	}
 
 	return storage, nil
 }
 
-// loadClientsFromFirestore loads all OAuth clients from Firestore into memory
 func (s *FirestoreStorage) loadClientsFromFirestore(ctx context.Context) error {
 	iter := s.client.Collection(s.collection).Documents(ctx)
 	defer iter.Stop()
@@ -199,54 +192,23 @@ func (s *FirestoreStorage) loadClientsFromFirestore(ctx context.Context) error {
 	return nil
 }
 
-// StoreAuthorizeRequest stores an authorize request with state (in memory only - short-lived)
-func (s *FirestoreStorage) StoreAuthorizeRequest(state string, req fosite.AuthorizeRequester) error {
-	s.stateCache.Store(state, req)
-	return nil
-}
-
-// GetAuthorizeRequest retrieves an authorize request by state (one-time use)
-func (s *FirestoreStorage) GetAuthorizeRequest(state string) (fosite.AuthorizeRequester, bool) {
-	if req, ok := s.stateCache.Load(state); ok {
-		s.stateCache.Delete(state) // One-time use
-		return req.(fosite.AuthorizeRequester), true
-	}
-	return nil, false
-}
-
-func (s *FirestoreStorage) GetClient(ctx context.Context, id string) (fosite.Client, error) {
+func (s *FirestoreStorage) GetClient(ctx context.Context, id string) (*Client, error) {
 	s.clientsMutex.RLock()
 	client, ok := s.clients[id]
-	s.clientsMutex.RUnlock()
-
-	if ok {
-		return client.ToFositeClient(), nil
-	}
-
-	client, err := s.loadClientFromFirestore(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-	return client.ToFositeClient(), nil
-}
-
-func (s *FirestoreStorage) GetClientWithMetadata(ctx context.Context, clientID string) (*Client, error) {
-	s.clientsMutex.RLock()
-	client, ok := s.clients[clientID]
 	s.clientsMutex.RUnlock()
 
 	if ok {
 		return client, nil
 	}
 
-	return s.loadClientFromFirestore(ctx, clientID)
+	return s.loadClientFromFirestore(ctx, id)
 }
 
 func (s *FirestoreStorage) loadClientFromFirestore(ctx context.Context, clientID string) (*Client, error) {
 	doc, err := s.client.Collection(s.collection).Doc(clientID).Get(ctx)
 	if err != nil {
 		if status.Code(err) == codes.NotFound {
-			return nil, fosite.ErrNotFound
+			return nil, ErrClientNotFound
 		}
 		return nil, fmt.Errorf("failed to get client from Firestore: %w", err)
 	}
@@ -340,19 +302,81 @@ func (s *FirestoreStorage) CreateConfidentialClient(ctx context.Context, clientI
 	return client, nil
 }
 
-// Close closes the Firestore client
+func (s *FirestoreStorage) StoreGrant(ctx context.Context, code string, grant *oauth.Grant) error {
+	identityJSON, err := encodeJSON(grant.Identity)
+	if err != nil {
+		return fmt.Errorf("failed to encode identity: %w", err)
+	}
+
+	entity := GrantEntity{
+		Code:          code,
+		ClientID:      grant.ClientID,
+		RedirectURI:   grant.RedirectURI,
+		Identity:      identityJSON,
+		Scopes:        grant.Scopes,
+		Audience:      grant.Audience,
+		PKCEChallenge: grant.PKCEChallenge,
+		CreatedAt:     grant.CreatedAt,
+		ExpiresAt:     grant.ExpiresAt,
+	}
+
+	if _, err := s.client.Collection(grantsCollection).Doc(code).Set(ctx, entity); err != nil {
+		return fmt.Errorf("failed to store grant in Firestore: %w", err)
+	}
+	return nil
+}
+
+func (s *FirestoreStorage) ConsumeGrant(ctx context.Context, code string) (*oauth.Grant, error) {
+	docRef := s.client.Collection(grantsCollection).Doc(code)
+
+	var entity GrantEntity
+	err := s.client.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+		doc, err := tx.Get(docRef)
+		if err != nil {
+			if status.Code(err) == codes.NotFound {
+				return ErrGrantNotFound
+			}
+			return fmt.Errorf("failed to get grant from Firestore: %w", err)
+		}
+
+		if err := doc.DataTo(&entity); err != nil {
+			return fmt.Errorf("failed to unmarshal grant: %w", err)
+		}
+
+		return tx.Delete(docRef)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	var identity idp.Identity
+	if err := decodeJSON(entity.Identity, &identity); err != nil {
+		return nil, fmt.Errorf("failed to decode identity: %w", err)
+	}
+
+	return &oauth.Grant{
+		Code:          entity.Code,
+		ClientID:      entity.ClientID,
+		RedirectURI:   entity.RedirectURI,
+		Identity:      identity,
+		Scopes:        entity.Scopes,
+		Audience:      entity.Audience,
+		PKCEChallenge: entity.PKCEChallenge,
+		CreatedAt:     entity.CreatedAt,
+		ExpiresAt:     entity.ExpiresAt,
+	}, nil
+}
+
 func (s *FirestoreStorage) Close() error {
 	return s.client.Close()
 }
 
 // User token methods
 
-// makeUserTokenDocID creates a document ID for a user token
 func (s *FirestoreStorage) makeUserTokenDocID(userEmail, service string) string {
 	return userEmail + "__" + service
 }
 
-// GetUserToken retrieves a user's token for a specific service
 func (s *FirestoreStorage) GetUserToken(ctx context.Context, userEmail, service string) (*StoredToken, error) {
 	docID := s.makeUserTokenDocID(userEmail, service)
 	doc, err := s.client.Collection(s.tokenCollection).Doc(docID).Get(ctx)
@@ -368,13 +392,11 @@ func (s *FirestoreStorage) GetUserToken(ctx context.Context, userEmail, service 
 		return nil, fmt.Errorf("failed to unmarshal token: %w", err)
 	}
 
-	// Build StoredToken
 	storedToken := &StoredToken{
 		Type:      tokenDoc.Type,
 		UpdatedAt: tokenDoc.UpdatedAt,
 	}
 
-	// Decrypt based on type
 	switch tokenDoc.Type {
 	case TokenTypeManual:
 		if tokenDoc.Value != "" {
@@ -386,7 +408,6 @@ func (s *FirestoreStorage) GetUserToken(ctx context.Context, userEmail, service 
 		}
 	case TokenTypeOAuth:
 		if tokenDoc.OAuthData != nil {
-			// Decrypt OAuth tokens
 			decryptedAccess, err := s.encryptor.Decrypt(tokenDoc.OAuthData.AccessToken)
 			if err != nil {
 				return nil, fmt.Errorf("failed to decrypt access token: %w", err)
@@ -414,7 +435,6 @@ func (s *FirestoreStorage) GetUserToken(ctx context.Context, userEmail, service 
 	return storedToken, nil
 }
 
-// SetUserToken stores or updates a user's token for a specific service
 func (s *FirestoreStorage) SetUserToken(ctx context.Context, userEmail, service string, token *StoredToken) error {
 	if token == nil {
 		return fmt.Errorf("token cannot be nil")
@@ -428,7 +448,6 @@ func (s *FirestoreStorage) SetUserToken(ctx context.Context, userEmail, service 
 		UpdatedAt: time.Now(),
 	}
 
-	// Encrypt based on type
 	switch token.Type {
 	case TokenTypeManual:
 		if token.Value != "" {
@@ -440,7 +459,6 @@ func (s *FirestoreStorage) SetUserToken(ctx context.Context, userEmail, service 
 		}
 	case TokenTypeOAuth:
 		if token.OAuthData != nil {
-			// Encrypt OAuth tokens
 			encryptedAccess, err := s.encryptor.Encrypt(token.OAuthData.AccessToken)
 			if err != nil {
 				return fmt.Errorf("failed to encrypt access token: %w", err)
@@ -475,7 +493,6 @@ func (s *FirestoreStorage) SetUserToken(ctx context.Context, userEmail, service 
 	return nil
 }
 
-// DeleteUserToken removes a user's token for a specific service
 func (s *FirestoreStorage) DeleteUserToken(ctx context.Context, userEmail, service string) error {
 	docID := s.makeUserTokenDocID(userEmail, service)
 	_, err := s.client.Collection(s.tokenCollection).Doc(docID).Delete(ctx)
@@ -485,7 +502,6 @@ func (s *FirestoreStorage) DeleteUserToken(ctx context.Context, userEmail, servi
 	return nil
 }
 
-// ListUserServices returns all services for which a user has configured tokens
 func (s *FirestoreStorage) ListUserServices(ctx context.Context, userEmail string) ([]string, error) {
 	iter := s.client.Collection(s.tokenCollection).Where("user_email", "==", userEmail).Documents(ctx)
 	defer iter.Stop()
@@ -502,7 +518,6 @@ func (s *FirestoreStorage) ListUserServices(ctx context.Context, userEmail strin
 
 		var tokenDoc UserTokenDoc
 		if err := doc.DataTo(&tokenDoc); err != nil {
-			// Log error but continue with other tokens
 			log.LogError("Failed to unmarshal user token: %v", err)
 			continue
 		}
@@ -513,7 +528,6 @@ func (s *FirestoreStorage) ListUserServices(ctx context.Context, userEmail strin
 	return services, nil
 }
 
-// UserDoc represents a user document in Firestore
 type UserDoc struct {
 	Email     string    `firestore:"email"`
 	FirstSeen time.Time `firestore:"first_seen"`
@@ -522,7 +536,6 @@ type UserDoc struct {
 	IsAdmin   bool      `firestore:"is_admin"`
 }
 
-// SessionDoc represents a session document in Firestore
 type SessionDoc struct {
 	SessionID  string    `firestore:"session_id"`
 	UserEmail  string    `firestore:"user_email"`
@@ -531,24 +544,20 @@ type SessionDoc struct {
 	LastActive time.Time `firestore:"last_active"`
 }
 
-// UpsertUser creates or updates a user's last seen time
 func (s *FirestoreStorage) UpsertUser(ctx context.Context, email string) error {
 	userDoc := UserDoc{
 		Email:    email,
 		LastSeen: time.Now(),
 	}
 
-	// Try to get existing user first
 	doc, err := s.client.Collection(usersCollection).Doc(email).Get(ctx)
 	if err == nil {
-		// User exists, update LastSeen
 		_, err = doc.Ref.Update(ctx, []firestore.Update{
 			{Path: "last_seen", Value: time.Now()},
 		})
 		return err
 	}
 
-	// User doesn't exist, create new
 	if status.Code(err) == codes.NotFound {
 		userDoc.FirstSeen = time.Now()
 		userDoc.Enabled = true
@@ -560,7 +569,6 @@ func (s *FirestoreStorage) UpsertUser(ctx context.Context, email string) error {
 	return err
 }
 
-// GetUser returns a single user by email
 func (s *FirestoreStorage) GetUser(ctx context.Context, email string) (*UserInfo, error) {
 	doc, err := s.client.Collection(usersCollection).Doc(email).Get(ctx)
 	if err != nil {
@@ -579,7 +587,6 @@ func (s *FirestoreStorage) GetUser(ctx context.Context, email string) (*UserInfo
 	return &user, nil
 }
 
-// GetAllUsers returns all users
 func (s *FirestoreStorage) GetAllUsers(ctx context.Context) ([]UserInfo, error) {
 	iter := s.client.Collection(usersCollection).Documents(ctx)
 	defer iter.Stop()
@@ -606,7 +613,6 @@ func (s *FirestoreStorage) GetAllUsers(ctx context.Context) ([]UserInfo, error) 
 	return users, nil
 }
 
-// UpdateUserStatus updates a user's enabled status
 func (s *FirestoreStorage) UpdateUserStatus(ctx context.Context, email string, enabled bool) error {
 	_, err := s.client.Collection(usersCollection).Doc(email).Update(ctx, []firestore.Update{
 		{Path: "enabled", Value: enabled},
@@ -617,15 +623,12 @@ func (s *FirestoreStorage) UpdateUserStatus(ctx context.Context, email string, e
 	return err
 }
 
-// DeleteUser removes a user from storage
 func (s *FirestoreStorage) DeleteUser(ctx context.Context, email string) error {
-	// Delete user document
 	_, err := s.client.Collection(usersCollection).Doc(email).Delete(ctx)
 	if err != nil && status.Code(err) != codes.NotFound {
 		return err
 	}
 
-	// Also delete all user tokens
 	iter := s.client.Collection(s.tokenCollection).Where("user_email", "==", email).Documents(ctx)
 	defer iter.Stop()
 
@@ -648,7 +651,6 @@ func (s *FirestoreStorage) DeleteUser(ctx context.Context, email string) error {
 	return nil
 }
 
-// SetUserAdmin updates a user's admin status
 func (s *FirestoreStorage) SetUserAdmin(ctx context.Context, email string, isAdmin bool) error {
 	_, err := s.client.Collection(usersCollection).Doc(email).Update(ctx, []firestore.Update{
 		{Path: "is_admin", Value: isAdmin},
@@ -659,7 +661,6 @@ func (s *FirestoreStorage) SetUserAdmin(ctx context.Context, email string, isAdm
 	return err
 }
 
-// TrackSession creates or updates a session
 func (s *FirestoreStorage) TrackSession(ctx context.Context, session ActiveSession) error {
 	sessionDoc := SessionDoc{
 		SessionID:  session.SessionID,
@@ -669,17 +670,14 @@ func (s *FirestoreStorage) TrackSession(ctx context.Context, session ActiveSessi
 		LastActive: time.Now(),
 	}
 
-	// Check if session exists
 	doc, err := s.client.Collection(sessionsCollection).Doc(session.SessionID).Get(ctx)
 	if err == nil {
-		// Session exists, update LastActive
 		_, err = doc.Ref.Update(ctx, []firestore.Update{
 			{Path: "last_active", Value: time.Now()},
 		})
 		return err
 	}
 
-	// Session doesn't exist, create new
 	if status.Code(err) == codes.NotFound {
 		sessionDoc.Created = time.Now()
 		_, err = s.client.Collection(sessionsCollection).Doc(session.SessionID).Set(ctx, sessionDoc)
@@ -689,7 +687,6 @@ func (s *FirestoreStorage) TrackSession(ctx context.Context, session ActiveSessi
 	return err
 }
 
-// GetActiveSessions returns all active sessions
 func (s *FirestoreStorage) GetActiveSessions(ctx context.Context) ([]ActiveSession, error) {
 	iter := s.client.Collection(sessionsCollection).Documents(ctx)
 	defer iter.Stop()
@@ -716,11 +713,18 @@ func (s *FirestoreStorage) GetActiveSessions(ctx context.Context) ([]ActiveSessi
 	return sessions, nil
 }
 
-// RevokeSession removes a session
 func (s *FirestoreStorage) RevokeSession(ctx context.Context, sessionID string) error {
 	_, err := s.client.Collection(sessionsCollection).Doc(sessionID).Delete(ctx)
 	if err != nil && status.Code(err) != codes.NotFound {
 		return err
 	}
 	return nil
+}
+
+func encodeJSON(v any) ([]byte, error) {
+	return json.Marshal(v)
+}
+
+func decodeJSON(data []byte, v any) error {
+	return json.Unmarshal(data, v)
 }

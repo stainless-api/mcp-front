@@ -6,64 +6,52 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dgellow/mcp-front/internal/config"
-	"github.com/dgellow/mcp-front/internal/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func TestNewOAuthProvider(t *testing.T) {
+func TestNewAuthorizationServer(t *testing.T) {
 	t.Run("valid configuration", func(t *testing.T) {
-		oauthConfig := config.OAuthAuthConfig{
+		server, err := NewAuthorizationServer(AuthorizationServerConfig{
+			JWTSecret:       []byte(strings.Repeat("a", 32)),
 			Issuer:          "https://test.example.com",
-			TokenTTL:        time.Hour,
+			AccessTokenTTL:  time.Hour,
 			RefreshTokenTTL: 30 * 24 * time.Hour,
-			JWTSecret:       config.Secret(strings.Repeat("a", 32)),
-			EncryptionKey:   config.Secret(strings.Repeat("b", 32)),
-		}
-
-		store := storage.NewMemoryStorage()
-		jwtSecret := []byte(oauthConfig.JWTSecret)
-
-		provider, err := NewOAuthProvider(oauthConfig, store, jwtSecret)
+		})
 		require.NoError(t, err)
-		require.NotNil(t, provider)
+		require.NotNil(t, server)
 	})
 
 	t.Run("JWT secret too short", func(t *testing.T) {
-		oauthConfig := config.OAuthAuthConfig{
-			Issuer:        "https://test.example.com",
-			TokenTTL:      time.Hour,
-			JWTSecret:     config.Secret("short"),
-			EncryptionKey: config.Secret(strings.Repeat("b", 32)),
-		}
-
-		store := storage.NewMemoryStorage()
-		jwtSecret := []byte(oauthConfig.JWTSecret)
-
-		provider, err := NewOAuthProvider(oauthConfig, store, jwtSecret)
+		server, err := NewAuthorizationServer(AuthorizationServerConfig{
+			JWTSecret: []byte("short"),
+			Issuer:    "https://test.example.com",
+		})
 		assert.Error(t, err)
-		assert.Nil(t, provider)
+		assert.Nil(t, server)
 		assert.Contains(t, err.Error(), "JWT secret must be at least 32 bytes")
 	})
 
-	t.Run("development mode vs production mode entropy", func(t *testing.T) {
-		oauthConfig := config.OAuthAuthConfig{
-			Issuer:          "https://test.example.com",
-			TokenTTL:        time.Hour,
-			RefreshTokenTTL: 30 * 24 * time.Hour,
-			JWTSecret:       config.Secret(strings.Repeat("a", 32)),
-			EncryptionKey:   config.Secret(strings.Repeat("b", 32)),
-		}
-
-		store := storage.NewMemoryStorage()
-		jwtSecret := []byte(oauthConfig.JWTSecret)
-
-		// Both dev and prod should create provider successfully
-		// The difference is only in MinParameterEntropy config
-		provider, err := NewOAuthProvider(oauthConfig, store, jwtSecret)
+	t.Run("defaults applied", func(t *testing.T) {
+		server, err := NewAuthorizationServer(AuthorizationServerConfig{
+			JWTSecret: []byte(strings.Repeat("a", 32)),
+			Issuer:    "https://test.example.com",
+		})
 		require.NoError(t, err)
-		require.NotNil(t, provider)
+		require.NotNil(t, server)
+		assert.Equal(t, time.Hour, server.accessTokenTTL)
+		assert.Equal(t, 30*24*time.Hour, server.refreshTokenTTL)
+		assert.Equal(t, 10*time.Minute, server.codeLifespan)
+	})
+
+	t.Run("min state entropy configurable", func(t *testing.T) {
+		server, err := NewAuthorizationServer(AuthorizationServerConfig{
+			JWTSecret:       []byte(strings.Repeat("a", 32)),
+			Issuer:          "https://test.example.com",
+			MinStateEntropy: 8,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, 8, server.minStateEntropy)
 	})
 }
 

@@ -146,9 +146,9 @@ func (o *OAuthAuthConfig) UnmarshalJSON(data []byte) error {
 	o.FirestoreCollection = raw.FirestoreCollection
 	o.DangerouslyAcceptIssuerAudience = raw.DangerouslyAcceptIssuerAudience
 
-	// RefreshTokenScopes: nil means use fosite default ["offline_access"],
-	// empty slice means always issue refresh tokens (recommended for MCP)
-	// If not specified in config, default to empty slice (always issue)
+	// RefreshTokenScopes: if set, refresh tokens are only issued when the
+	// request includes at least one of these scopes. Empty slice means always
+	// issue refresh tokens (recommended for MCP). Default: empty slice.
 	if raw.RefreshTokenScopes != nil {
 		o.RefreshTokenScopes = raw.RefreshTokenScopes
 	} else {
