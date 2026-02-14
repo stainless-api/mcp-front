@@ -60,9 +60,8 @@ type ToolFilterConfig struct {
 
 // Options for MCP client configuration
 type Options struct {
-	PanicIfInvalid *bool             `json:"panicIfInvalid,omitempty"`
-	AuthTokens     []string          `json:"authTokens,omitempty"`
-	ToolFilter     *ToolFilterConfig `json:"toolFilter,omitempty"`
+	AuthTokens []string          `json:"authTokens,omitempty"`
+	ToolFilter *ToolFilterConfig `json:"toolFilter,omitempty"`
 }
 
 // ServiceAuthType represents the type of service authentication

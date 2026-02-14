@@ -173,8 +173,8 @@ func NewRecoverMiddleware(prefix string) MiddlewareFunc {
 	}
 }
 
-// newServiceAuthMiddleware creates middleware for service-to-service authentication
-func newServiceAuthMiddleware(serviceAuths []config.ServiceAuth) MiddlewareFunc {
+// NewServiceAuthMiddleware creates middleware for service-to-service authentication
+func NewServiceAuthMiddleware(serviceAuths []config.ServiceAuth) MiddlewareFunc {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ctx := r.Context()
@@ -348,9 +348,4 @@ func generateBrowserState(browserStateToken *crypto.TokenSigner, returnURL strin
 		return ""
 	}
 	return "browser:" + token
-}
-
-// NewServiceAuthMiddleware creates middleware for service-to-service authentication
-func NewServiceAuthMiddleware(serviceAuths []config.ServiceAuth) MiddlewareFunc {
-	return newServiceAuthMiddleware(serviceAuths)
 }

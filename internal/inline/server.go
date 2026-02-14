@@ -82,16 +82,6 @@ func (s *Server) HandleToolCall(ctx context.Context, toolName string, args map[s
 		return nil, fmt.Errorf("tool %s not found", toolName)
 	}
 
-	// Set up command with args as-is (already resolved by config parser)
-	cmd := exec.CommandContext(ctx, tool.Command, tool.Args...)
-
-	// Set environment variables
-	for k, v := range tool.Env {
-		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
-	}
-	// Include parent environment
-	cmd.Env = append(cmd.Env, os.Environ()...)
-
 	// Set timeout if specified
 	if tool.Timeout != "" {
 		timeout, _ := time.ParseDuration(tool.Timeout)
@@ -99,9 +89,20 @@ func (s *Server) HandleToolCall(ctx context.Context, toolName string, args map[s
 			var cancel context.CancelFunc
 			ctx, cancel = context.WithTimeout(ctx, timeout)
 			defer cancel()
-			cmd = exec.CommandContext(ctx, tool.Command, tool.Args...)
 		}
 	}
+
+	// Set up command with args as-is (already resolved by config parser)
+	cmd := exec.CommandContext(ctx, tool.Command, tool.Args...)
+
+	// Set environment: parent first, then custom (so custom wins)
+	cmd.Env = append(os.Environ(), func() []string {
+		env := make([]string, 0, len(tool.Env))
+		for k, v := range tool.Env {
+			env = append(env, fmt.Sprintf("%s=%s", k, v))
+		}
+		return env
+	}()...)
 
 	// Capture output
 	var stdout, stderr bytes.Buffer

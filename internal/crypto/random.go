@@ -19,16 +19,6 @@ func GenerateSecureToken() (string, error) {
 	return base64.URLEncoding.EncodeToString(b), nil
 }
 
-// GenerateClientSecret creates a cryptographically secure client secret
-// Returns a base64 URL-encoded string and an error
-func GenerateClientSecret() (string, error) {
-	b := make([]byte, 32) // 32 bytes = 256 bits of entropy
-	if _, err := rand.Read(b); err != nil {
-		return "", fmt.Errorf("failed to generate random bytes: %w", err)
-	}
-	return base64.URLEncoding.EncodeToString(b), nil
-}
-
 // HashClientSecret hashes a client secret using bcrypt
 // This should be used before storing the secret
 func HashClientSecret(secret string) ([]byte, error) {

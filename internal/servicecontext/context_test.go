@@ -40,26 +40,6 @@ func TestWithAuthInfoAndGetAuthInfo(t *testing.T) {
 	})
 }
 
-func TestWithUserAndGetUser(t *testing.T) {
-	t.Run("set and retrieve user", func(t *testing.T) {
-		ctx := context.Background()
-
-		ctx = WithUser(ctx, "test-user")
-
-		user, ok := GetUser(ctx)
-		assert.True(t, ok)
-		assert.Equal(t, "test-user", user)
-	})
-
-	t.Run("get user when not set", func(t *testing.T) {
-		ctx := context.Background()
-
-		user, ok := GetUser(ctx)
-		assert.False(t, ok)
-		assert.Empty(t, user)
-	})
-}
-
 func TestGetServiceName(t *testing.T) {
 	t.Run("get service name from context", func(t *testing.T) {
 		ctx := context.Background()

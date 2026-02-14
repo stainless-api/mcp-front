@@ -344,9 +344,9 @@ func (h *MCPHandler) forwardMessageToBackend(ctx context.Context, w http.Respons
 	}
 	defer resp.Body.Close()
 
-	w.WriteHeader(resp.StatusCode)
-
 	maps.Copy(w.Header(), resp.Header)
+
+	w.WriteHeader(resp.StatusCode)
 
 	if _, err := io.Copy(w, resp.Body); err != nil {
 		log.LogErrorWithFields("mcp", "Failed to copy response body", map[string]any{

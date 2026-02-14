@@ -11,7 +11,6 @@ import (
 	"github.com/dgellow/mcp-front/internal/crypto"
 	jsonwriter "github.com/dgellow/mcp-front/internal/json"
 	"github.com/dgellow/mcp-front/internal/log"
-	"github.com/dgellow/mcp-front/internal/urlutil"
 )
 
 const userContextKey contextKey = "user_email"
@@ -135,8 +134,4 @@ func ExtractServiceNameFromPath(requestPath string, issuer string) string {
 	}
 
 	return parts[0]
-}
-
-func ProtectedResourceMetadataURI(issuer string) (string, error) {
-	return urlutil.JoinPath(issuer, ".well-known", "oauth-protected-resource")
 }

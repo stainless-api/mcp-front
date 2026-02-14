@@ -86,9 +86,9 @@ func forwardStreamablePostToBackend(ctx context.Context, w http.ResponseWriter, 
 
 		streamSSEResponse(w, flusher, resp.Body, "streamable_proxy")
 	} else {
-		w.WriteHeader(resp.StatusCode)
-
 		maps.Copy(w.Header(), resp.Header)
+
+		w.WriteHeader(resp.StatusCode)
 
 		if _, err := io.Copy(w, resp.Body); err != nil {
 			log.LogErrorWithFields("streamable_proxy", "Failed to copy response body", map[string]any{

@@ -8,17 +8,13 @@ import (
 	"github.com/dgellow/mcp-front/internal/log"
 )
 
-// Common cookie names used in mcp-front
-const (
-	SessionCookie = "mcp_session"
-	CSRFCookie    = "csrf_token"
-)
+const sessionCookie = "mcp_session"
 
 // SetSession sets a session cookie with appropriate security settings
 func SetSession(w http.ResponseWriter, value string, maxAge time.Duration) {
 	secure := !config.IsDev()
 	http.SetCookie(w, &http.Cookie{
-		Name:     SessionCookie,
+		Name:     sessionCookie,
 		Value:    value,
 		Path:     "/",
 		HttpOnly: true,
@@ -34,19 +30,6 @@ func SetSession(w http.ResponseWriter, value string, maxAge time.Duration) {
 	})
 }
 
-// SetCSRF sets a CSRF token cookie
-func SetCSRF(w http.ResponseWriter, value string) {
-	http.SetCookie(w, &http.Cookie{
-		Name:     CSRFCookie,
-		Value:    value,
-		Path:     "/",
-		HttpOnly: false, // CSRF tokens need to be readable by JavaScript
-		Secure:   !config.IsDev(),
-		SameSite: http.SameSiteStrictMode,
-		MaxAge:   int((24 * time.Hour).Seconds()), // 24 hours
-	})
-}
-
 // Clear removes a cookie by setting MaxAge to -1
 func Clear(w http.ResponseWriter, name string) {
 	http.SetCookie(w, &http.Cookie{
@@ -59,13 +42,8 @@ func Clear(w http.ResponseWriter, name string) {
 
 // ClearSession removes the session cookie
 func ClearSession(w http.ResponseWriter) {
-	Clear(w, SessionCookie)
+	Clear(w, sessionCookie)
 	log.LogTraceWithFields("cookie", "Session cookie cleared", nil)
-}
-
-// ClearCSRF removes the CSRF cookie
-func ClearCSRF(w http.ResponseWriter) {
-	Clear(w, CSRFCookie)
 }
 
 // Get retrieves a cookie value from the request
@@ -79,10 +57,5 @@ func Get(r *http.Request, name string) (string, error) {
 
 // GetSession retrieves the session cookie value
 func GetSession(r *http.Request) (string, error) {
-	return Get(r, SessionCookie)
-}
-
-// GetCSRF retrieves the CSRF cookie value
-func GetCSRF(r *http.Request) (string, error) {
-	return Get(r, CSRFCookie)
+	return Get(r, sessionCookie)
 }

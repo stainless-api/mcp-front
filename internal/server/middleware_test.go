@@ -244,7 +244,7 @@ func TestServiceAuthMiddleware(t *testing.T) {
 			})
 
 			// Wrap with the service auth middleware
-			authHandler := newServiceAuthMiddleware(serviceAuths)(handler)
+			authHandler := NewServiceAuthMiddleware(serviceAuths)(handler)
 
 			// Create request
 			req := httptest.NewRequest("GET", "/test", nil)
@@ -325,7 +325,7 @@ func TestServiceAuthMiddleware_Context(t *testing.T) {
 				w.WriteHeader(http.StatusOK)
 			})
 
-			authHandler := newServiceAuthMiddleware(serviceAuths)(handler)
+			authHandler := NewServiceAuthMiddleware(serviceAuths)(handler)
 			req := httptest.NewRequest("GET", "/test", nil)
 			req.Header.Set("Authorization", tt.authHeader)
 			rr := httptest.NewRecorder()
