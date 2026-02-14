@@ -279,33 +279,7 @@ func (h *MCPHandler) getUserTokenIfAvailable(ctx context.Context, userEmail stri
 		"user":        userEmail,
 	})
 
-	// Fall back to OAuth user token lookup in storage
-	if h.storage == nil {
-		return "", fmt.Errorf("storage not configured")
-	}
-
-	storedToken, err := h.storage.GetUserToken(ctx, userEmail, h.serverName)
-	if err != nil {
-		return "", err
-	}
-
-	// Use injected function to get formatted token with refresh handling
-	if h.getUserToken != nil {
-		return h.getUserToken(ctx, userEmail, h.serverName, h.serverConfig)
-	}
-
-	// Fallback: extract raw token without refresh (for backwards compatibility)
-	var tokenString string
-	switch storedToken.Type {
-	case storage.TokenTypeManual:
-		tokenString = storedToken.Value
-	case storage.TokenTypeOAuth:
-		if storedToken.OAuthData != nil {
-			tokenString = storedToken.OAuthData.AccessToken
-		}
-	}
-
-	return tokenString, nil
+	return h.getUserToken(ctx, userEmail, h.serverName, h.serverConfig)
 }
 
 func (h *MCPHandler) forwardMessageToBackend(ctx context.Context, w http.ResponseWriter, r *http.Request, config *config.MCPClientConfig) {

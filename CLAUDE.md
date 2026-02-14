@@ -79,7 +79,7 @@ mcp-front is a Go-based OAuth proxy server for MCP (Model Context Protocol) serv
 
 ### OAuth Implementation
 
-- Uses fosite library for OAuth
+- Native OAuth implementation (no external OAuth library)
 - PKCE required for all flows
 - Supports both public and confidential clients
 - JWT secrets must be 32+ bytes for HMAC-SHA512/256
@@ -147,7 +147,7 @@ LOG_FORMAT="text"           # json or text
 
 #### Updating OAuth scopes
 
-1. Check `internal/googleauth/google.go` for current scopes
+1. Check `internal/idp/google.go` for current scopes
 2. Use standard OpenID Connect scopes (not Google-specific URLs)
 3. Update tests to verify new scopes work
 
@@ -163,9 +163,6 @@ LOG_FORMAT="text"           # json or text
 internal/
 ├── config/         # Configuration parsing and validation
 ├── oauth/          # OAuth provider, JWT, middleware
-├── googleauth/     # Google OAuth integration (pure functions)
-├── browserauth/    # Browser session types (SessionCookie, AuthorizationState)
-├── oauthsession/   # OAuth session types for fosite
 ├── servicecontext/ # Service authentication context utilities
 ├── server/         # HTTP server, handlers, and middleware
 ├── client/         # MCP client management and session handling
@@ -436,8 +433,8 @@ The question is never "what's the quick fix?" The question is "what's the right 
 
 **Example progression:**
 - ❌ "Here are three options, which one do you want?"
-- ✅ "Let me investigate how this works... [reads code]... I see we already store timestamps in Firestore but lose them during conversion. The core issue is fosite.DefaultClient can't hold metadata. What's the actual value of exposing this timestamp?"
-- ✅✅ "One approach is adding GetClientMetadata() alongside GetClient(). But let me think bigger - what if we stopped being constrained by fosite's storage interface? We could build our own Client type with metadata and use fosite as an implementation detail. Larger refactoring, but natural place for future metadata needs. What's your instinct on likely future requirements?"
+- ✅ "Let me investigate how this works... [reads code]... I see we already store timestamps in Firestore but lose them during conversion. The core issue is storage.Client can't hold metadata. What's the actual value of exposing this timestamp?"
+- ✅✅ "One approach is adding GetClientMetadata() alongside GetClient(). But let me think bigger - what if we stopped being constrained by the storage interface? We could build our own Client type with metadata. Larger refactoring, but natural place for future metadata needs. What's your instinct on likely future requirements?"
 
 Don't get anchored on the first solution. Explore the design space. Sometimes the right answer is a bigger change that solves the problem more fundamentally.
 

@@ -15,14 +15,12 @@ type Client struct {
 	CreatedAt int64
 }
 
-func (c *Client) GetID() string              { return c.ID }
-func (c *Client) GetSecret() []byte          { return c.Secret }
-func (c *Client) GetRedirectURIs() []string  { return c.RedirectURIs }
-func (c *Client) GetScopes() []string        { return c.Scopes }
-func (c *Client) GetGrantTypes() []string    { return c.GrantTypes }
-func (c *Client) GetResponseTypes() []string { return c.ResponseTypes }
-func (c *Client) GetAudience() []string      { return c.Audience }
-func (c *Client) IsPublic() bool             { return c.Public }
+func (c *Client) GetID() string             { return c.ID }
+func (c *Client) GetSecret() []byte         { return c.Secret }
+func (c *Client) GetRedirectURIs() []string { return c.RedirectURIs }
+func (c *Client) GetScopes() []string       { return c.Scopes }
+func (c *Client) GetAudience() []string     { return c.Audience }
+func (c *Client) IsPublic() bool            { return c.Public }
 
 func (c *Client) clone() *Client {
 	cp := *c
