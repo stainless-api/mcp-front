@@ -28,14 +28,14 @@ func TestBrowserCookie_MarshalUnmarshal(t *testing.T) {
 	assert.WithinDuration(t, original.Expires, unmarshaled.Expires, time.Second)
 }
 
-func TestBrowserCookie_Expiry(t *testing.T) {
+func TestBrowserCookie_IsExpired(t *testing.T) {
 	t.Run("not expired", func(t *testing.T) {
 		s := BrowserCookie{
 			Email:    "user@example.com",
 			Provider: "google",
 			Expires:  time.Now().Add(1 * time.Hour),
 		}
-		assert.True(t, s.Expires.After(time.Now()))
+		assert.False(t, s.IsExpired())
 	})
 
 	t.Run("expired", func(t *testing.T) {
@@ -44,7 +44,7 @@ func TestBrowserCookie_Expiry(t *testing.T) {
 			Provider: "google",
 			Expires:  time.Now().Add(-1 * time.Hour),
 		}
-		assert.True(t, s.Expires.Before(time.Now()))
+		assert.True(t, s.IsExpired())
 	})
 }
 
