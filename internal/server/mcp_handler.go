@@ -368,13 +368,39 @@ func (h *MCPHandler) forwardMessageToBackend(ctx context.Context, w http.Respons
 // forwarded via the relay channel and the client receives 202 Accepted. Otherwise the response
 // is returned directly (streamable-http mode).
 func (h *MCPHandler) handleStreamablePost(ctx context.Context, w http.ResponseWriter, r *http.Request, userEmail string, config *config.MCPClientConfig) {
-	// Inject stored session ID if the client didn't include one.
+	// Read the body up front so we can inspect the method for auto-initialization
+	// and then restore it for downstream handlers.
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		log.LogErrorWithFields("mcp", "Failed to read request body", map[string]any{
+			"service": h.serverName,
+			"error":   err.Error(),
+		})
+		http.Error(w, "failed to read request", http.StatusInternalServerError)
+		return
+	}
+
+	// Ensure a backend session exists. If the store is empty and this is not an
+	// initialize request, auto-initialize so the actual request can proceed.
+	// This handles clients that reconnect without re-sending initialize.
 	if r.Header.Get("Mcp-Session-Id") == "" && userEmail != "" {
-		if id, ok := h.sessionStore.get(userEmail); ok {
+		sessionID, hasSession := h.sessionStore.get(userEmail)
+		if !hasSession {
+			var rpcMsg struct {
+				Method string `json:"method"`
+			}
+			if json.Unmarshal(body, &rpcMsg) == nil && rpcMsg.Method != "" && rpcMsg.Method != "initialize" {
+				sessionID = h.ensureBackendSession(ctx, userEmail, config)
+			}
+		}
+		if sessionID != "" {
 			r = r.Clone(ctx)
-			r.Header.Set("Mcp-Session-Id", id)
+			r.Header.Set("Mcp-Session-Id", sessionID)
 		}
 	}
+
+	// Restore the body so downstream handlers can read it.
+	r.Body = io.NopCloser(bytes.NewReader(body))
 
 	log.LogInfoWithFields("mcp", "Proxying streamable POST request to backend", map[string]any{
 		"service":    h.serverName,
@@ -413,20 +439,45 @@ func (h *MCPHandler) handleStreamablePostWithRelay(ctx context.Context, w http.R
 		return
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, config.URL, bytes.NewReader(body))
+	// Track whether we injected a session ID (SSE clients never send one themselves).
+	hadInjectedSession := r.Header.Get("Mcp-Session-Id") != "" && userEmail != ""
+
+	buildReq := func(withSession bool) (*http.Request, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, config.URL, bytes.NewReader(body))
+		if err != nil {
+			return nil, err
+		}
+		copyRequestHeaders(req.Header, r.Header)
+		if !withSession {
+			req.Header.Del("Mcp-Session-Id")
+		}
+		for k, v := range config.Headers {
+			req.Header.Set(k, v)
+		}
+		req.Header.Set("Accept", "application/json, text/event-stream")
+		return req, nil
+	}
+
+	bodyPreview := string(body)
+	if len(bodyPreview) > 300 {
+		bodyPreview = bodyPreview[:300]
+	}
+	log.LogInfoWithFields("mcp", "Request body to backend", map[string]any{
+		"service": h.serverName,
+		"user":    userEmail,
+		"bytes":   len(body),
+		"preview": bodyPreview,
+	})
+
+	httpClient := &http.Client{Timeout: config.Timeout}
+
+	req, err := buildReq(true)
 	if err != nil {
 		w.WriteHeader(http.StatusAccepted)
 		return
 	}
 
-	copyRequestHeaders(req.Header, r.Header)
-	for k, v := range config.Headers {
-		req.Header.Set(k, v)
-	}
-	req.Header.Set("Accept", "application/json, text/event-stream")
-
-	client := &http.Client{Timeout: config.Timeout}
-	resp, err := client.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		log.LogErrorWithFields("mcp", "Backend request failed in relay mode", map[string]any{
 			"service": h.serverName,
@@ -439,6 +490,36 @@ func (h *MCPHandler) handleStreamablePostWithRelay(ctx context.Context, w http.R
 		h.msgRelay.publish(userEmail, errData)
 		w.WriteHeader(http.StatusAccepted)
 		return
+	}
+
+	// If the backend rejected a session ID we injected, it is stale. Clear it and retry.
+	if resp.StatusCode >= 400 && resp.StatusCode < 500 && hadInjectedSession {
+		resp.Body.Close()
+		h.sessionStore.delete(userEmail)
+		log.LogInfoWithFields("mcp", "Stale session ID rejected by backend; retrying without session", map[string]any{
+			"service": h.serverName,
+			"user":    userEmail,
+			"status":  resp.StatusCode,
+		})
+		req2, err := buildReq(false)
+		if err != nil {
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+		resp, err = httpClient.Do(req2)
+		if err != nil {
+			log.LogErrorWithFields("mcp", "Backend retry failed in relay mode", map[string]any{
+				"service": h.serverName,
+				"error":   err.Error(),
+			})
+			errData, _ := json.Marshal(map[string]any{
+				"jsonrpc": "2.0",
+				"error":   map[string]any{"code": -32603, "message": "backend request failed"},
+			})
+			h.msgRelay.publish(userEmail, errData)
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
 	}
 	defer resp.Body.Close()
 
@@ -455,12 +536,34 @@ func (h *MCPHandler) handleStreamablePostWithRelay(ctx context.Context, w http.R
 	})
 
 	if strings.HasPrefix(contentType, "text/event-stream") {
-		scanner := bufio.NewScanner(resp.Body)
+		// Buffer the body so we can log a preview and then scan it.
+		rawBody, err := io.ReadAll(resp.Body)
+		if err != nil {
+			log.LogErrorWithFields("mcp", "Failed to read SSE response body", map[string]any{
+				"service": h.serverName,
+				"error":   err.Error(),
+			})
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+		preview := string(rawBody)
+		if len(preview) > 300 {
+			preview = preview[:300]
+		}
+		log.LogInfoWithFields("mcp", "SSE response body from backend", map[string]any{
+			"service": h.serverName,
+			"user":    userEmail,
+			"bytes":   len(rawBody),
+			"preview": preview,
+		})
+		scanner := bufio.NewScanner(bytes.NewReader(rawBody))
+		scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
 		published := 0
 		for scanner.Scan() {
 			line := scanner.Text()
-			if strings.HasPrefix(line, "data: ") {
-				payload := []byte(strings.TrimPrefix(line, "data: "))
+			// SSE spec allows "data:" with or without trailing space.
+			if rest, ok := strings.CutPrefix(line, "data:"); ok {
+				payload := []byte(strings.TrimLeft(rest, " "))
 				if len(payload) > 0 {
 					h.msgRelay.publish(userEmail, payload)
 					published++
@@ -479,6 +582,16 @@ func (h *MCPHandler) handleStreamablePostWithRelay(ctx context.Context, w http.R
 			return
 		}
 		if len(respBody) > 0 {
+			preview := string(respBody)
+			if len(preview) > 300 {
+				preview = preview[:300]
+			}
+			log.LogInfoWithFields("mcp", "Backend response body", map[string]any{
+				"service": h.serverName,
+				"user":    userEmail,
+				"status":  resp.StatusCode,
+				"preview": preview,
+			})
 			published := h.msgRelay.publish(userEmail, respBody)
 			log.LogInfoWithFields("mcp", "Relayed JSON response from backend", map[string]any{
 				"service":   h.serverName,
@@ -601,7 +714,7 @@ func (h *MCPHandler) ensureBackendSession(ctx context.Context, userEmail string,
 		req.Header.Set(k, v)
 	}
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		log.LogErrorWithFields("mcp", "Backend initialize request failed", map[string]any{

@@ -41,6 +41,13 @@ func (s *streamableSessionStore) get(userEmail string) (string, bool) {
 	return id, ok
 }
 
+// delete removes any stored session ID for a user.
+func (s *streamableSessionStore) delete(userEmail string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.ids, userEmail)
+}
+
 // waitFor returns the session ID for a user, waiting until one is stored or ctx is done.
 func (s *streamableSessionStore) waitFor(ctx context.Context, userEmail string) (string, bool) {
 	s.mu.Lock()
