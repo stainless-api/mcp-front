@@ -50,14 +50,21 @@ func (h *HTTPServer) Start() error {
 	return nil
 }
 
-// Stop gracefully stops the HTTP server
+// Stop gracefully stops the HTTP server. It waits up to ctx's deadline for
+// in-flight requests to finish, then force-closes any remaining connections
+// (typically long-lived SSE streams) so handlers can exit via ctx.Done().
 func (h *HTTPServer) Stop(ctx context.Context) error {
 	log.LogInfoWithFields("http", "HTTP server stopping", map[string]any{
 		"addr": h.server.Addr,
 	})
 
-	if err := h.server.Shutdown(ctx); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		return err
+	shutdownErr := h.server.Shutdown(ctx)
+	// Force-close any connections still open after the graceful window
+	// (e.g. SSE streams that never complete on their own).
+	h.server.Close()
+
+	if shutdownErr != nil && !errors.Is(shutdownErr, http.ErrServerClosed) {
+		return shutdownErr
 	}
 
 	log.LogInfoWithFields("http", "HTTP server stopped", map[string]any{

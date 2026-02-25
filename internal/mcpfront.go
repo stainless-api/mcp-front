@@ -150,9 +150,9 @@ func (m *MCPFront) Run() error {
 
 	log.LogInfoWithFields("mcpfront", "Starting graceful shutdown", map[string]any{
 		"reason":  shutdownReason,
-		"timeout": "30s",
+		"timeout": "5s",
 	})
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
 
 	if err := m.httpServer.Stop(shutdownCtx); err != nil {
