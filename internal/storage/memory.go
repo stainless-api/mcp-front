@@ -23,14 +23,17 @@ type MemoryStorage struct {
 	userTokensMutex sync.RWMutex
 	sessions        map[string]*ActiveSession
 	sessionsMutex   sync.RWMutex
+	serviceRegs     map[string]*ServiceRegistration
+	serviceRegsMu   sync.RWMutex
 }
 
 func NewMemoryStorage() *MemoryStorage {
 	return &MemoryStorage{
-		clients:    make(map[string]*Client),
-		grants:     make(map[string]*oauth.Grant),
-		userTokens: make(map[string]*StoredToken),
-		sessions:   make(map[string]*ActiveSession),
+		clients:     make(map[string]*Client),
+		grants:      make(map[string]*oauth.Grant),
+		userTokens:  make(map[string]*StoredToken),
+		sessions:    make(map[string]*ActiveSession),
+		serviceRegs: make(map[string]*ServiceRegistration),
 	}
 }
 
@@ -189,5 +192,26 @@ func (s *MemoryStorage) RevokeSession(ctx context.Context, sessionID string) err
 	defer s.sessionsMutex.Unlock()
 
 	delete(s.sessions, sessionID)
+	return nil
+}
+
+func (s *MemoryStorage) GetServiceRegistration(_ context.Context, serviceName string) (*ServiceRegistration, error) {
+	s.serviceRegsMu.RLock()
+	defer s.serviceRegsMu.RUnlock()
+
+	reg, ok := s.serviceRegs[serviceName]
+	if !ok {
+		return nil, ErrServiceRegistrationNotFound
+	}
+	regCopy := *reg
+	return &regCopy, nil
+}
+
+func (s *MemoryStorage) SetServiceRegistration(_ context.Context, serviceName string, reg *ServiceRegistration) error {
+	s.serviceRegsMu.Lock()
+	defer s.serviceRegsMu.Unlock()
+
+	regCopy := *reg
+	s.serviceRegs[serviceName] = &regCopy
 	return nil
 }

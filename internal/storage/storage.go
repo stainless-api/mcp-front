@@ -11,6 +11,7 @@ import (
 var ErrUserTokenNotFound = errors.New("user token not found")
 var ErrClientNotFound = errors.New("client not found")
 var ErrGrantNotFound = errors.New("grant not found")
+var ErrServiceRegistrationNotFound = errors.New("service registration not found")
 
 type TokenType string
 
@@ -49,6 +50,19 @@ type UserTokenStore interface {
 	ListUserServices(ctx context.Context, userEmail string) ([]string, error)
 }
 
+type ServiceRegistration struct {
+	ServiceName  string    `json:"service_name"`
+	ClientID     string    `json:"client_id"`
+	ClientSecret string    `json:"client_secret,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
+	ExpiresAt    time.Time `json:"expires_at,omitempty"`
+}
+
+type ServiceRegistrationStore interface {
+	GetServiceRegistration(ctx context.Context, serviceName string) (*ServiceRegistration, error)
+	SetServiceRegistration(ctx context.Context, serviceName string, reg *ServiceRegistration) error
+}
+
 type Storage interface {
 	// OAuth client management
 	GetClient(ctx context.Context, clientID string) (*Client, error)
@@ -61,6 +75,9 @@ type Storage interface {
 
 	// User token storage
 	UserTokenStore
+
+	// Service registration (for dynamic client registration with upstream services)
+	ServiceRegistrationStore
 
 	// Session tracking
 	TrackSession(ctx context.Context, session ActiveSession) error

@@ -19,8 +19,9 @@ import (
 )
 
 const (
-	sessionsCollection = "mcp_front_sessions"
-	grantsCollection   = "mcp_front_grants"
+	sessionsCollection   = "mcp_front_sessions"
+	grantsCollection     = "mcp_front_grants"
+	serviceRegCollection = "mcp_front_service_registrations"
 )
 
 type FirestoreStorage struct {
@@ -558,6 +559,70 @@ func (s *FirestoreStorage) RevokeSession(ctx context.Context, sessionID string) 
 	if err != nil && status.Code(err) != codes.NotFound {
 		return err
 	}
+	return nil
+}
+
+type ServiceRegistrationDoc struct {
+	ServiceName  string    `firestore:"service_name"`
+	ClientID     string    `firestore:"client_id"`
+	ClientSecret string    `firestore:"client_secret,omitempty"` // encrypted
+	CreatedAt    time.Time `firestore:"created_at"`
+	ExpiresAt    time.Time `firestore:"expires_at"`
+}
+
+func (s *FirestoreStorage) GetServiceRegistration(ctx context.Context, serviceName string) (*ServiceRegistration, error) {
+	doc, err := s.client.Collection(serviceRegCollection).Doc(serviceName).Get(ctx)
+	if err != nil {
+		if status.Code(err) == codes.NotFound {
+			return nil, ErrServiceRegistrationNotFound
+		}
+		return nil, fmt.Errorf("failed to get service registration from Firestore: %w", err)
+	}
+
+	var regDoc ServiceRegistrationDoc
+	if err := doc.DataTo(&regDoc); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal service registration: %w", err)
+	}
+
+	reg := &ServiceRegistration{
+		ServiceName: regDoc.ServiceName,
+		ClientID:    regDoc.ClientID,
+		CreatedAt:   regDoc.CreatedAt,
+		ExpiresAt:   regDoc.ExpiresAt,
+	}
+
+	if regDoc.ClientSecret != "" {
+		decrypted, err := s.encryptor.Decrypt(regDoc.ClientSecret)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decrypt service client secret: %w", err)
+		}
+		reg.ClientSecret = decrypted
+	}
+
+	return reg, nil
+}
+
+func (s *FirestoreStorage) SetServiceRegistration(ctx context.Context, serviceName string, reg *ServiceRegistration) error {
+	regDoc := ServiceRegistrationDoc{
+		ServiceName: reg.ServiceName,
+		ClientID:    reg.ClientID,
+		CreatedAt:   reg.CreatedAt,
+		ExpiresAt:   reg.ExpiresAt,
+	}
+
+	if reg.ClientSecret != "" {
+		encrypted, err := s.encryptor.Encrypt(reg.ClientSecret)
+		if err != nil {
+			return fmt.Errorf("failed to encrypt service client secret: %w", err)
+		}
+		regDoc.ClientSecret = encrypted
+	}
+
+	_, err := s.client.Collection(serviceRegCollection).Doc(serviceName).Set(ctx, regDoc)
+	if err != nil {
+		return fmt.Errorf("failed to store service registration in Firestore: %w", err)
+	}
+
 	return nil
 }
 
