@@ -14,6 +14,7 @@ import (
 	"github.com/dgellow/mcp-front/internal/client"
 	"github.com/dgellow/mcp-front/internal/config"
 	"github.com/dgellow/mcp-front/internal/crypto"
+	"github.com/dgellow/mcp-front/internal/gateway"
 	"github.com/dgellow/mcp-front/internal/idp"
 	"github.com/dgellow/mcp-front/internal/inline"
 	"github.com/dgellow/mcp-front/internal/log"
@@ -29,6 +30,7 @@ type MCPFront struct {
 	httpServer     *server.HTTPServer
 	sessionManager *client.StdioSessionManager
 	storage        storage.Storage
+	gatewayServer  *gateway.Server
 }
 
 func NewMCPFront(ctx context.Context, cfg config.Config) (*MCPFront, error) {
@@ -85,7 +87,7 @@ func NewMCPFront(ctx context.Context, cfg config.Config) (*MCPFront, error) {
 		Version: "dev",
 	}
 
-	mux, err := buildHTTPHandler(
+	mux, gatewayServer, err := buildHTTPHandler(
 		cfg,
 		store,
 		authServer,
@@ -109,6 +111,7 @@ func NewMCPFront(ctx context.Context, cfg config.Config) (*MCPFront, error) {
 		httpServer:     httpServer,
 		sessionManager: sessionManager,
 		storage:        store,
+		gatewayServer:  gatewayServer,
 	}, nil
 }
 
@@ -160,6 +163,10 @@ func (m *MCPFront) Run() error {
 			"error": err.Error(),
 		})
 		return err
+	}
+
+	if m.gatewayServer != nil {
+		m.gatewayServer.Shutdown()
 	}
 
 	if m.sessionManager != nil {
@@ -266,7 +273,7 @@ func buildHTTPHandler(
 	userTokenService *server.UserTokenService,
 	baseURL string,
 	info mcp.Implementation,
-) (http.Handler, error) {
+) (http.Handler, *gateway.Server, error) {
 	mux := http.NewServeMux()
 	basePath := cfg.Proxy.BasePath
 
@@ -307,6 +314,7 @@ func buildHTTPHandler(
 			sessionEncryptor,
 			cfg.MCPServers,
 			serviceOAuthClient,
+			[]string{"gateway"},
 		)
 
 		mux.Handle(route("/.well-known/oauth-authorization-server"), server.ChainMiddleware(http.HandlerFunc(authHandlers.WellKnownHandler), oauthMiddleware...))
@@ -357,13 +365,13 @@ func buildHTTPHandler(
 		if serverConfig.TransportType == config.MCPClientTypeInline {
 			handler, err = buildInlineHandler(serverName, serverConfig)
 			if err != nil {
-				return nil, fmt.Errorf("failed to create inline handler for %s: %w", serverName, err)
+				return nil, nil, fmt.Errorf("failed to create inline handler for %s: %w", serverName, err)
 			}
 		} else {
 			if serverConfig.IsStdio() {
 				sseServer, mcpServer, err = buildStdioSSEServer(serverName, baseURL, sessionManager)
 				if err != nil {
-					return nil, fmt.Errorf("failed to create SSE server for %s: %w", serverName, err)
+					return nil, nil, fmt.Errorf("failed to create SSE server for %s: %w", serverName, err)
 				}
 				sseServers[serverName] = sseServer
 			}
@@ -399,8 +407,22 @@ func buildHTTPHandler(
 		mux.Handle(route("/"+serverName+"/"), server.ChainMiddleware(handler, mcpMiddlewares...))
 	}
 
+	gatewayServer := gateway.NewServer(cfg.MCPServers, userTokenService.GetUserToken, baseURL)
+	gatewayHandler := gateway.NewHandler("gateway", gatewayServer, baseURL)
+
+	gatewayMiddlewares := []server.MiddlewareFunc{
+		mcpLogger,
+		corsMiddleware,
+	}
+	if authServer != nil {
+		gatewayMiddlewares = append(gatewayMiddlewares, oauth.NewValidateTokenMiddleware(authServer, authConfig.Issuer, authConfig.DangerouslyAcceptIssuerAudience))
+	}
+	gatewayMiddlewares = append(gatewayMiddlewares, mcpRecover)
+
+	mux.Handle(route("/gateway/"), server.ChainMiddleware(gatewayHandler, gatewayMiddlewares...))
+
 	log.LogInfoWithFields("server", "MCP proxy server initialized", nil)
-	return mux, nil
+	return mux, gatewayServer, nil
 }
 
 func buildInlineHandler(serverName string, serverConfig *config.MCPClientConfig) (http.Handler, error) {

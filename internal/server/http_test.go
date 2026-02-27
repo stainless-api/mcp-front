@@ -76,6 +76,7 @@ func TestOAuthEndpointsCORS(t *testing.T) {
 		sessionEncryptor,
 		map[string]*config.MCPClientConfig{},
 		serviceOAuthClient,
+		nil,
 	)
 
 	// Test endpoints that should have CORS headers

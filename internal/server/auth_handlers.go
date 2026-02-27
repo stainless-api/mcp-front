@@ -30,6 +30,7 @@ type AuthHandlers struct {
 	storage            storage.Storage
 	sessionEncryptor   crypto.Encryptor
 	mcpServers         map[string]*config.MCPClientConfig
+	knownServiceNames  map[string]bool
 	oauthStateToken    crypto.TokenSigner
 	serviceOAuthClient *auth.ServiceOAuthClient
 }
@@ -47,7 +48,16 @@ func NewAuthHandlers(
 	sessionEncryptor crypto.Encryptor,
 	mcpServers map[string]*config.MCPClientConfig,
 	serviceOAuthClient *auth.ServiceOAuthClient,
+	additionalServiceNames []string,
 ) *AuthHandlers {
+	knownServiceNames := make(map[string]bool, len(mcpServers)+len(additionalServiceNames))
+	for name := range mcpServers {
+		knownServiceNames[name] = true
+	}
+	for _, name := range additionalServiceNames {
+		knownServiceNames[name] = true
+	}
+
 	return &AuthHandlers{
 		authServer:         authServer,
 		authConfig:         authConfig,
@@ -55,6 +65,7 @@ func NewAuthHandlers(
 		storage:            storage,
 		sessionEncryptor:   sessionEncryptor,
 		mcpServers:         mcpServers,
+		knownServiceNames:  knownServiceNames,
 		oauthStateToken:    crypto.NewTokenSigner([]byte(authConfig.EncryptionKey), 10*time.Minute),
 		serviceOAuthClient: serviceOAuthClient,
 	}
@@ -123,7 +134,7 @@ func (h *AuthHandlers) ServiceProtectedResourceMetadataHandler(w http.ResponseWr
 
 	log.Logf("Service protected resource metadata handler called for service: %s", serviceName)
 
-	if _, exists := h.mcpServers[serviceName]; !exists {
+	if !h.knownServiceNames[serviceName] {
 		log.LogWarnWithFields("oauth", "Unknown service requested in metadata", map[string]any{
 			"service": serviceName,
 		})
