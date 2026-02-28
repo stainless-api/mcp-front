@@ -81,14 +81,28 @@ func TestCopyRequestHeaders(t *testing.T) {
 		assert.Equal(t, "existing-value", dst.Get("X-Existing"))
 	})
 
+	t.Run("strips Accept-Encoding so proxy controls compression per-leg", func(t *testing.T) {
+		src := http.Header{
+			"Accept-Encoding": []string{"gzip, deflate, br"},
+			"User-Agent":      []string{"test-agent"},
+		}
+
+		dst := http.Header{}
+		copyRequestHeaders(dst, src)
+
+		assert.Empty(t, dst.Get("Accept-Encoding"))
+		assert.Equal(t, "test-agent", dst.Get("User-Agent"))
+	})
+
 	t.Run("comprehensive security test", func(t *testing.T) {
 		src := http.Header{
 			// Should be stripped
-			"Authorization": []string{"Bearer oauth-token"},
-			"Cookie":        []string{"session=secret"},
-			"Connection":    []string{"keep-alive"},
-			"Upgrade":       []string{"websocket"},
-			"Host":          []string{"mcp-front.example.com"},
+			"Authorization":   []string{"Bearer oauth-token"},
+			"Cookie":          []string{"session=secret"},
+			"Connection":      []string{"keep-alive"},
+			"Upgrade":         []string{"websocket"},
+			"Host":            []string{"mcp-front.example.com"},
+			"Accept-Encoding": []string{"gzip"},
 
 			// Should be copied
 			"User-Agent":      []string{"Mozilla/5.0"},
@@ -102,12 +116,13 @@ func TestCopyRequestHeaders(t *testing.T) {
 		dst := http.Header{}
 		copyRequestHeaders(dst, src)
 
-		// Verify sensitive headers are NOT copied
+		// Verify sensitive/hop-by-hop headers are NOT copied
 		assert.Empty(t, dst.Get("Authorization"))
 		assert.Empty(t, dst.Get("Cookie"))
 		assert.Empty(t, dst.Get("Connection"))
 		assert.Empty(t, dst.Get("Upgrade"))
 		assert.Empty(t, dst.Get("Host"))
+		assert.Empty(t, dst.Get("Accept-Encoding"))
 
 		// Verify safe headers ARE copied
 		assert.Equal(t, "Mozilla/5.0", dst.Get("User-Agent"))
