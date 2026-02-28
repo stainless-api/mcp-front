@@ -50,7 +50,7 @@ func GenerateJWTSecret(providedSecret string) ([]byte, error) {
 	return secret, nil
 }
 
-func NewValidateTokenMiddleware(authServer *AuthorizationServer, issuer string, acceptIssuerAudience bool) func(http.Handler) http.Handler {
+func NewValidateTokenMiddleware(authServer *AuthorizationServer, issuer string, acceptIssuerAudience bool, gcpValidator *GCPIDTokenValidator) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ctx := r.Context()
@@ -77,23 +77,32 @@ func NewValidateTokenMiddleware(authServer *AuthorizationServer, issuer string, 
 
 			token := parts[1]
 
+			var userEmail string
+
 			claims, err := authServer.ValidateAccessToken(token)
-			if err != nil {
+			if err == nil {
+				if err := ValidateAudienceForService(r.URL.Path, claims.Audience, issuer, acceptIssuerAudience); err != nil {
+					log.LogErrorWithFields("oauth", "Audience validation failed", map[string]any{
+						"path":     r.URL.Path,
+						"audience": claims.Audience,
+						"error":    err.Error(),
+					})
+					jsonwriter.WriteUnauthorizedRFC9728(w, "Token audience does not match requested service", metadataURI)
+					return
+				}
+				userEmail = claims.Identity.Email
+			} else if gcpValidator != nil {
+				gcpEmail, gcpErr := gcpValidator.Validate(ctx, token)
+				if gcpErr != nil {
+					jsonwriter.WriteUnauthorizedRFC9728(w, "Invalid or expired token", metadataURI)
+					return
+				}
+				userEmail = gcpEmail
+			} else {
 				jsonwriter.WriteUnauthorizedRFC9728(w, "Invalid or expired token", metadataURI)
 				return
 			}
 
-			if err := ValidateAudienceForService(r.URL.Path, claims.Audience, issuer, acceptIssuerAudience); err != nil {
-				log.LogErrorWithFields("oauth", "Audience validation failed", map[string]any{
-					"path":     r.URL.Path,
-					"audience": claims.Audience,
-					"error":    err.Error(),
-				})
-				jsonwriter.WriteUnauthorizedRFC9728(w, "Token audience does not match requested service", metadataURI)
-				return
-			}
-
-			userEmail := claims.Identity.Email
 			if userEmail != "" {
 				ctx = context.WithValue(ctx, userContextKey, userEmail)
 				r = r.WithContext(ctx)

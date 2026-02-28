@@ -49,7 +49,7 @@ func NewMCPFront(ctx context.Context, cfg config.Config) (*MCPFront, error) {
 		return nil, fmt.Errorf("failed to setup storage: %w", err)
 	}
 
-	authServer, idpProvider, sessionEncryptor, authConfig, serviceOAuthClient, err := setupAuthentication(ctx, cfg, store)
+	authServer, idpProvider, sessionEncryptor, authConfig, serviceOAuthClient, gcpValidator, err := setupAuthentication(ctx, cfg, store)
 	if err != nil {
 		return nil, fmt.Errorf("failed to setup authentication: %w", err)
 	}
@@ -99,6 +99,7 @@ func NewMCPFront(ctx context.Context, cfg config.Config) (*MCPFront, error) {
 		userTokenService,
 		baseURL.String(),
 		info,
+		gcpValidator,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build HTTP handler: %w", err)
@@ -209,17 +210,17 @@ func setupStorage(ctx context.Context, cfg config.Config) (storage.Storage, erro
 	return storage.NewMemoryStorage(), nil
 }
 
-func setupAuthentication(ctx context.Context, cfg config.Config, store storage.Storage) (*oauth.AuthorizationServer, idp.Provider, crypto.Encryptor, config.OAuthAuthConfig, *auth.ServiceOAuthClient, error) {
+func setupAuthentication(ctx context.Context, cfg config.Config, store storage.Storage) (*oauth.AuthorizationServer, idp.Provider, crypto.Encryptor, config.OAuthAuthConfig, *auth.ServiceOAuthClient, *oauth.GCPIDTokenValidator, error) {
 	oauthAuth := cfg.Proxy.Auth
 	if oauthAuth == nil {
-		return nil, nil, nil, config.OAuthAuthConfig{}, nil, nil
+		return nil, nil, nil, config.OAuthAuthConfig{}, nil, nil, nil
 	}
 
 	log.LogDebug("initializing OAuth components")
 
 	idpProvider, err := idp.NewProvider(oauthAuth.IDP)
 	if err != nil {
-		return nil, nil, nil, config.OAuthAuthConfig{}, nil, fmt.Errorf("failed to create identity provider: %w", err)
+		return nil, nil, nil, config.OAuthAuthConfig{}, nil, nil, fmt.Errorf("failed to create identity provider: %w", err)
 	}
 
 	log.LogInfoWithFields("mcpfront", "Identity provider configured", map[string]any{
@@ -228,13 +229,13 @@ func setupAuthentication(ctx context.Context, cfg config.Config, store storage.S
 
 	jwtSecret, err := oauth.GenerateJWTSecret(string(oauthAuth.JWTSecret))
 	if err != nil {
-		return nil, nil, nil, config.OAuthAuthConfig{}, nil, fmt.Errorf("failed to setup JWT secret: %w", err)
+		return nil, nil, nil, config.OAuthAuthConfig{}, nil, nil, fmt.Errorf("failed to setup JWT secret: %w", err)
 	}
 
 	encryptionKey := []byte(oauthAuth.EncryptionKey)
 	sessionEncryptor, err := oauth.NewSessionEncryptor(encryptionKey)
 	if err != nil {
-		return nil, nil, nil, config.OAuthAuthConfig{}, nil, fmt.Errorf("failed to create session encryptor: %w", err)
+		return nil, nil, nil, config.OAuthAuthConfig{}, nil, nil, fmt.Errorf("failed to create session encryptor: %w", err)
 	}
 
 	minEntropy := 8
@@ -253,12 +254,23 @@ func setupAuthentication(ctx context.Context, cfg config.Config, store storage.S
 		RequireResourceParam: !oauthAuth.DangerouslyAcceptIssuerAudience,
 	})
 	if err != nil {
-		return nil, nil, nil, config.OAuthAuthConfig{}, nil, fmt.Errorf("failed to create authorization server: %w", err)
+		return nil, nil, nil, config.OAuthAuthConfig{}, nil, nil, fmt.Errorf("failed to create authorization server: %w", err)
 	}
 
 	serviceOAuthClient := auth.NewServiceOAuthClient(store, cfg.Proxy.BaseURL, encryptionKey)
 
-	return authServer, idpProvider, sessionEncryptor, *oauthAuth, serviceOAuthClient, nil
+	var gcpValidator *oauth.GCPIDTokenValidator
+	gcpVal, err := oauth.NewGCPIDTokenValidator(ctx, oauthAuth.Issuer)
+	if err != nil {
+		log.LogWarn("GCP ID token validation disabled: %v", err)
+	} else {
+		gcpValidator = gcpVal
+		log.LogInfoWithFields("mcpfront", "GCP ID token validation enabled", map[string]any{
+			"audience": oauthAuth.Issuer,
+		})
+	}
+
+	return authServer, idpProvider, sessionEncryptor, *oauthAuth, serviceOAuthClient, gcpValidator, nil
 }
 
 func buildHTTPHandler(
@@ -273,6 +285,7 @@ func buildHTTPHandler(
 	userTokenService *server.UserTokenService,
 	baseURL string,
 	info mcp.Implementation,
+	gcpValidator *oauth.GCPIDTokenValidator,
 ) (http.Handler, *gateway.Server, error) {
 	mux := http.NewServeMux()
 	basePath := cfg.Proxy.BasePath
@@ -395,7 +408,7 @@ func buildHTTPHandler(
 		}
 
 		if authServer != nil {
-			mcpMiddlewares = append(mcpMiddlewares, oauth.NewValidateTokenMiddleware(authServer, authConfig.Issuer, authConfig.DangerouslyAcceptIssuerAudience))
+			mcpMiddlewares = append(mcpMiddlewares, oauth.NewValidateTokenMiddleware(authServer, authConfig.Issuer, authConfig.DangerouslyAcceptIssuerAudience, gcpValidator))
 		}
 
 		if len(serverConfig.ServiceAuths) > 0 {
@@ -415,7 +428,7 @@ func buildHTTPHandler(
 		corsMiddleware,
 	}
 	if authServer != nil {
-		gatewayMiddlewares = append(gatewayMiddlewares, oauth.NewValidateTokenMiddleware(authServer, authConfig.Issuer, authConfig.DangerouslyAcceptIssuerAudience))
+		gatewayMiddlewares = append(gatewayMiddlewares, oauth.NewValidateTokenMiddleware(authServer, authConfig.Issuer, authConfig.DangerouslyAcceptIssuerAudience, gcpValidator))
 	}
 	gatewayMiddlewares = append(gatewayMiddlewares, mcpRecover)
 
