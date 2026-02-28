@@ -255,6 +255,17 @@ func validateServersStructure(rawConfig map[string]any, result *ValidationResult
 		}
 	}
 
+	aggregateNames := make(map[string]bool)
+	for name, server := range servers {
+		srv, ok := server.(map[string]any)
+		if !ok {
+			continue
+		}
+		if t, ok := srv["type"].(string); ok && t == "aggregate" {
+			aggregateNames[name] = true
+		}
+	}
+
 	for name, server := range servers {
 		srv, ok := server.(map[string]any)
 		if !ok {
@@ -262,6 +273,19 @@ func validateServersStructure(rawConfig map[string]any, result *ValidationResult
 				Path:    fmt.Sprintf("mcpServers.%s", name),
 				Message: "server must be an object",
 			})
+			continue
+		}
+
+		if !isValidServerName(name) {
+			result.Errors = append(result.Errors, ValidationError{
+				Path:    fmt.Sprintf("mcpServers.%s", name),
+				Message: "server name is invalid (must start with alphanumeric, then alphanumeric/underscore/hyphen only)",
+			})
+		}
+
+		serverType, _ := srv["type"].(string)
+		if serverType == "aggregate" {
+			validateAggregateServerStructure(name, srv, servers, aggregateNames, result)
 			continue
 		}
 
@@ -330,6 +354,158 @@ func validateServersStructure(rawConfig map[string]any, result *ValidationResult
 				requiresUserToken = requiresToken
 			}
 			validateServiceAuths(serviceAuths, name, requiresUserToken, result)
+		}
+
+		// Check tool filter configuration
+		if options, ok := srv["options"].(map[string]any); ok {
+			if toolFilter, ok := options["toolFilter"].(map[string]any); ok {
+				validateToolFilterStructure(toolFilter, fmt.Sprintf("mcpServers.%s.options.toolFilter", name), result)
+			}
+		}
+	}
+}
+
+func validateToolFilterStructure(filter map[string]any, path string, result *ValidationResult) {
+	mode, hasMode := filter["mode"].(string)
+	list, hasList := filter["list"].([]any)
+
+	if hasList && len(list) > 0 && !hasMode {
+		result.Errors = append(result.Errors, ValidationError{
+			Path:    path + ".mode",
+			Message: "mode is required when list is provided (must be 'allow' or 'block')",
+		})
+	}
+	if hasMode && mode != "allow" && mode != "block" {
+		result.Errors = append(result.Errors, ValidationError{
+			Path:    path + ".mode",
+			Message: fmt.Sprintf("invalid mode '%s' (must be 'allow' or 'block')", mode),
+		})
+	}
+}
+
+// validateAggregateServerStructure checks aggregate server configuration
+func validateAggregateServerStructure(name string, srv map[string]any, allServers map[string]any, aggregateNames map[string]bool, result *ValidationResult) {
+	path := fmt.Sprintf("mcpServers.%s", name)
+
+	// Reject direct-only fields
+	directOnlyFields := []string{"command", "args", "env", "url", "headers", "timeout", "inline", "requiresUserToken", "userAuthentication"}
+	for _, field := range directOnlyFields {
+		if _, ok := srv[field]; ok {
+			result.Errors = append(result.Errors, ValidationError{
+				Path:    path + "." + field,
+				Message: fmt.Sprintf("%s is not allowed on aggregate servers", field),
+			})
+		}
+	}
+
+	// Validate transportType if present
+	if tt, ok := srv["transportType"].(string); ok {
+		if tt != "sse" && tt != "streamable-http" {
+			result.Errors = append(result.Errors, ValidationError{
+				Path:    path + ".transportType",
+				Message: "aggregate servers only support 'sse' or 'streamable-http' transport",
+			})
+		}
+	}
+
+	// Validate servers references
+	if serversList, ok := srv["servers"].([]any); ok {
+		seenRefs := make(map[string]bool, len(serversList))
+		for i, s := range serversList {
+			ref, ok := s.(string)
+			if !ok {
+				result.Errors = append(result.Errors, ValidationError{
+					Path:    fmt.Sprintf("%s.servers[%d]", path, i),
+					Message: "server reference must be a string",
+				})
+				continue
+			}
+			if seenRefs[ref] {
+				result.Errors = append(result.Errors, ValidationError{
+					Path:    fmt.Sprintf("%s.servers[%d]", path, i),
+					Message: fmt.Sprintf("duplicate server reference '%s'", ref),
+				})
+				continue
+			}
+			seenRefs[ref] = true
+			if ref == name {
+				result.Errors = append(result.Errors, ValidationError{
+					Path:    fmt.Sprintf("%s.servers[%d]", path, i),
+					Message: "aggregate cannot reference itself",
+				})
+				continue
+			}
+			if aggregateNames[ref] {
+				result.Errors = append(result.Errors, ValidationError{
+					Path:    fmt.Sprintf("%s.servers[%d]", path, i),
+					Message: fmt.Sprintf("aggregate cannot reference another aggregate '%s'", ref),
+				})
+				continue
+			}
+			refServer, exists := allServers[ref]
+			if !exists {
+				result.Errors = append(result.Errors, ValidationError{
+					Path:    fmt.Sprintf("%s.servers[%d]", path, i),
+					Message: fmt.Sprintf("server '%s' does not exist", ref),
+				})
+				continue
+			}
+			if refSrv, ok := refServer.(map[string]any); ok {
+				if tt, ok := refSrv["transportType"].(string); ok && tt == "inline" {
+					result.Errors = append(result.Errors, ValidationError{
+						Path:    fmt.Sprintf("%s.servers[%d]", path, i),
+						Message: fmt.Sprintf("aggregate cannot reference inline server '%s' (inline servers have no network transport)", ref),
+					})
+				}
+			}
+		}
+	}
+
+	// Validate discovery config durations
+	if discovery, ok := srv["discovery"].(map[string]any); ok {
+		validateDiscoveryDurations(discovery, path+".discovery", result)
+	}
+}
+
+func validateDiscoveryDurations(discovery map[string]any, path string, result *ValidationResult) {
+	checkPositiveDuration := func(field string) {
+		if val, ok := discovery[field].(string); ok && val != "" {
+			d, err := time.ParseDuration(val)
+			if err != nil {
+				result.Errors = append(result.Errors, ValidationError{
+					Path:    path + "." + field,
+					Message: fmt.Sprintf("invalid duration '%s': %v", val, err),
+				})
+			} else if d <= 0 {
+				result.Errors = append(result.Errors, ValidationError{
+					Path:    path + "." + field,
+					Message: fmt.Sprintf("%s must be positive, got %s", field, val),
+				})
+			}
+		}
+	}
+	checkPositiveDuration("timeout")
+	checkPositiveDuration("cacheTtl")
+
+	if maxConns, ok := discovery["maxConnsPerUser"].(float64); ok {
+		if maxConns < 0 {
+			result.Errors = append(result.Errors, ValidationError{
+				Path:    path + ".maxConnsPerUser",
+				Message: "maxConnsPerUser cannot be negative",
+			})
+		}
+	}
+
+	timeoutStr, hasTimeout := discovery["timeout"].(string)
+	cacheTtlStr, hasCacheTtl := discovery["cacheTtl"].(string)
+	if hasTimeout && hasCacheTtl {
+		timeoutDur, err1 := time.ParseDuration(timeoutStr)
+		cacheTtlDur, err2 := time.ParseDuration(cacheTtlStr)
+		if err1 == nil && err2 == nil && timeoutDur >= cacheTtlDur {
+			result.Warnings = append(result.Warnings, ValidationError{
+				Path:    path,
+				Message: fmt.Sprintf("timeout (%s) >= cacheTtl (%s): discovery may not complete before cache expires", timeoutStr, cacheTtlStr),
+			})
 		}
 	}
 }

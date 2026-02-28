@@ -120,10 +120,14 @@ func NewStdioSessionManager(opts ...SessionManagerOption) *StdioSessionManager {
 		opt(sm)
 	}
 
+	return sm
+}
+
+// Start begins the background cleanup routine. Must be called after construction.
+// The cleanup routine is stopped by Shutdown.
+func (sm *StdioSessionManager) Start() {
 	sm.wg.Add(1)
 	go sm.startCleanupRoutine()
-
-	return sm
 }
 
 // GetOrCreateSession returns existing session or creates new one
@@ -533,24 +537,26 @@ func (sm *StdioSessionManager) startCleanupRoutine() {
 	}
 }
 
-// cleanupTimedOutSessions removes sessions that have timed out
+// cleanupTimedOutSessions removes sessions that have timed out.
+// Uses a single write lock to atomically check freshness and remove, preventing
+// a TOCTOU race where a session could be accessed between the scan and removal.
 func (sm *StdioSessionManager) cleanupTimedOutSessions() {
 	now := time.Now()
 
-	// Find timed out sessions
-	sm.mu.RLock()
-	timedOut := make([]SessionKey, 0)
+	sm.mu.Lock()
+	var timedOut []*StdioSession
+	var timedOutKeys []SessionKey
 	totalSessions := len(sm.sessions)
-	activeSessions := 0
 	for key, session := range sm.sessions {
 		lastAccessed := session.lastAccessed.Load()
 		if lastAccessed != nil && now.Sub(*lastAccessed) > sm.defaultTimeout {
-			timedOut = append(timedOut, key)
-		} else {
-			activeSessions++
+			timedOutKeys = append(timedOutKeys, key)
+			timedOut = append(timedOut, session)
+			delete(sm.sessions, key)
 		}
 	}
-	sm.mu.RUnlock()
+	activeSessions := len(sm.sessions)
+	sm.mu.Unlock()
 
 	if totalSessions > 0 || len(timedOut) > 0 {
 		log.LogTraceWithFields("session_manager", "Session cleanup cycle", map[string]any{
@@ -561,15 +567,17 @@ func (sm *StdioSessionManager) cleanupTimedOutSessions() {
 		})
 	}
 
-	for _, key := range timedOut {
+	for i, session := range timedOut {
+		key := timedOutKeys[i]
 		log.LogInfoWithFields("session_manager", "Removing timed out session", map[string]any{
 			"sessionID": key.SessionID,
 			"server":    key.ServerName,
 			"user":      key.UserEmail,
 			"timeout":   sm.defaultTimeout,
 		})
-		if err := sm.RemoveSession(key); err != nil {
-			log.LogErrorWithFields("session_cleanup", "Failed to remove timed out session", map[string]any{
+		session.cancel()
+		if err := session.client.Close(); err != nil {
+			log.LogErrorWithFields("session_cleanup", "Failed to close timed out session", map[string]any{
 				"sessionID": key.SessionID,
 				"server":    key.ServerName,
 				"user":      key.UserEmail,

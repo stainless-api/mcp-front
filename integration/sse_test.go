@@ -64,15 +64,15 @@ func TestSSEServerIntegration(t *testing.T) {
 			t.Fatalf("Got error response: %v", errorMap)
 		}
 
-		// Verify we got a result
-		assert.NotNil(t, result["result"])
-
-		// Verify the echo result contains our text
-		if resultData, ok := result["result"].(map[string]any); ok {
-			if toolResult, ok := resultData["toolResult"].(string); ok {
-				assert.Equal(t, "Hello from SSE test!", toolResult)
-			}
-		}
+		// Verify we got a result with MCP content format
+		resultData, ok := result["result"].(map[string]any)
+		require.True(t, ok, "Expected result field")
+		content, ok := resultData["content"].([]any)
+		require.True(t, ok, "Expected content array")
+		require.NotEmpty(t, content)
+		textContent, ok := content[0].(map[string]any)
+		require.True(t, ok, "Expected text content object")
+		assert.Equal(t, "Hello from SSE test!", textContent["text"])
 	})
 
 	t.Run("SSE server disconnection handling", func(t *testing.T) {
@@ -107,11 +107,16 @@ func TestSSEServerIntegration(t *testing.T) {
 		require.NoError(t, err, "Connection error during streaming test")
 		assert.NotNil(t, result)
 
-		// Verify we got a successful result
+		// Verify we got a successful result with MCP content format
 		assert.NotContains(t, result, "error", "Should not have error for sample_stream")
-		if resultData, ok := result["result"].(map[string]any); ok {
-			assert.Equal(t, "Tool executed successfully", resultData["toolResult"])
-		}
+		resultData, ok := result["result"].(map[string]any)
+		require.True(t, ok, "Expected result field")
+		content, ok := resultData["content"].([]any)
+		require.True(t, ok, "Expected content array")
+		require.NotEmpty(t, content)
+		textContent, ok := content[0].(map[string]any)
+		require.True(t, ok, "Expected text content object")
+		assert.Equal(t, "Tool executed successfully", textContent["text"])
 	})
 
 	t.Run("SSE error handling", func(t *testing.T) {

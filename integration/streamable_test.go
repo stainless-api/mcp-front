@@ -73,16 +73,16 @@ func TestStreamableServerIntegration(t *testing.T) {
 			t.Fatalf("Got error response: %v", errorMap)
 		}
 
-		// Verify we got a result
-		assert.NotNil(t, result["result"])
-
-		// Verify the time result
-		if resultData, ok := result["result"].(map[string]any); ok {
-			if toolResult, ok := resultData["toolResult"].(string); ok {
-				assert.NotEmpty(t, toolResult, "Should have gotten a timestamp")
-				t.Logf("Got time: %s", toolResult)
-			}
-		}
+		// Verify we got a result with MCP content format
+		resultData, ok := result["result"].(map[string]any)
+		require.True(t, ok, "Expected result field")
+		content, ok := resultData["content"].([]any)
+		require.True(t, ok, "Expected content array")
+		require.NotEmpty(t, content)
+		textContent, ok := content[0].(map[string]any)
+		require.True(t, ok, "Expected text content object")
+		assert.NotEmpty(t, textContent["text"], "Should have gotten a timestamp")
+		t.Logf("Got time: %s", textContent["text"])
 	})
 
 	t.Run("Streamable POST with actual SSE response", func(t *testing.T) {
@@ -139,10 +139,12 @@ func TestStreamableServerIntegration(t *testing.T) {
 		for _, response := range responses {
 			if id, ok := response["id"]; ok && id == float64(1) {
 				if result, ok := response["result"].(map[string]any); ok {
-					if toolResult, ok := result["toolResult"].(string); ok {
-						assert.Equal(t, "Echo: Hello SSE!", toolResult)
-						found = true
-						break
+					if content, ok := result["content"].([]any); ok && len(content) > 0 {
+						if textContent, ok := content[0].(map[string]any); ok {
+							assert.Equal(t, "Echo: Hello SSE!", textContent["text"])
+							found = true
+							break
+						}
 					}
 				}
 			}
