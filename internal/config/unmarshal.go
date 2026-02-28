@@ -16,6 +16,7 @@ import (
 func (c *MCPClientConfig) UnmarshalJSON(data []byte) error {
 	// Use a raw type to avoid recursion
 	type rawConfig struct {
+		Type               ServerType                 `json:"type,omitempty"`
 		TransportType      MCPClientType              `json:"transportType,omitempty"`
 		Command            json.RawMessage            `json:"command,omitempty"`
 		Args               []json.RawMessage          `json:"args,omitempty"`
@@ -28,11 +29,19 @@ func (c *MCPClientConfig) UnmarshalJSON(data []byte) error {
 		UserAuthentication *UserAuthentication        `json:"userAuthentication,omitempty"`
 		ServiceAuths       []ServiceAuth              `json:"serviceAuths,omitempty"`
 		InlineConfig       json.RawMessage            `json:"inline,omitempty"`
+		Servers            []string                   `json:"servers,omitempty"`
+		Discovery          json.RawMessage            `json:"discovery,omitempty"`
 	}
 
 	var raw rawConfig
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
+	}
+
+	// Default type to "direct"
+	c.Type = raw.Type
+	if c.Type == "" {
+		c.Type = ServerTypeDirect
 	}
 
 	c.TransportType = raw.TransportType
@@ -41,6 +50,26 @@ func (c *MCPClientConfig) UnmarshalJSON(data []byte) error {
 	c.UserAuthentication = raw.UserAuthentication
 	c.ServiceAuths = raw.ServiceAuths
 	c.InlineConfig = raw.InlineConfig
+
+	if c.Type == ServerTypeAggregate {
+		c.Servers = raw.Servers
+		if c.TransportType == "" {
+			c.TransportType = MCPClientTypeSSE
+		}
+		if raw.Discovery != nil {
+			disc, err := parseDiscoveryConfig(raw.Discovery)
+			if err != nil {
+				return fmt.Errorf("parsing discovery: %w", err)
+			}
+			c.Discovery = disc
+		} else {
+			c.Discovery = &DiscoveryConfig{
+				Timeout:  10 * time.Second,
+				CacheTTL: 60 * time.Second,
+			}
+		}
+		return nil
+	}
 
 	// Parse timeout if present
 	if raw.Timeout != "" {
@@ -108,6 +137,39 @@ func (c *MCPClientConfig) UnmarshalJSON(data []byte) error {
 	}
 
 	return nil
+}
+
+// parseDiscoveryConfig parses discovery configuration with duration defaults
+func parseDiscoveryConfig(data json.RawMessage) (*DiscoveryConfig, error) {
+	var raw struct {
+		Timeout  string `json:"timeout"`
+		CacheTTL string `json:"cacheTtl"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, err
+	}
+
+	disc := &DiscoveryConfig{
+		Timeout:  10 * time.Second,
+		CacheTTL: 60 * time.Second,
+	}
+
+	if raw.Timeout != "" {
+		d, err := time.ParseDuration(raw.Timeout)
+		if err != nil {
+			return nil, fmt.Errorf("parsing timeout: %w", err)
+		}
+		disc.Timeout = d
+	}
+	if raw.CacheTTL != "" {
+		d, err := time.ParseDuration(raw.CacheTTL)
+		if err != nil {
+			return nil, fmt.Errorf("parsing cacheTtl: %w", err)
+		}
+		disc.CacheTTL = d
+	}
+
+	return disc, nil
 }
 
 // UnmarshalJSON implements custom unmarshaling for OAuthAuthConfig
