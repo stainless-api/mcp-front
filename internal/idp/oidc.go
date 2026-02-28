@@ -4,11 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"time"
 
 	emailutil "github.com/dgellow/mcp-front/internal/emailutil"
+	"github.com/dgellow/mcp-front/internal/ioutil"
 	"golang.org/x/oauth2"
 )
 
@@ -113,7 +113,7 @@ func fetchOIDCDiscovery(discoveryURL string) (*oidcDiscoveryDocument, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		body := ioutil.ReadLimited(resp.Body, 1024)
 		return nil, fmt.Errorf("discovery endpoint returned status %d: %s", resp.StatusCode, body)
 	}
 
@@ -158,7 +158,7 @@ func (p *OIDCProvider) UserInfo(ctx context.Context, token *oauth2.Token) (*Iden
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		body := ioutil.ReadLimited(resp.Body, 1024)
 		return nil, fmt.Errorf("failed to get user info: status %d: %s", resp.StatusCode, body)
 	}
 

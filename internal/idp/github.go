@@ -4,10 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 
 	emailutil "github.com/dgellow/mcp-front/internal/emailutil"
+	"github.com/dgellow/mcp-front/internal/ioutil"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/github"
 )
@@ -134,7 +134,7 @@ func (p *GitHubProvider) fetchUser(client *http.Client) (*githubUserResponse, er
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		body := ioutil.ReadLimited(resp.Body, 1024)
 		return nil, fmt.Errorf("failed to get user: status %d: %s", resp.StatusCode, body)
 	}
 
@@ -154,7 +154,7 @@ func (p *GitHubProvider) fetchPrimaryEmail(client *http.Client) (string, bool, e
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		body := ioutil.ReadLimited(resp.Body, 1024)
 		return "", false, fmt.Errorf("failed to get emails: status %d: %s", resp.StatusCode, body)
 	}
 
@@ -187,7 +187,7 @@ func (p *GitHubProvider) fetchOrganizations(client *http.Client) ([]string, erro
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		body := ioutil.ReadLimited(resp.Body, 1024)
 		return nil, fmt.Errorf("failed to get organizations: status %d: %s", resp.StatusCode, body)
 	}
 
