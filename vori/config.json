@@ -25,44 +25,21 @@
     }
   },
   "mcpServers": {
-    "prod-db-replica": {
-      "transportType": "stdio",
-      "command": "/app/toolbox",
-      "args": ["--prebuilt", "cloud-sql-postgres", "--stdio"],
-      "env": {
-        "CLOUD_SQL_POSTGRES_PROJECT": { "$env": "GOOGLE_CLOUD_PROJECT" },
-        "CLOUD_SQL_POSTGRES_REGION": "us-central1",
-        "CLOUD_SQL_POSTGRES_INSTANCE": { "$env": "CLOUD_SQL_POSTGRES_INSTANCE" },
-        "CLOUD_SQL_POSTGRES_DATABASE": { "$env": "CLOUD_SQL_POSTGRES_DATABASE" },
-        "CLOUD_SQL_POSTGRES_IP_TYPE": { "$env": "CLOUD_SQL_POSTGRES_IP_TYPE" }
+    "postgres": {
+      "transportType": "streamable-http",
+      "url": "http://localhost:5000/mcp",
+      "options": {
+        "timeout": "30s"
       },
-      "userAuthentication": {
-        "type": "oauth",
-        "authorizationUrl": "https://accounts.google.com/o/oauth2/v2/auth",
-        "tokenUrl": "https://oauth2.googleapis.com/token",
-        "clientId": { "$env": "GOOGLE_CLIENT_ID" },
-        "clientSecret": { "$env": "GOOGLE_CLIENT_SECRET" },
-        "scopes": ["https://www.googleapis.com/auth/cloud-platform"]
-      }
+      "requiresUserToken": false
     },
     "bigquery": {
-      "transportType": "stdio",
-      "command": "/app/toolbox",
-      "args": ["--prebuilt", "bigquery", "--stdio"],
-      "env": {
-        "BIGQUERY_PROJECT": { "$env": "GOOGLE_CLOUD_PROJECT" }
+      "transportType": "streamable-http",
+      "url": "http://localhost:5001/mcp",
+      "options": {
+        "timeout": "30s"
       },
-      "userAuthentication": {
-        "type": "oauth",
-        "authorizationUrl": "https://accounts.google.com/o/oauth2/v2/auth",
-        "tokenUrl": "https://oauth2.googleapis.com/token",
-        "clientId": { "$env": "GOOGLE_CLIENT_ID" },
-        "clientSecret": { "$env": "GOOGLE_CLIENT_SECRET" },
-        "scopes": ["https://www.googleapis.com/auth/bigquery"],
-        "inject": {
-          "env": "GOOGLE_OAUTH_ACCESS_TOKEN"
-        }
-      }
+      "requiresUserToken": false
     },
     "datadog": {
       "transportType": "streamable-http",
