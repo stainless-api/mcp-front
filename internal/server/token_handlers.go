@@ -20,16 +20,14 @@ type TokenHandlers struct {
 	tokenStore         storage.UserTokenStore
 	mcpServers         map[string]*config.MCPClientConfig
 	csrf               crypto.CSRFProtection
-	oauthEnabled       bool
 	serviceOAuthClient *auth.ServiceOAuthClient
 }
 
 // NewTokenHandlers creates a new token handlers instance
-func NewTokenHandlers(tokenStore storage.UserTokenStore, mcpServers map[string]*config.MCPClientConfig, oauthEnabled bool, serviceOAuthClient *auth.ServiceOAuthClient, csrfKey []byte) *TokenHandlers {
+func NewTokenHandlers(tokenStore storage.UserTokenStore, mcpServers map[string]*config.MCPClientConfig, serviceOAuthClient *auth.ServiceOAuthClient, csrfKey []byte) *TokenHandlers {
 	return &TokenHandlers{
 		tokenStore:         tokenStore,
 		mcpServers:         mcpServers,
-		oauthEnabled:       oauthEnabled,
 		serviceOAuthClient: serviceOAuthClient,
 		csrf:               crypto.NewCSRFProtection(csrfKey, 15*time.Minute),
 	}
@@ -104,13 +102,10 @@ func (h *TokenHandlers) ListTokensHandler(w http.ResponseWriter, r *http.Request
 				service.HasToken = err == nil
 			}
 		} else {
-			// Determine if it's OAuth authenticated or uses bearer tokens
-			if h.oauthEnabled {
-				service.AuthType = "oauth"
-			} else if serverConfig.Options != nil && len(serverConfig.Options.AuthTokens) > 0 {
+			if len(serverConfig.ServiceAuths) > 0 {
 				service.AuthType = "bearer"
 			} else {
-				service.AuthType = "none"
+				service.AuthType = "oauth"
 			}
 		}
 

@@ -130,7 +130,7 @@ func TestAuthenticationBoundaries(t *testing.T) {
 		serviceOAuthClient,
 	)
 
-	tokenHandlers := NewTokenHandlers(store, map[string]*config.MCPClientConfig{}, true, serviceOAuthClient, []byte(oauthConfig.EncryptionKey))
+	tokenHandlers := NewTokenHandlers(store, map[string]*config.MCPClientConfig{}, serviceOAuthClient, []byte(oauthConfig.EncryptionKey))
 
 	// Build mux with middlewares
 	mux := http.NewServeMux()
@@ -431,6 +431,36 @@ func TestBearerTokenAuth(t *testing.T) {
 			assert.Equal(t, tt.expectStatus, rec.Code)
 		})
 	}
+}
+
+func TestListTokensAuthType(t *testing.T) {
+	store := storage.NewMemoryStorage()
+	encKey := []byte(strings.Repeat("b", 32))
+
+	mcpServers := map[string]*config.MCPClientConfig{
+		"oauth-service": {
+			URL: "http://backend:8080",
+		},
+		"bearer-service": {
+			URL: "http://backend:8081",
+			ServiceAuths: []config.ServiceAuth{
+				{Type: config.ServiceAuthTypeBearer, Tokens: []string{"tok"}},
+			},
+		},
+	}
+
+	handlers := NewTokenHandlers(store, mcpServers, nil, encKey)
+
+	ctx := context.WithValue(context.Background(), oauth.GetUserContextKey(), "user@example.com")
+	req := httptest.NewRequest(http.MethodGet, "/my/tokens", nil).WithContext(ctx)
+	rec := httptest.NewRecorder()
+
+	handlers.ListTokensHandler(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	body := rec.Body.String()
+	assert.Contains(t, body, "Server credentials", "bearer-service should show server credentials")
+	assert.Contains(t, body, "OAuth authenticated", "oauth-service should show OAuth authenticated")
 }
 
 func TestUpstreamOAuthStatePreservesPKCE(t *testing.T) {
