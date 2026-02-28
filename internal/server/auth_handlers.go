@@ -35,12 +35,8 @@ type AuthHandlers struct {
 }
 
 type UpstreamOAuthState struct {
-	Identity    idp.Identity `json:"identity"`
-	ClientID    string       `json:"client_id"`
-	RedirectURI string       `json:"redirect_uri"`
-	Scopes      []string     `json:"scopes"`
-	Audience    []string     `json:"audience"`
-	State       string       `json:"state"`
+	Params   oauth.AuthorizeParams `json:"params"`
+	Identity idp.Identity          `json:"identity"`
 }
 
 func NewAuthHandlers(
@@ -612,16 +608,10 @@ func (h *AuthHandlers) RegisterHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *AuthHandlers) signUpstreamOAuthState(params *oauth.AuthorizeParams, identity idp.Identity) (string, error) {
-	state := UpstreamOAuthState{
-		Identity:    identity,
-		ClientID:    params.ClientID,
-		RedirectURI: params.RedirectURI,
-		Scopes:      params.Scopes,
-		Audience:    params.Audience,
-		State:       params.State,
-	}
-
-	return h.oauthStateToken.Sign(state)
+	return h.oauthStateToken.Sign(UpstreamOAuthState{
+		Params:   *params,
+		Identity: identity,
+	})
 }
 
 func (h *AuthHandlers) verifyUpstreamOAuthState(signedState string) (*UpstreamOAuthState, error) {
@@ -762,13 +752,7 @@ func (h *AuthHandlers) CompleteOAuthHandler(w http.ResponseWriter, r *http.Reque
 
 	ctx := r.Context()
 
-	params := &oauth.AuthorizeParams{
-		ClientID:    upstreamOAuthState.ClientID,
-		RedirectURI: upstreamOAuthState.RedirectURI,
-		State:       upstreamOAuthState.State,
-		Scopes:      upstreamOAuthState.Scopes,
-		Audience:    upstreamOAuthState.Audience,
-	}
+	params := &upstreamOAuthState.Params
 
 	grant, err := h.authServer.IssueCode(params, upstreamOAuthState.Identity)
 	if err != nil {
@@ -783,7 +767,7 @@ func (h *AuthHandlers) CompleteOAuthHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	redirectURL, err := url.Parse(upstreamOAuthState.RedirectURI)
+	redirectURL, err := url.Parse(params.RedirectURI)
 	if err != nil {
 		log.LogError("Failed to parse redirect URI: %v", err)
 		jsonwriter.WriteInternalServerError(w, "Invalid redirect URI")
@@ -792,8 +776,8 @@ func (h *AuthHandlers) CompleteOAuthHandler(w http.ResponseWriter, r *http.Reque
 
 	q := redirectURL.Query()
 	q.Set("code", grant.Code)
-	if upstreamOAuthState.State != "" {
-		q.Set("state", upstreamOAuthState.State)
+	if params.State != "" {
+		q.Set("state", params.State)
 	}
 	redirectURL.RawQuery = q.Encode()
 

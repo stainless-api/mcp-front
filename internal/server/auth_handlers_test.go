@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -429,6 +431,65 @@ func TestBearerTokenAuth(t *testing.T) {
 			assert.Equal(t, tt.expectStatus, rec.Code)
 		})
 	}
+}
+
+func TestUpstreamOAuthStatePreservesPKCE(t *testing.T) {
+	oauthConfig := config.OAuthAuthConfig{
+		Issuer:        "https://test.example.com",
+		JWTSecret:     config.Secret(strings.Repeat("a", 32)),
+		EncryptionKey: config.Secret(strings.Repeat("b", 32)),
+		TokenTTL:      time.Hour,
+	}
+
+	store := storage.NewMemoryStorage()
+	jwtSecret, err := oauth.GenerateJWTSecret(string(oauthConfig.JWTSecret))
+	require.NoError(t, err)
+	authServer, err := oauth.NewAuthorizationServer(oauth.AuthorizationServerConfig{
+		JWTSecret:      jwtSecret,
+		Issuer:         oauthConfig.Issuer,
+		AccessTokenTTL: oauthConfig.TokenTTL,
+	})
+	require.NoError(t, err)
+	sessionEncryptor, err := oauth.NewSessionEncryptor([]byte(oauthConfig.EncryptionKey))
+	require.NoError(t, err)
+
+	handlers := NewAuthHandlers(
+		authServer,
+		oauthConfig,
+		&mockIDPProvider{},
+		store,
+		sessionEncryptor,
+		map[string]*config.MCPClientConfig{},
+		nil,
+	)
+
+	verifier := "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+	h := sha256.Sum256([]byte(verifier))
+	challenge := base64.RawURLEncoding.EncodeToString(h[:])
+
+	params := &oauth.AuthorizeParams{
+		ClientID:      "test-client",
+		RedirectURI:   "http://localhost/callback",
+		State:         "client-state",
+		Scopes:        []string{"read"},
+		Audience:      []string{"https://test.example.com/postgres"},
+		PKCEChallenge: challenge,
+	}
+
+	identity := idp.Identity{
+		Email:  "user@example.com",
+		Domain: "example.com",
+	}
+
+	signed, err := handlers.signUpstreamOAuthState(params, identity)
+	require.NoError(t, err)
+
+	restored, err := handlers.verifyUpstreamOAuthState(signed)
+	require.NoError(t, err)
+
+	assert.Equal(t, identity.Email, restored.Identity.Email)
+	assert.Equal(t, *params, restored.Params,
+		"all AuthorizeParams fields must survive the upstream OAuth state round-trip")
 }
 
 func TestValidateAccess(t *testing.T) {
