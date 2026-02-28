@@ -676,6 +676,12 @@ func (h *AuthHandlers) ServiceSelectionHandler(w http.ResponseWriter, r *http.Re
 			status := "not_connected"
 			if token != nil {
 				status = "connected"
+				if token.OAuthData != nil &&
+					!token.OAuthData.ExpiresAt.IsZero() &&
+					time.Now().After(token.OAuthData.ExpiresAt) &&
+					token.OAuthData.RefreshToken == "" {
+					status = "expired"
+				}
 			}
 
 			displayName := name

@@ -231,7 +231,14 @@
             </div>
             
             {{if .SupportsOAuth}}
-                {{if .IsOAuthConnected}}
+                {{if and .IsOAuthConnected .IsExpired}}
+                <div class="oauth-status">
+                    <span style="color: #c62828; font-size: 14px;">⚠ Token expired</span>
+                    <a href="{{.ConnectURL}}" style="display: inline;">
+                        <button type="button" class="oauth">Reconnect {{.DisplayName}}</button>
+                    </a>
+                </div>
+                {{else if .IsOAuthConnected}}
                 <div class="oauth-status">
                     <span class="oauth-connected">✓ Connected via OAuth</span>
                     <form method="POST" action="/oauth/disconnect" style="display: inline;">

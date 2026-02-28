@@ -84,6 +84,12 @@ func (h *TokenHandlers) ListTokensHandler(w http.ResponseWriter, r *http.Request
 					if err == nil && storedToken.Type == storage.TokenTypeOAuth {
 						service.IsOAuthConnected = true
 						service.HasToken = true
+						if storedToken.OAuthData != nil &&
+							!storedToken.OAuthData.ExpiresAt.IsZero() &&
+							time.Now().After(storedToken.OAuthData.ExpiresAt) &&
+							storedToken.OAuthData.RefreshToken == "" {
+							service.IsExpired = true
+						}
 					}
 				} else if serverConfig.UserAuthentication.Type == config.UserAuthTypeManual {
 					if serverConfig.UserAuthentication.Instructions != "" {
