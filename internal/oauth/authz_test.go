@@ -84,7 +84,7 @@ func TestAuthorizationServer_ValidateAuthorizeRequest(t *testing.T) {
 	challenge := pkceChallenge(verifier)
 
 	t.Run("valid request", func(t *testing.T) {
-		r := httptest.NewRequest("GET", "/authorize?response_type=code&client_id=test-client-id&redirect_uri=http://localhost:6274/callback&code_challenge="+challenge+"&code_challenge_method=S256&scope=read+write&state=test-state", nil)
+		r := httptest.NewRequest("GET", "/authorize?response_type=code&client_id=test-client-id&redirect_uri=http://localhost:6274/callback&code_challenge="+challenge+"&code_challenge_method=S256&scope=read+write&state=test-state&resource=https://mcp.example.com/postgres", nil)
 		params, err := s.ValidateAuthorizeRequest(r, client)
 		require.NoError(t, err)
 		assert.Equal(t, "test-client-id", params.ClientID)
@@ -127,6 +127,16 @@ func TestAuthorizationServer_ValidateAuthorizeRequest(t *testing.T) {
 		_, err := s.ValidateAuthorizeRequest(r, client)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "S256")
+	})
+
+	t.Run("missing resource parameter", func(t *testing.T) {
+		r := httptest.NewRequest("GET", "/authorize?response_type=code&client_id=test-client-id&redirect_uri=http://localhost:6274/callback&code_challenge="+challenge+"&code_challenge_method=S256&state=x", nil)
+		_, err := s.ValidateAuthorizeRequest(r, client)
+		require.Error(t, err)
+		var oauthErr *OAuthError
+		require.ErrorAs(t, err, &oauthErr)
+		assert.Equal(t, ErrInvalidRequest, oauthErr.Code)
+		assert.Contains(t, oauthErr.Description, "resource")
 	})
 
 	t.Run("with resource parameters", func(t *testing.T) {
@@ -494,7 +504,7 @@ func TestAuthorizationServer_MinStateEntropy(t *testing.T) {
 	})
 
 	t.Run("accepts long enough state", func(t *testing.T) {
-		r := httptest.NewRequest("GET", "/authorize?response_type=code&client_id=test-client-id&redirect_uri=http://localhost:6274/callback&code_challenge="+challenge+"&code_challenge_method=S256&state=long-enough-state-value", nil)
+		r := httptest.NewRequest("GET", "/authorize?response_type=code&client_id=test-client-id&redirect_uri=http://localhost:6274/callback&code_challenge="+challenge+"&code_challenge_method=S256&state=long-enough-state-value&resource=https://example.com/svc", nil)
 		params, err := s.ValidateAuthorizeRequest(r, client)
 		require.NoError(t, err)
 		assert.Equal(t, "long-enough-state-value", params.State)
