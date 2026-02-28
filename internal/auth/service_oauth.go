@@ -36,7 +36,14 @@ type ServiceOAuthClient struct {
 type ServiceOAuthState struct {
 	Service   string    `json:"service"`
 	UserEmail string    `json:"user_email"`
+	ReturnURL string    `json:"return_url,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
+}
+
+// CallbackResult contains the result of a successful OAuth callback
+type CallbackResult struct {
+	UserEmail string
+	ReturnURL string
 }
 
 // NewServiceOAuthClient creates a new OAuth client for external services
@@ -54,6 +61,7 @@ func (c *ServiceOAuthClient) StartOAuthFlow(
 	ctx context.Context,
 	userEmail string,
 	serviceName string,
+	returnURL string,
 	serviceConfig *config.MCPClientConfig,
 ) (string, error) {
 	if serviceConfig.UserAuthentication == nil ||
@@ -79,6 +87,7 @@ func (c *ServiceOAuthClient) StartOAuthFlow(
 	stateData := ServiceOAuthState{
 		Service:   serviceName,
 		UserEmail: userEmail,
+		ReturnURL: returnURL,
 		CreatedAt: time.Now(),
 	}
 
@@ -107,21 +116,21 @@ func (c *ServiceOAuthClient) HandleCallback(
 	code string,
 	state string,
 	serviceConfig *config.MCPClientConfig,
-) (userEmail string, err error) {
+) (*CallbackResult, error) {
 	// Verify and decode signed state
 	var stateData ServiceOAuthState
 	if err := c.stateSigner.Verify(state, &stateData); err != nil {
-		return "", fmt.Errorf("invalid or expired state parameter: %w", err)
+		return nil, fmt.Errorf("invalid or expired state parameter: %w", err)
 	}
 
 	// Validate service matches
 	if stateData.Service != serviceName {
-		return "", fmt.Errorf("service mismatch in OAuth callback")
+		return nil, fmt.Errorf("service mismatch in OAuth callback")
 	}
 
 	auth := serviceConfig.UserAuthentication
 	if auth == nil || auth.Type != config.UserAuthTypeOAuth {
-		return "", fmt.Errorf("service %s does not support OAuth", serviceName)
+		return nil, fmt.Errorf("service %s does not support OAuth", serviceName)
 	}
 
 	// Create OAuth2 config
@@ -143,7 +152,7 @@ func (c *ServiceOAuthClient) HandleCallback(
 			"service": serviceName,
 			"error":   err.Error(),
 		})
-		return "", fmt.Errorf("failed to exchange code: %w", err)
+		return nil, fmt.Errorf("failed to exchange code: %w", err)
 	}
 
 	// Store the token
@@ -165,7 +174,7 @@ func (c *ServiceOAuthClient) HandleCallback(
 			"user":    stateData.UserEmail,
 			"error":   err.Error(),
 		})
-		return "", fmt.Errorf("failed to store token: %w", err)
+		return nil, fmt.Errorf("failed to store token: %w", err)
 	}
 
 	log.LogInfoWithFields("service_oauth", "OAuth flow completed successfully", map[string]any{
@@ -173,7 +182,10 @@ func (c *ServiceOAuthClient) HandleCallback(
 		"user":    stateData.UserEmail,
 	})
 
-	return stateData.UserEmail, nil
+	return &CallbackResult{
+		UserEmail: stateData.UserEmail,
+		ReturnURL: stateData.ReturnURL,
+	}, nil
 }
 
 // RefreshToken refreshes an OAuth token if needed
