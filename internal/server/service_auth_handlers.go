@@ -186,17 +186,17 @@ func (h *ServiceAuthHandlers) CallbackHandler(w http.ResponseWriter, r *http.Req
 	}
 
 	// Redirect to the page the user started from, or /my/tokens as fallback
-	successMessage := url.QueryEscape(fmt.Sprintf("Successfully connected to %s", displayName))
 	redirectTarget := "/my/tokens"
 	if isValidReturnURL(result.ReturnURL) {
 		redirectTarget = result.ReturnURL
 	}
 
-	separator := "?"
-	if strings.Contains(redirectTarget, "?") {
-		separator = "&"
-	}
-	successURL := fmt.Sprintf("%s%smessage=%s&type=success", redirectTarget, separator, successMessage)
+	u, _ := url.Parse(redirectTarget)
+	q := u.Query()
+	q.Set("message", fmt.Sprintf("Successfully connected to %s", displayName))
+	q.Set("type", "success")
+	u.RawQuery = q.Encode()
+	successURL := u.String()
 	http.Redirect(w, r, successURL, http.StatusFound)
 }
 
