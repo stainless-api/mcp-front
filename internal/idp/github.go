@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 
 	emailutil "github.com/dgellow/mcp-front/internal/emailutil"
@@ -133,7 +134,8 @@ func (p *GitHubProvider) fetchUser(client *http.Client) (*githubUserResponse, er
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("failed to get user: status %d", resp.StatusCode)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return nil, fmt.Errorf("failed to get user: status %d: %s", resp.StatusCode, body)
 	}
 
 	var user githubUserResponse
@@ -152,7 +154,8 @@ func (p *GitHubProvider) fetchPrimaryEmail(client *http.Client) (string, bool, e
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", false, fmt.Errorf("failed to get emails: status %d", resp.StatusCode)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return "", false, fmt.Errorf("failed to get emails: status %d: %s", resp.StatusCode, body)
 	}
 
 	var emails []githubEmailResponse
@@ -184,7 +187,8 @@ func (p *GitHubProvider) fetchOrganizations(client *http.Client) ([]string, erro
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("failed to get organizations: status %d", resp.StatusCode)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return nil, fmt.Errorf("failed to get organizations: status %d: %s", resp.StatusCode, body)
 	}
 
 	var orgs []githubOrgResponse

@@ -68,10 +68,12 @@ func forwardSSEToBackend(ctx context.Context, w http.ResponseWriter, r *http.Req
 	contentType := resp.Header.Get("Content-Type")
 	mediaType, _, _ := mime.ParseMediaType(contentType)
 	if resp.StatusCode != http.StatusOK || mediaType != "text/event-stream" {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		log.LogWarnWithFields("sse_proxy", "Backend did not return SSE response", map[string]any{
 			"status":      resp.StatusCode,
 			"contentType": contentType,
 			"url":         backendURL,
+			"body":        string(body),
 		})
 		jsonwriter.WriteServiceUnavailable(w, "Backend is not an SSE server")
 		return

@@ -299,7 +299,7 @@ func NewBrowserSSOMiddleware(authConfig config.OAuthAuthConfig, idpProvider idp.
 			// Parse session data
 			var sessionData session.BrowserCookie
 			if err := json.NewDecoder(strings.NewReader(decrypted)).Decode(&sessionData); err != nil {
-				// Invalid format
+				log.LogDebug("Invalid session format: %v", err)
 				cookie.ClearSession(w)
 				jsonwriter.WriteUnauthorized(w, "Invalid session")
 				return

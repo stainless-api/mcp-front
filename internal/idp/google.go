@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 
 	emailutil "github.com/dgellow/mcp-front/internal/emailutil"
@@ -87,7 +88,8 @@ func (p *GoogleProvider) UserInfo(ctx context.Context, token *oauth2.Token) (*Id
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("failed to get user info: status %d", resp.StatusCode)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return nil, fmt.Errorf("failed to get user info: status %d: %s", resp.StatusCode, body)
 	}
 
 	var googleUser googleUserInfoResponse
