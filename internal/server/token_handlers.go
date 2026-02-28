@@ -111,7 +111,7 @@ func (h *TokenHandlers) ListTokensHandler(w http.ResponseWriter, r *http.Request
 			if len(serverConfig.ServiceAuths) > 0 {
 				service.AuthType = string(serverConfig.ServiceAuths[0].Type)
 			} else {
-				service.AuthType = "oauth"
+				service.AuthType = "none"
 			}
 		}
 

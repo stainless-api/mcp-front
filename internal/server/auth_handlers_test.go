@@ -436,22 +436,102 @@ func TestBearerTokenAuth(t *testing.T) {
 func TestListTokensAuthType(t *testing.T) {
 	store := storage.NewMemoryStorage()
 	encKey := []byte(strings.Repeat("b", 32))
+	userEmail := "user@example.com"
+
+	// Store an OAuth token for the oauth-connected service
+	err := store.SetUserToken(context.Background(), userEmail, "user-oauth-connected", &storage.StoredToken{
+		Type: storage.TokenTypeOAuth,
+		OAuthData: &storage.OAuthTokenData{
+			AccessToken:  "access-tok",
+			RefreshToken: "refresh-tok",
+			ExpiresAt:    time.Now().Add(time.Hour),
+		},
+	})
+	require.NoError(t, err)
+
+	// Store an expired OAuth token without refresh for the expired service
+	err = store.SetUserToken(context.Background(), userEmail, "user-oauth-expired", &storage.StoredToken{
+		Type: storage.TokenTypeOAuth,
+		OAuthData: &storage.OAuthTokenData{
+			AccessToken: "expired-tok",
+			ExpiresAt:   time.Now().Add(-time.Hour),
+		},
+	})
+	require.NoError(t, err)
+
+	// Store a manual token
+	err = store.SetUserToken(context.Background(), userEmail, "user-manual-with-token", &storage.StoredToken{
+		Type:  storage.TokenTypeManual,
+		Value: "manual-tok",
+	})
+	require.NoError(t, err)
 
 	mcpServers := map[string]*config.MCPClientConfig{
-		"oauth-service": {
+		// Services that DON'T require user tokens (else branch)
+		"svc-no-auth": {
 			URL: "http://backend:8080",
 		},
-		"bearer-service": {
+		"svc-bearer": {
 			URL: "http://backend:8081",
 			ServiceAuths: []config.ServiceAuth{
 				{Type: config.ServiceAuthTypeBearer, Tokens: []string{"tok"}},
+			},
+		},
+		"svc-basic": {
+			URL: "http://backend:8082",
+			ServiceAuths: []config.ServiceAuth{
+				{Type: config.ServiceAuthTypeBasic, Username: "user"},
+			},
+		},
+
+		// Services that DO require user tokens (if RequiresUserToken branch)
+		"user-oauth-connected": {
+			URL:               "http://backend:8083",
+			RequiresUserToken: true,
+			UserAuthentication: &config.UserAuthentication{
+				Type:        config.UserAuthTypeOAuth,
+				DisplayName: "OAuth Service",
+			},
+		},
+		"user-oauth-expired": {
+			URL:               "http://backend:8084",
+			RequiresUserToken: true,
+			UserAuthentication: &config.UserAuthentication{
+				Type:        config.UserAuthTypeOAuth,
+				DisplayName: "Expired OAuth",
+			},
+		},
+		"user-oauth-not-connected": {
+			URL:               "http://backend:8085",
+			RequiresUserToken: true,
+			UserAuthentication: &config.UserAuthentication{
+				Type:        config.UserAuthTypeOAuth,
+				DisplayName: "Unconnected OAuth",
+			},
+		},
+		"user-manual-with-token": {
+			URL:               "http://backend:8086",
+			RequiresUserToken: true,
+			UserAuthentication: &config.UserAuthentication{
+				Type:         config.UserAuthTypeManual,
+				DisplayName:  "Manual Service",
+				Instructions: "Enter your API key",
+			},
+		},
+		"user-manual-no-token": {
+			URL:               "http://backend:8087",
+			RequiresUserToken: true,
+			UserAuthentication: &config.UserAuthentication{
+				Type:         config.UserAuthTypeManual,
+				DisplayName:  "Unconfigured Manual",
+				Instructions: "Paste token here",
 			},
 		},
 	}
 
 	handlers := NewTokenHandlers(store, mcpServers, nil, encKey)
 
-	ctx := context.WithValue(context.Background(), oauth.GetUserContextKey(), "user@example.com")
+	ctx := context.WithValue(context.Background(), oauth.GetUserContextKey(), userEmail)
 	req := httptest.NewRequest(http.MethodGet, "/my/tokens", nil).WithContext(ctx)
 	rec := httptest.NewRecorder()
 
@@ -459,8 +539,21 @@ func TestListTokensAuthType(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 
 	body := rec.Body.String()
-	assert.Contains(t, body, "Server credentials", "bearer-service should show server credentials")
-	assert.Contains(t, body, "OAuth authenticated", "oauth-service should show OAuth authenticated")
+
+	// Service-level auth (no user token required)
+	assert.Contains(t, body, "No auth required", "svc-no-auth")
+	assert.Contains(t, body, "Server credentials", "svc-bearer and svc-basic")
+
+	// User-level OAuth
+	assert.Contains(t, body, "Connected via OAuth", "user-oauth-connected")
+	assert.Contains(t, body, "Token expired", "user-oauth-expired")
+	assert.Contains(t, body, "Connect with Unconnected OAuth", "user-oauth-not-connected")
+
+	// User-level manual
+	assert.Contains(t, body, "Enter your API key", "user-manual-with-token instructions")
+	assert.Contains(t, body, "Paste token here", "user-manual-no-token instructions")
+	assert.Contains(t, body, "Configured", "user-manual-with-token should show configured")
+	assert.Contains(t, body, "Not configured", "user-manual-no-token should show not configured")
 }
 
 func TestUpstreamOAuthStatePreservesPKCE(t *testing.T) {
