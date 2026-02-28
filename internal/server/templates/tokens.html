@@ -214,7 +214,7 @@
                 {{else}}
                     {{if eq .AuthType "oauth"}}
                     <span class="status configured">OAuth authenticated</span>
-                    {{else if eq .AuthType "bearer"}}
+                    {{else if or (eq .AuthType "bearer") (eq .AuthType "basic")}}
                     <span class="status configured">Server credentials</span>
                     {{else}}
                     <span class="status configured">No auth required</span>
@@ -279,7 +279,7 @@
             <div class="instructions">
                 {{if eq .AuthType "oauth"}}
                 <p>This service is authenticated via OAuth. Your access is managed through your Google account.</p>
-                {{else if eq .AuthType "bearer"}}
+                {{else if or (eq .AuthType "bearer") (eq .AuthType "basic")}}
                 <p>This service uses server-side API credentials. No personal token required.</p>
                 {{else}}
                 <p>This service doesn't require authentication.</p>
