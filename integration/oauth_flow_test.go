@@ -388,6 +388,7 @@ func TestStateParameterHandling(t *testing.T) {
 				"code_challenge":        {"test-challenge"},
 				"code_challenge_method": {"S256"},
 				"scope":                 {"read write"},
+				"resource":              {"http://localhost:8080/postgres"},
 			}
 			if tt.state != "" {
 				params.Set("state", tt.state)

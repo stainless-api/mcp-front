@@ -149,6 +149,9 @@
                 {{if eq .Status "connected"}}
                     <span class="service-name">{{.DisplayName}}</span>
                     <span class="connected">✓ Connected</span>
+                {{else if eq .Status "expired"}}
+                    <span class="service-name">{{.DisplayName}}</span>
+                    <a href="{{.ConnectURL}}" class="btn btn-connect">Reconnect</a>
                 {{else if eq .Status "error"}}
                     <div>
                         <span class="service-name">{{.DisplayName}}</span>

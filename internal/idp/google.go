@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	emailutil "github.com/dgellow/mcp-front/internal/emailutil"
+	"github.com/dgellow/mcp-front/internal/ioutil"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 )
@@ -87,7 +88,8 @@ func (p *GoogleProvider) UserInfo(ctx context.Context, token *oauth2.Token) (*Id
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("failed to get user info: status %d", resp.StatusCode)
+		body := ioutil.ReadLimited(resp.Body, 1024)
+		return nil, fmt.Errorf("failed to get user info: status %d: %s", resp.StatusCode, body)
 	}
 
 	var googleUser googleUserInfoResponse

@@ -188,6 +188,11 @@
         .delete-form {
             margin-top: 10px;
         }
+
+        .token-expired {
+            color: #c62828;
+            font-size: 14px;
+        }
     </style>
 </head>
 <body>
@@ -214,7 +219,7 @@
                 {{else}}
                     {{if eq .AuthType "oauth"}}
                     <span class="status configured">OAuth authenticated</span>
-                    {{else if eq .AuthType "bearer"}}
+                    {{else if or (eq .AuthType "bearer") (eq .AuthType "basic")}}
                     <span class="status configured">Server credentials</span>
                     {{else}}
                     <span class="status configured">No auth required</span>
@@ -231,17 +236,24 @@
             </div>
             
             {{if .SupportsOAuth}}
-                {{if .IsOAuthConnected}}
+                {{if and .IsOAuthConnected .IsExpired}}
+                <div class="oauth-status">
+                    <span class="token-expired">⚠ Token expired</span>
+                    <a href="{{.ConnectURL}}">
+                        <button type="button" class="oauth">Reconnect {{.DisplayName}}</button>
+                    </a>
+                </div>
+                {{else if .IsOAuthConnected}}
                 <div class="oauth-status">
                     <span class="oauth-connected">✓ Connected via OAuth</span>
-                    <form method="POST" action="/oauth/disconnect" style="display: inline;">
+                    <form method="POST" action="/oauth/disconnect">
                         <input type="hidden" name="service" value="{{.Name}}">
                         <button type="submit" class="danger">Disconnect {{.DisplayName}}</button>
                     </form>
                 </div>
                 {{else}}
                 <div class="oauth-status">
-                    <a href="{{.ConnectURL}}" style="display: inline;">
+                    <a href="{{.ConnectURL}}">
                         <button type="button" class="oauth">Connect with {{.DisplayName}}</button>
                     </a>
                 </div>
@@ -272,7 +284,7 @@
             <div class="instructions">
                 {{if eq .AuthType "oauth"}}
                 <p>This service is authenticated via OAuth. Your access is managed through your Google account.</p>
-                {{else if eq .AuthType "bearer"}}
+                {{else if or (eq .AuthType "bearer") (eq .AuthType "basic")}}
                 <p>This service uses server-side API credentials. No personal token required.</p>
                 {{else}}
                 <p>This service doesn't require authentication.</p>

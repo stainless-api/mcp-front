@@ -65,11 +65,15 @@ func (h *ServiceAuthHandlers) ConnectHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	// Capture return URL so user returns to the page they started from
+	returnURL := r.URL.Query().Get("return")
+
 	// Start OAuth flow - service OAuth always returns to interstitial page
 	authURL, err := h.oauthClient.StartOAuthFlow(
 		r.Context(),
 		userEmail,
 		serviceName,
+		returnURL,
 		serviceConfig,
 	)
 	if err != nil {
@@ -140,7 +144,7 @@ func (h *ServiceAuthHandlers) CallbackHandler(w http.ResponseWriter, r *http.Req
 	}
 
 	// Handle callback
-	userEmail, err := h.oauthClient.HandleCallback(
+	result, err := h.oauthClient.HandleCallback(
 		r.Context(),
 		serviceName,
 		code,
@@ -172,7 +176,7 @@ func (h *ServiceAuthHandlers) CallbackHandler(w http.ResponseWriter, r *http.Req
 	// Log successful connection
 	log.LogInfoWithFields("oauth_handlers", "OAuth connection successful", map[string]any{
 		"service": serviceName,
-		"user":    userEmail,
+		"user":    result.UserEmail,
 	})
 
 	// Display name for success message
@@ -181,10 +185,18 @@ func (h *ServiceAuthHandlers) CallbackHandler(w http.ResponseWriter, r *http.Req
 		displayName = serviceConfig.UserAuthentication.DisplayName
 	}
 
-	// Service OAuth success redirects to /my/tokens with success message
-	successURL := fmt.Sprintf("/my/tokens?message=%s&type=success",
-		url.QueryEscape(fmt.Sprintf("Successfully connected to %s", displayName)),
-	)
+	// Redirect to the page the user started from, or /my/tokens as fallback
+	successMessage := url.QueryEscape(fmt.Sprintf("Successfully connected to %s", displayName))
+	redirectTarget := "/my/tokens"
+	if isValidReturnURL(result.ReturnURL) {
+		redirectTarget = result.ReturnURL
+	}
+
+	separator := "?"
+	if strings.Contains(redirectTarget, "?") {
+		separator = "&"
+	}
+	successURL := fmt.Sprintf("%s%smessage=%s&type=success", redirectTarget, separator, successMessage)
 	http.Redirect(w, r, successURL, http.StatusFound)
 }
 
@@ -270,4 +282,9 @@ func (h *ServiceAuthHandlers) DisconnectHandler(w http.ResponseWriter, r *http.R
 	}
 
 	redirectWithMessage(w, r, fmt.Sprintf("Disconnected from %s", displayName), "success")
+}
+
+// isValidReturnURL checks that a return URL is a safe relative path (prevents open redirects)
+func isValidReturnURL(u string) bool {
+	return u != "" && strings.HasPrefix(u, "/") && !strings.HasPrefix(u, "//")
 }

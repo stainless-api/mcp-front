@@ -35,6 +35,7 @@ type ServiceTokenData struct {
 	AuthType         string // "oauth", "bearer", or "none"
 	SupportsOAuth    bool   // Whether this service supports OAuth authentication
 	IsOAuthConnected bool   // Whether the user has connected OAuth for this service
+	IsExpired        bool   // Whether the OAuth token has expired without a refresh token
 	ConnectURL       string // Pre-generated OAuth connect URL
 }
 
@@ -51,7 +52,7 @@ type ServicesPageData struct {
 type ServiceSelectionData struct {
 	Name        string
 	DisplayName string
-	Status      string // "not_connected", "connected", "error"
+	Status      string // "not_connected", "connected", "expired", "error"
 	ErrorMsg    string
 	ConnectURL  string // Pre-generated OAuth connect URL
 }

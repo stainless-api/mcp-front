@@ -324,7 +324,7 @@ func buildHTTPHandler(
 			mcpRecover,
 		}
 
-		tokenHandlers := server.NewTokenHandlers(storage, cfg.MCPServers, true, serviceOAuthClient, []byte(authConfig.EncryptionKey))
+		tokenHandlers := server.NewTokenHandlers(storage, cfg.MCPServers, serviceOAuthClient, []byte(authConfig.EncryptionKey))
 
 		mux.Handle(route("/my/tokens"), server.ChainMiddleware(http.HandlerFunc(tokenHandlers.ListTokensHandler), tokenMiddleware...))
 		mux.Handle(route("/my/tokens/set"), server.ChainMiddleware(http.HandlerFunc(tokenHandlers.SetTokenHandler), tokenMiddleware...))

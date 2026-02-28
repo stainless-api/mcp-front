@@ -36,6 +36,7 @@ func TestStartOAuthFlow(t *testing.T) {
 		context.Background(),
 		"user@example.com",
 		"test-service",
+		"/my/tokens",
 		serviceConfig,
 	)
 
@@ -84,6 +85,7 @@ func TestHandleCallback(t *testing.T) {
 		context.Background(),
 		"user@example.com",
 		"test-service",
+		"/oauth/services?state=abc",
 		serviceConfig,
 	)
 	require.NoError(t, err)
@@ -95,7 +97,7 @@ func TestHandleCallback(t *testing.T) {
 	require.NotEmpty(t, state)
 
 	// Handle callback
-	userEmail, err := client.HandleCallback(
+	result, err := client.HandleCallback(
 		context.Background(),
 		"test-service",
 		"test-code",
@@ -104,7 +106,8 @@ func TestHandleCallback(t *testing.T) {
 	)
 
 	require.NoError(t, err)
-	assert.Equal(t, "user@example.com", userEmail)
+	assert.Equal(t, "user@example.com", result.UserEmail)
+	assert.Equal(t, "/oauth/services?state=abc", result.ReturnURL)
 
 	// Verify token was stored
 	storedToken, err := store.GetUserToken(context.Background(), "user@example.com", "test-service")

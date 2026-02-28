@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -128,7 +130,7 @@ func TestAuthenticationBoundaries(t *testing.T) {
 		serviceOAuthClient,
 	)
 
-	tokenHandlers := NewTokenHandlers(store, map[string]*config.MCPClientConfig{}, true, serviceOAuthClient, []byte(oauthConfig.EncryptionKey))
+	tokenHandlers := NewTokenHandlers(store, map[string]*config.MCPClientConfig{}, serviceOAuthClient, []byte(oauthConfig.EncryptionKey))
 
 	// Build mux with middlewares
 	mux := http.NewServeMux()
@@ -429,6 +431,188 @@ func TestBearerTokenAuth(t *testing.T) {
 			assert.Equal(t, tt.expectStatus, rec.Code)
 		})
 	}
+}
+
+func TestListTokensAuthType(t *testing.T) {
+	store := storage.NewMemoryStorage()
+	encKey := []byte(strings.Repeat("b", 32))
+	userEmail := "user@example.com"
+
+	// Store an OAuth token for the oauth-connected service
+	err := store.SetUserToken(context.Background(), userEmail, "user-oauth-connected", &storage.StoredToken{
+		Type: storage.TokenTypeOAuth,
+		OAuthData: &storage.OAuthTokenData{
+			AccessToken:  "access-tok",
+			RefreshToken: "refresh-tok",
+			ExpiresAt:    time.Now().Add(time.Hour),
+		},
+	})
+	require.NoError(t, err)
+
+	// Store an expired OAuth token without refresh for the expired service
+	err = store.SetUserToken(context.Background(), userEmail, "user-oauth-expired", &storage.StoredToken{
+		Type: storage.TokenTypeOAuth,
+		OAuthData: &storage.OAuthTokenData{
+			AccessToken: "expired-tok",
+			ExpiresAt:   time.Now().Add(-time.Hour),
+		},
+	})
+	require.NoError(t, err)
+
+	// Store a manual token
+	err = store.SetUserToken(context.Background(), userEmail, "user-manual-with-token", &storage.StoredToken{
+		Type:  storage.TokenTypeManual,
+		Value: "manual-tok",
+	})
+	require.NoError(t, err)
+
+	mcpServers := map[string]*config.MCPClientConfig{
+		// Services that DON'T require user tokens (else branch)
+		"svc-no-auth": {
+			URL: "http://backend:8080",
+		},
+		"svc-bearer": {
+			URL: "http://backend:8081",
+			ServiceAuths: []config.ServiceAuth{
+				{Type: config.ServiceAuthTypeBearer, Tokens: []string{"tok"}},
+			},
+		},
+		"svc-basic": {
+			URL: "http://backend:8082",
+			ServiceAuths: []config.ServiceAuth{
+				{Type: config.ServiceAuthTypeBasic, Username: "user"},
+			},
+		},
+
+		// Services that DO require user tokens (if RequiresUserToken branch)
+		"user-oauth-connected": {
+			URL:               "http://backend:8083",
+			RequiresUserToken: true,
+			UserAuthentication: &config.UserAuthentication{
+				Type:        config.UserAuthTypeOAuth,
+				DisplayName: "OAuth Service",
+			},
+		},
+		"user-oauth-expired": {
+			URL:               "http://backend:8084",
+			RequiresUserToken: true,
+			UserAuthentication: &config.UserAuthentication{
+				Type:        config.UserAuthTypeOAuth,
+				DisplayName: "Expired OAuth",
+			},
+		},
+		"user-oauth-not-connected": {
+			URL:               "http://backend:8085",
+			RequiresUserToken: true,
+			UserAuthentication: &config.UserAuthentication{
+				Type:        config.UserAuthTypeOAuth,
+				DisplayName: "Unconnected OAuth",
+			},
+		},
+		"user-manual-with-token": {
+			URL:               "http://backend:8086",
+			RequiresUserToken: true,
+			UserAuthentication: &config.UserAuthentication{
+				Type:         config.UserAuthTypeManual,
+				DisplayName:  "Manual Service",
+				Instructions: "Enter your API key",
+			},
+		},
+		"user-manual-no-token": {
+			URL:               "http://backend:8087",
+			RequiresUserToken: true,
+			UserAuthentication: &config.UserAuthentication{
+				Type:         config.UserAuthTypeManual,
+				DisplayName:  "Unconfigured Manual",
+				Instructions: "Paste token here",
+			},
+		},
+	}
+
+	handlers := NewTokenHandlers(store, mcpServers, nil, encKey)
+
+	ctx := context.WithValue(context.Background(), oauth.GetUserContextKey(), userEmail)
+	req := httptest.NewRequest(http.MethodGet, "/my/tokens", nil).WithContext(ctx)
+	rec := httptest.NewRecorder()
+
+	handlers.ListTokensHandler(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	body := rec.Body.String()
+
+	// Service-level auth (no user token required)
+	assert.Contains(t, body, "No auth required", "svc-no-auth")
+	assert.Contains(t, body, "Server credentials", "svc-bearer and svc-basic")
+
+	// User-level OAuth
+	assert.Contains(t, body, "Connected via OAuth", "user-oauth-connected")
+	assert.Contains(t, body, "Token expired", "user-oauth-expired")
+	assert.Contains(t, body, "Connect with Unconnected OAuth", "user-oauth-not-connected")
+
+	// User-level manual
+	assert.Contains(t, body, "Enter your API key", "user-manual-with-token instructions")
+	assert.Contains(t, body, "Paste token here", "user-manual-no-token instructions")
+	assert.Contains(t, body, "Configured", "user-manual-with-token should show configured")
+	assert.Contains(t, body, "Not configured", "user-manual-no-token should show not configured")
+}
+
+func TestUpstreamOAuthStatePreservesPKCE(t *testing.T) {
+	oauthConfig := config.OAuthAuthConfig{
+		Issuer:        "https://test.example.com",
+		JWTSecret:     config.Secret(strings.Repeat("a", 32)),
+		EncryptionKey: config.Secret(strings.Repeat("b", 32)),
+		TokenTTL:      time.Hour,
+	}
+
+	store := storage.NewMemoryStorage()
+	jwtSecret, err := oauth.GenerateJWTSecret(string(oauthConfig.JWTSecret))
+	require.NoError(t, err)
+	authServer, err := oauth.NewAuthorizationServer(oauth.AuthorizationServerConfig{
+		JWTSecret:      jwtSecret,
+		Issuer:         oauthConfig.Issuer,
+		AccessTokenTTL: oauthConfig.TokenTTL,
+	})
+	require.NoError(t, err)
+	sessionEncryptor, err := oauth.NewSessionEncryptor([]byte(oauthConfig.EncryptionKey))
+	require.NoError(t, err)
+
+	handlers := NewAuthHandlers(
+		authServer,
+		oauthConfig,
+		&mockIDPProvider{},
+		store,
+		sessionEncryptor,
+		map[string]*config.MCPClientConfig{},
+		nil,
+	)
+
+	verifier := "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+	h := sha256.Sum256([]byte(verifier))
+	challenge := base64.RawURLEncoding.EncodeToString(h[:])
+
+	params := &oauth.AuthorizeParams{
+		ClientID:      "test-client",
+		RedirectURI:   "http://localhost/callback",
+		State:         "client-state",
+		Scopes:        []string{"read"},
+		Audience:      []string{"https://test.example.com/postgres"},
+		PKCEChallenge: challenge,
+	}
+
+	identity := idp.Identity{
+		Email:  "user@example.com",
+		Domain: "example.com",
+	}
+
+	signed, err := handlers.signUpstreamOAuthState(params, identity)
+	require.NoError(t, err)
+
+	restored, err := handlers.verifyUpstreamOAuthState(signed)
+	require.NoError(t, err)
+
+	assert.Equal(t, identity.Email, restored.Identity.Email)
+	assert.Equal(t, *params, restored.Params,
+		"all AuthorizeParams fields must survive the upstream OAuth state round-trip")
 }
 
 func TestValidateAccess(t *testing.T) {
