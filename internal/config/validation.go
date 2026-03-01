@@ -255,6 +255,17 @@ func validateServersStructure(rawConfig map[string]any, result *ValidationResult
 		}
 	}
 
+	aggregateNames := make(map[string]bool)
+	for name, server := range servers {
+		srv, ok := server.(map[string]any)
+		if !ok {
+			continue
+		}
+		if t, ok := srv["type"].(string); ok && t == "aggregate" {
+			aggregateNames[name] = true
+		}
+	}
+
 	for name, server := range servers {
 		srv, ok := server.(map[string]any)
 		if !ok {
@@ -262,6 +273,19 @@ func validateServersStructure(rawConfig map[string]any, result *ValidationResult
 				Path:    fmt.Sprintf("mcpServers.%s", name),
 				Message: "server must be an object",
 			})
+			continue
+		}
+
+		if strings.Contains(name, ".") {
+			result.Errors = append(result.Errors, ValidationError{
+				Path:    fmt.Sprintf("mcpServers.%s", name),
+				Message: "server name cannot contain '.' (reserved for tool namespacing)",
+			})
+		}
+
+		serverType, _ := srv["type"].(string)
+		if serverType == "aggregate" {
+			validateAggregateServerStructure(name, srv, servers, aggregateNames, result)
 			continue
 		}
 
@@ -330,6 +354,66 @@ func validateServersStructure(rawConfig map[string]any, result *ValidationResult
 				requiresUserToken = requiresToken
 			}
 			validateServiceAuths(serviceAuths, name, requiresUserToken, result)
+		}
+	}
+}
+
+// validateAggregateServerStructure checks aggregate server configuration
+func validateAggregateServerStructure(name string, srv map[string]any, allServers map[string]any, aggregateNames map[string]bool, result *ValidationResult) {
+	path := fmt.Sprintf("mcpServers.%s", name)
+
+	// Reject direct-only fields
+	directOnlyFields := []string{"command", "url", "inline", "requiresUserToken", "userAuthentication"}
+	for _, field := range directOnlyFields {
+		if _, ok := srv[field]; ok {
+			result.Errors = append(result.Errors, ValidationError{
+				Path:    path + "." + field,
+				Message: fmt.Sprintf("%s is not allowed on aggregate servers", field),
+			})
+		}
+	}
+
+	// Validate transportType if present
+	if tt, ok := srv["transportType"].(string); ok {
+		if tt != "sse" && tt != "streamable-http" {
+			result.Errors = append(result.Errors, ValidationError{
+				Path:    path + ".transportType",
+				Message: "aggregate servers only support 'sse' or 'streamable-http' transport",
+			})
+		}
+	}
+
+	// Validate servers references
+	if serversList, ok := srv["servers"].([]any); ok {
+		for i, s := range serversList {
+			ref, ok := s.(string)
+			if !ok {
+				result.Errors = append(result.Errors, ValidationError{
+					Path:    fmt.Sprintf("%s.servers[%d]", path, i),
+					Message: "server reference must be a string",
+				})
+				continue
+			}
+			if ref == name {
+				result.Errors = append(result.Errors, ValidationError{
+					Path:    fmt.Sprintf("%s.servers[%d]", path, i),
+					Message: "aggregate cannot reference itself",
+				})
+				continue
+			}
+			if aggregateNames[ref] {
+				result.Errors = append(result.Errors, ValidationError{
+					Path:    fmt.Sprintf("%s.servers[%d]", path, i),
+					Message: fmt.Sprintf("aggregate cannot reference another aggregate '%s'", ref),
+				})
+				continue
+			}
+			if _, exists := allServers[ref]; !exists {
+				result.Errors = append(result.Errors, ValidationError{
+					Path:    fmt.Sprintf("%s.servers[%d]", path, i),
+					Message: fmt.Sprintf("server '%s' does not exist", ref),
+				})
+			}
 		}
 	}
 }

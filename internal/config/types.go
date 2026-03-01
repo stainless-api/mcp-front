@@ -37,6 +37,20 @@ const (
 	MCPClientTypeInline     MCPClientType = "inline"
 )
 
+// ServerType represents whether a server is a direct backend or an aggregate
+type ServerType string
+
+const (
+	ServerTypeDirect    ServerType = "direct"
+	ServerTypeAggregate ServerType = "aggregate"
+)
+
+// DiscoveryConfig configures tool discovery for aggregate servers
+type DiscoveryConfig struct {
+	Timeout  time.Duration
+	CacheTTL time.Duration
+}
+
 // AuthKind represents the type of authentication
 type AuthKind string
 
@@ -155,6 +169,7 @@ type UserAuthentication struct {
 // User token references using {"$userToken": "...{{token}}..."} follow the same
 // pattern but are resolved at request time with the authenticated user's token.
 type MCPClientConfig struct {
+	Type          ServerType    `json:"type,omitempty"`
 	TransportType MCPClientType `json:"transportType,omitempty"`
 
 	// Stdio
@@ -184,11 +199,20 @@ type MCPClientConfig struct {
 
 	// Inline MCP server configuration
 	InlineConfig json.RawMessage `json:"inline,omitempty"`
+
+	// Aggregate server configuration
+	Servers   []string         `json:"servers,omitempty"`
+	Discovery *DiscoveryConfig `json:"discovery,omitempty"`
 }
 
 // IsStdio returns true if this is a stdio-based MCP server
 func (c *MCPClientConfig) IsStdio() bool {
 	return c.TransportType == MCPClientTypeStdio
+}
+
+// IsAggregate returns true if this is an aggregate server
+func (c *MCPClientConfig) IsAggregate() bool {
+	return c.Type == ServerTypeAggregate
 }
 
 // SessionConfig represents session management configuration

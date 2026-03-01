@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/dgellow/mcp-front/internal/log"
@@ -125,9 +126,45 @@ func ValidateConfig(config *Config) error {
 
 	hasOAuth := config.Proxy.Auth != nil
 
+	// Collect aggregate and non-aggregate names for cross-validation
+	nonAggregateNames := make([]string, 0)
+	aggregateNames := make(map[string]bool)
 	for name, server := range config.MCPServers {
+		if server.IsAggregate() {
+			aggregateNames[name] = true
+		} else {
+			nonAggregateNames = append(nonAggregateNames, name)
+		}
+	}
+	sort.Strings(nonAggregateNames)
+
+	for name, server := range config.MCPServers {
+		if strings.Contains(name, ".") {
+			return fmt.Errorf("server name '%s' cannot contain '.' (reserved for tool namespacing)", name)
+		}
+
 		if err := validateMCPServer(name, server); err != nil {
 			return err
+		}
+
+		// Resolve aggregate default servers and validate references
+		if server.IsAggregate() {
+			if len(server.Servers) == 0 {
+				serversCopy := make([]string, len(nonAggregateNames))
+				copy(serversCopy, nonAggregateNames)
+				server.Servers = serversCopy
+			}
+			for _, ref := range server.Servers {
+				if ref == name {
+					return fmt.Errorf("aggregate server '%s' cannot reference itself", name)
+				}
+				if aggregateNames[ref] {
+					return fmt.Errorf("aggregate server '%s' cannot reference another aggregate '%s'", name, ref)
+				}
+				if _, exists := config.MCPServers[ref]; !exists {
+					return fmt.Errorf("aggregate server '%s' references nonexistent server '%s'", name, ref)
+				}
+			}
 		}
 
 		// Validate that user tokens require OAuth
@@ -225,6 +262,13 @@ func validateOAuthConfig(oauth *OAuthAuthConfig) error {
 }
 
 func validateMCPServer(name string, server *MCPClientConfig) error {
+	if server.IsAggregate() {
+		if server.TransportType != MCPClientTypeSSE && server.TransportType != MCPClientTypeStreamable {
+			return fmt.Errorf("aggregate server %s must use 'sse' or 'streamable-http' transport, got '%s'", name, server.TransportType)
+		}
+		return nil
+	}
+
 	// Transport type is required
 	if server.TransportType == "" {
 		return fmt.Errorf("server %s must specify transportType (stdio, sse, streamable-http, or inline)", name)

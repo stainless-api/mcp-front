@@ -616,3 +616,164 @@ func TestValidateFile_ImprovedErrorMessages(t *testing.T) {
 func contains(s, substr string) bool {
 	return strings.Contains(s, substr)
 }
+
+func TestValidateFile_AggregateServer(t *testing.T) {
+	tests := []struct {
+		name       string
+		config     string
+		wantErrors []string
+	}{
+		{
+			name: "valid_aggregate",
+			config: `{
+				"version": "v0.0.1-DEV_EDITION",
+				"proxy": {
+					"baseURL": "http://localhost:8080",
+					"addr": ":8080"
+				},
+				"mcpServers": {
+					"postgres": {
+						"transportType": "stdio",
+						"command": "pg-mcp"
+					},
+					"mcp": {
+						"type": "aggregate",
+						"servers": ["postgres"]
+					}
+				}
+			}`,
+			wantErrors: nil,
+		},
+		{
+			name: "server_name_with_dot",
+			config: `{
+				"version": "v0.0.1-DEV_EDITION",
+				"proxy": {
+					"baseURL": "http://localhost:8080",
+					"addr": ":8080"
+				},
+				"mcpServers": {
+					"my.server": {
+						"transportType": "stdio",
+						"command": "test"
+					}
+				}
+			}`,
+			wantErrors: []string{"cannot contain '.'"},
+		},
+		{
+			name: "aggregate_rejects_direct_fields",
+			config: `{
+				"version": "v0.0.1-DEV_EDITION",
+				"proxy": {
+					"baseURL": "http://localhost:8080",
+					"addr": ":8080"
+				},
+				"mcpServers": {
+					"mcp": {
+						"type": "aggregate",
+						"command": "test",
+						"url": "http://localhost"
+					}
+				}
+			}`,
+			wantErrors: []string{"command is not allowed on aggregate", "url is not allowed on aggregate"},
+		},
+		{
+			name: "aggregate_self_reference",
+			config: `{
+				"version": "v0.0.1-DEV_EDITION",
+				"proxy": {
+					"baseURL": "http://localhost:8080",
+					"addr": ":8080"
+				},
+				"mcpServers": {
+					"mcp": {
+						"type": "aggregate",
+						"servers": ["mcp"]
+					}
+				}
+			}`,
+			wantErrors: []string{"cannot reference itself"},
+		},
+		{
+			name: "aggregate_references_other_aggregate",
+			config: `{
+				"version": "v0.0.1-DEV_EDITION",
+				"proxy": {
+					"baseURL": "http://localhost:8080",
+					"addr": ":8080"
+				},
+				"mcpServers": {
+					"agg1": {
+						"type": "aggregate"
+					},
+					"agg2": {
+						"type": "aggregate",
+						"servers": ["agg1"]
+					}
+				}
+			}`,
+			wantErrors: []string{"cannot reference another aggregate"},
+		},
+		{
+			name: "aggregate_references_nonexistent",
+			config: `{
+				"version": "v0.0.1-DEV_EDITION",
+				"proxy": {
+					"baseURL": "http://localhost:8080",
+					"addr": ":8080"
+				},
+				"mcpServers": {
+					"mcp": {
+						"type": "aggregate",
+						"servers": ["nonexistent"]
+					}
+				}
+			}`,
+			wantErrors: []string{"does not exist"},
+		},
+		{
+			name: "aggregate_invalid_transport",
+			config: `{
+				"version": "v0.0.1-DEV_EDITION",
+				"proxy": {
+					"baseURL": "http://localhost:8080",
+					"addr": ":8080"
+				},
+				"mcpServers": {
+					"mcp": {
+						"type": "aggregate",
+						"transportType": "stdio"
+					}
+				}
+			}`,
+			wantErrors: []string{"only support 'sse' or 'streamable-http'"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpFile := filepath.Join(t.TempDir(), "config.json")
+			require.NoError(t, os.WriteFile(tmpFile, []byte(tt.config), 0644))
+
+			result, err := ValidateFile(tmpFile)
+			require.NoError(t, err)
+
+			if tt.wantErrors == nil {
+				assert.True(t, result.IsValid(), "Expected no errors, got: %v", result.Errors)
+			} else {
+				for _, wantErr := range tt.wantErrors {
+					found := false
+					for _, gotErr := range result.Errors {
+						if strings.Contains(gotErr.Message, wantErr) {
+							found = true
+							break
+						}
+					}
+					assert.True(t, found, "Expected error containing '%s', got: %v", wantErr, result.Errors)
+				}
+			}
+		})
+	}
+}
