@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"strings"
@@ -92,7 +94,10 @@ func (s *Server) HandleToolCall(ctx context.Context, toolName string, args map[s
 		}
 	}
 
-	// Set up command with args as-is (already resolved by config parser)
+	if tool.HTTP != nil {
+		return s.executeHTTP(ctx, tool, args)
+	}
+
 	cmd := exec.CommandContext(ctx, tool.Command, tool.Args...)
 
 	// Set environment: parent first, then custom (so custom wins)
@@ -137,4 +142,44 @@ func (s *Server) HandleToolCall(ctx context.Context, toolName string, args map[s
 		"output": stdout.String(),
 		"stderr": stderr.String(),
 	}, nil
+}
+
+func (s *Server) executeHTTP(ctx context.Context, tool ResolvedToolConfig, args map[string]any) (any, error) {
+	body, err := json.Marshal(args)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal arguments: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, tool.HTTP.Method, tool.HTTP.URL, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	for k, v := range tool.HTTP.Headers {
+		req.Header.Set(k, v)
+	}
+
+	log.LogDebug("Executing inline HTTP tool: %s %s", tool.HTTP.Method, tool.HTTP.URL)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("HTTP request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var result any
+	if err := json.Unmarshal(respBody, &result); err == nil {
+		return result, nil
+	}
+
+	return map[string]any{"output": string(respBody)}, nil
 }

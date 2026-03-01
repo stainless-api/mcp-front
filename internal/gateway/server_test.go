@@ -83,7 +83,7 @@ func newTestServer(mocks map[string]*mockMCPClient) *Server {
 		return m, nil
 	}
 
-	return newServer(configs, nil, "http://localhost:8080", creator)
+	return newServer(configs, nil, nil, "http://localhost:8080", creator)
 }
 
 func TestServer_HandleInitialize(t *testing.T) {
@@ -141,7 +141,7 @@ func TestServer_HandleToolsList_Caching(t *testing.T) {
 		return mock, nil
 	}
 
-	s := newServer(configs, nil, "http://localhost:8080", creator)
+	s := newServer(configs, nil, nil, "http://localhost:8080", creator)
 	ctx := context.Background()
 
 	tools1, err := s.HandleToolsList(ctx, "user@example.com")
@@ -204,7 +204,7 @@ func TestServer_HandleToolsList_BackendFailure(t *testing.T) {
 		return goodMock, nil
 	}
 
-	s := newServer(configs, nil, "http://localhost:8080", creator)
+	s := newServer(configs, nil, nil, "http://localhost:8080", creator)
 
 	tools, err := s.HandleToolsList(context.Background(), "user@example.com")
 	require.NoError(t, err)
@@ -250,7 +250,7 @@ func TestServer_UserTokenRequired(t *testing.T) {
 		return mock, nil
 	}
 
-	s := newServer(configs, getUserToken, "http://localhost:8080", creator)
+	s := newServer(configs, nil, getUserToken, "http://localhost:8080", creator)
 
 	tools, err := s.HandleToolsList(context.Background(), "user@example.com")
 	require.NoError(t, err)

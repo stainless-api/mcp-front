@@ -58,6 +58,37 @@ func ResolveConfig(rawConfig json.RawMessage) (Config, []ResolvedToolConfig, err
 			resolved.Env = values
 		}
 
+		if tool.HTTP != nil {
+			resolvedHTTP := &ResolvedHTTPConfig{
+				Method:  tool.HTTP.Method,
+				Headers: make(map[string]string),
+			}
+
+			urlValues, urlNeedsToken, err := config.ParseConfigValueSlice([]json.RawMessage{tool.HTTP.URL})
+			if err != nil {
+				return Config{}, nil, fmt.Errorf("failed to resolve HTTP URL for tool %s: %w", tool.Name, err)
+			}
+			if urlNeedsToken[0] {
+				return Config{}, nil, fmt.Errorf("user token references not supported in inline tools (HTTP URL of tool %s)", tool.Name)
+			}
+			resolvedHTTP.URL = urlValues[0]
+
+			if len(tool.HTTP.Headers) > 0 {
+				headerValues, headerNeedsToken, err := config.ParseConfigValueMap(tool.HTTP.Headers)
+				if err != nil {
+					return Config{}, nil, fmt.Errorf("failed to resolve HTTP headers for tool %s: %w", tool.Name, err)
+				}
+				for k, needs := range headerNeedsToken {
+					if needs {
+						return Config{}, nil, fmt.Errorf("user token references not supported in inline tools (HTTP header %s of tool %s)", k, tool.Name)
+					}
+				}
+				resolvedHTTP.Headers = headerValues
+			}
+
+			resolved.HTTP = resolvedHTTP
+		}
+
 		// Validate timeout format if specified
 		if resolved.Timeout != "" {
 			if _, err := time.ParseDuration(resolved.Timeout); err != nil {

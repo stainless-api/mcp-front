@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
@@ -22,8 +23,20 @@ type UserTokenFunc func(ctx context.Context, userEmail, serviceName string, serv
 
 type TransportCreator func(name string, conf *config.MCPClientConfig) (client.MCPClientInterface, error)
 
+type InlineToolProvider interface {
+	ListInlineTools() []InlineTool
+	CallInlineTool(ctx context.Context, name string, args map[string]any) (any, error)
+}
+
+type InlineTool struct {
+	Name        string
+	Description string
+	InputSchema json.RawMessage
+}
+
 type Server struct {
 	serverConfigs   map[string]*config.MCPClientConfig
+	inlineProviders map[string]InlineToolProvider
 	getUserToken    UserTokenFunc
 	baseURL         string
 	createTransport TransportCreator
@@ -52,20 +65,23 @@ type cachedTool struct {
 
 func NewServer(
 	serverConfigs map[string]*config.MCPClientConfig,
+	inlineProviders map[string]InlineToolProvider,
 	getUserToken UserTokenFunc,
 	baseURL string,
 ) *Server {
-	return newServer(serverConfigs, getUserToken, baseURL, defaultCreateTransport)
+	return newServer(serverConfigs, inlineProviders, getUserToken, baseURL, defaultCreateTransport)
 }
 
 func newServer(
 	serverConfigs map[string]*config.MCPClientConfig,
+	inlineProviders map[string]InlineToolProvider,
 	getUserToken UserTokenFunc,
 	baseURL string,
 	createTransport TransportCreator,
 ) *Server {
 	return &Server{
 		serverConfigs:   serverConfigs,
+		inlineProviders: inlineProviders,
 		getUserToken:    getUserToken,
 		baseURL:         baseURL,
 		createTransport: createTransport,
@@ -132,6 +148,10 @@ func (s *Server) HandleToolCall(ctx context.Context, userEmail string, namespace
 		return nil, fmt.Errorf("invalid tool name: %w", err)
 	}
 
+	if provider, ok := s.inlineProviders[serviceName]; ok {
+		return s.callInlineTool(ctx, provider, toolName, args)
+	}
+
 	if _, ok := s.serverConfigs[serviceName]; !ok {
 		return nil, fmt.Errorf("unknown service: %s", serviceName)
 	}
@@ -148,6 +168,36 @@ func (s *Server) HandleToolCall(ctx context.Context, userEmail string, namespace
 	req.Params.Arguments = args
 
 	return backend.client.CallTool(ctx, req)
+}
+
+func (s *Server) callInlineTool(ctx context.Context, provider InlineToolProvider, toolName string, args map[string]any) (*mcp.CallToolResult, error) {
+	result, err := provider.CallInlineTool(ctx, toolName, args)
+	if err != nil {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{mcp.TextContent{Type: "text", Text: err.Error()}},
+			IsError: true,
+		}, nil
+	}
+
+	text, err := formatInlineResult(result)
+	if err != nil {
+		return nil, err
+	}
+
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{mcp.TextContent{Type: "text", Text: text}},
+	}, nil
+}
+
+func formatInlineResult(result any) (string, error) {
+	if str, ok := result.(string); ok {
+		return str, nil
+	}
+	bytes, err := json.Marshal(result)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal inline tool result: %w", err)
+	}
+	return string(bytes), nil
 }
 
 func (s *Server) Shutdown() {
@@ -188,16 +238,40 @@ func (s *Server) getOrCreateSession(userEmail string) *userSession {
 }
 
 func (s *Server) discoverTools(ctx context.Context, userEmail string, session *userSession) ([]cachedTool, error) {
+	var allCached []cachedTool
+
+	for serviceName, provider := range s.inlineProviders {
+		for _, tool := range provider.ListInlineTools() {
+			t := mcp.Tool{
+				Name:        NamespaceTool(serviceName, tool.Name),
+				Description: tool.Description,
+			}
+			if len(tool.InputSchema) > 0 {
+				t.RawInputSchema = tool.InputSchema
+			}
+			allCached = append(allCached, cachedTool{Tool: t, ServiceName: serviceName})
+		}
+	}
+
 	type result struct {
 		serviceName string
 		tools       []mcp.Tool
 		err         error
 	}
 
-	total := len(s.serverConfigs)
-	results := make(chan result, total)
+	remoteCount := 0
+	for name := range s.serverConfigs {
+		if _, isInline := s.inlineProviders[name]; !isInline {
+			remoteCount++
+		}
+	}
+
+	results := make(chan result, remoteCount)
 
 	for serviceName := range s.serverConfigs {
+		if _, isInline := s.inlineProviders[serviceName]; isInline {
+			continue
+		}
 		go func(svcName string) {
 			backendCtx, backendCancel := context.WithTimeout(ctx, perBackendTimeout)
 			defer backendCancel()
@@ -228,10 +302,9 @@ func (s *Server) discoverTools(ctx context.Context, userEmail string, session *u
 	}
 
 	deadline := time.After(discoveryDeadline)
-	var allCached []cachedTool
 	received := 0
 
-	for received < total {
+	for received < remoteCount {
 		select {
 		case r := <-results:
 			received++
@@ -253,7 +326,7 @@ func (s *Server) discoverTools(ctx context.Context, userEmail string, session *u
 		case <-deadline:
 			log.LogWarnWithFields("gateway", "Discovery deadline reached, returning partial results", map[string]any{
 				"received": received,
-				"total":    total,
+				"total":    remoteCount,
 				"user":     userEmail,
 			})
 			return allCached, nil
@@ -334,7 +407,12 @@ func formatTools(tools []cachedTool) []map[string]any {
 		if t.Tool.Description != "" {
 			entry["description"] = t.Tool.Description
 		}
-		if t.Tool.InputSchema.Type != "" {
+		if len(t.Tool.RawInputSchema) > 0 {
+			var schema any
+			if err := json.Unmarshal(t.Tool.RawInputSchema, &schema); err == nil {
+				entry["inputSchema"] = schema
+			}
+		} else if t.Tool.InputSchema.Type != "" {
 			entry["inputSchema"] = t.Tool.InputSchema
 		}
 		result = append(result, entry)

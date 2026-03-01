@@ -106,6 +106,35 @@
         "scopes": ["read"],
         "displayName": "Linear"
       }
+    },
+    "ditto-read-only": {
+      "transportType": "inline",
+      "inline": {
+        "description": "Ditto DQL database",
+        "tools": [
+          {
+            "name": "execute",
+            "description": "Execute a DQL statement against the Ditto database. Supports SELECT, INSERT, UPDATE, DELETE, and UPSERT.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "statement": { "type": "string", "description": "DQL statement to execute" },
+                "args": { "type": "object", "description": "Named parameters for parameterized queries" }
+              },
+              "required": ["statement"]
+            },
+            "http": {
+              "method": "POST",
+              "url": { "$env": "DITTO_API_URL" },
+              "headers": {
+                "Authorization": { "$env": "DITTO_AUTH_HEADER" },
+                "Content-Type": "application/json"
+              }
+            },
+            "timeout": "30s"
+          }
+        ]
+      }
     }
   }
 }

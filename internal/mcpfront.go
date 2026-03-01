@@ -2,6 +2,7 @@ package internal
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -362,6 +363,7 @@ func buildHTTPHandler(
 	}
 
 	sseServers := make(map[string]*mcpserver.SSEServer)
+	inlineProviders := make(map[string]gateway.InlineToolProvider)
 
 	for serverName, serverConfig := range cfg.MCPServers {
 		log.LogInfoWithFields("server", "Registering MCP server", map[string]any{
@@ -376,10 +378,12 @@ func buildHTTPHandler(
 		var sseServer *mcpserver.SSEServer
 
 		if serverConfig.TransportType == config.MCPClientTypeInline {
-			handler, err = buildInlineHandler(serverName, serverConfig)
+			var inlineServer *inline.Server
+			handler, inlineServer, err = buildInlineHandler(serverName, serverConfig)
 			if err != nil {
 				return nil, nil, fmt.Errorf("failed to create inline handler for %s: %w", serverName, err)
 			}
+			inlineProviders[serverName] = &inlineAdapter{server: inlineServer}
 		} else {
 			if serverConfig.IsStdio() {
 				sseServer, mcpServer, err = buildStdioSSEServer(serverName, baseURL, sessionManager)
@@ -420,7 +424,7 @@ func buildHTTPHandler(
 		mux.Handle(route("/"+serverName+"/"), server.ChainMiddleware(handler, mcpMiddlewares...))
 	}
 
-	gatewayServer := gateway.NewServer(cfg.MCPServers, userTokenService.GetUserToken, baseURL)
+	gatewayServer := gateway.NewServer(cfg.MCPServers, inlineProviders, userTokenService.GetUserToken, baseURL)
 	gatewayHandler := gateway.NewHandler("gateway", gatewayServer, baseURL)
 
 	gatewayMiddlewares := []server.MiddlewareFunc{
@@ -438,10 +442,10 @@ func buildHTTPHandler(
 	return mux, gatewayServer, nil
 }
 
-func buildInlineHandler(serverName string, serverConfig *config.MCPClientConfig) (http.Handler, error) {
+func buildInlineHandler(serverName string, serverConfig *config.MCPClientConfig) (http.Handler, *inline.Server, error) {
 	inlineConfig, resolvedTools, err := inline.ResolveConfig(serverConfig.InlineConfig)
 	if err != nil {
-		return nil, fmt.Errorf("failed to resolve inline config: %w", err)
+		return nil, nil, fmt.Errorf("failed to resolve inline config: %w", err)
 	}
 
 	inlineServer := inline.NewServer(serverName, inlineConfig, resolvedTools)
@@ -452,7 +456,32 @@ func buildInlineHandler(serverName string, serverConfig *config.MCPClientConfig)
 		"tools": len(resolvedTools),
 	})
 
-	return handler, nil
+	return handler, inlineServer, nil
+}
+
+type inlineAdapter struct {
+	server *inline.Server
+}
+
+func (a *inlineAdapter) ListInlineTools() []gateway.InlineTool {
+	caps := a.server.GetCapabilities()
+	tools := make([]gateway.InlineTool, 0, len(caps.Tools))
+	for _, tool := range caps.Tools {
+		var schema json.RawMessage
+		if tool.InputSchema != nil {
+			schema, _ = json.Marshal(tool.InputSchema)
+		}
+		tools = append(tools, gateway.InlineTool{
+			Name:        tool.Name,
+			Description: tool.Description,
+			InputSchema: schema,
+		})
+	}
+	return tools
+}
+
+func (a *inlineAdapter) CallInlineTool(ctx context.Context, name string, args map[string]any) (any, error) {
+	return a.server.HandleToolCall(ctx, name, args)
 }
 
 func buildStdioSSEServer(serverName, baseURL string, sessionManager *client.StdioSessionManager) (*mcpserver.SSEServer, *mcpserver.MCPServer, error) {
