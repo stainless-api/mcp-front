@@ -586,6 +586,7 @@ func TestUpstreamOAuthStatePreservesPKCE(t *testing.T) {
 		sessionEncryptor,
 		map[string]*config.MCPClientConfig{},
 		nil,
+		nil,
 	)
 
 	verifier := "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"

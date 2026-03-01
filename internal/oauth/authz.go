@@ -109,7 +109,7 @@ func (s *AuthorizationServer) ValidateAuthorizeRequest(r *http.Request, client C
 		audience = append(audience, resource)
 	}
 
-	if len(audience) == 0 {
+	if len(audience) == 0 && s.requireResourceParam {
 		return nil, NewOAuthError(ErrInvalidRequest, "resource parameter is required (RFC 8707)")
 	}
 

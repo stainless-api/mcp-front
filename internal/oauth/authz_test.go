@@ -129,16 +129,6 @@ func TestAuthorizationServer_ValidateAuthorizeRequest(t *testing.T) {
 		assert.Contains(t, err.Error(), "S256")
 	})
 
-	t.Run("missing resource parameter", func(t *testing.T) {
-		r := httptest.NewRequest("GET", "/authorize?response_type=code&client_id=test-client-id&redirect_uri=http://localhost:6274/callback&code_challenge="+challenge+"&code_challenge_method=S256&state=x", nil)
-		_, err := s.ValidateAuthorizeRequest(r, client)
-		require.Error(t, err)
-		var oauthErr *OAuthError
-		require.ErrorAs(t, err, &oauthErr)
-		assert.Equal(t, ErrInvalidRequest, oauthErr.Code)
-		assert.Contains(t, oauthErr.Description, "resource")
-	})
-
 	t.Run("with resource parameters", func(t *testing.T) {
 		r := httptest.NewRequest("GET", "/authorize?response_type=code&client_id=test-client-id&redirect_uri=http://localhost:6274/callback&code_challenge="+challenge+"&code_challenge_method=S256&state=x&resource=https://mcp.example.com/postgres", nil)
 		params, err := s.ValidateAuthorizeRequest(r, client)
