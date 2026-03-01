@@ -16,7 +16,7 @@ import (
 const (
 	toolCacheTTL      = 60 * time.Second
 	perBackendTimeout = 45 * time.Second
-	discoveryDeadline = 10 * time.Second
+	discoveryDeadline = 30 * time.Second
 )
 
 type UserTokenFunc func(ctx context.Context, userEmail, serviceName string, serviceConfig *config.MCPClientConfig) (string, error)
