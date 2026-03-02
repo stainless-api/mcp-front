@@ -241,6 +241,397 @@ func TestValidateConfig_SessionConfig(t *testing.T) {
 	}
 }
 
+func TestValidateConfig_AggregateServer(t *testing.T) {
+	tests := []struct {
+		name        string
+		config      *Config
+		expectError string
+	}{
+		{
+			name: "aggregate_defaults_servers_to_all_non_aggregates",
+			config: &Config{
+				Proxy: ProxyConfig{
+					BaseURL: "https://test.example.com",
+					Addr:    ":8080",
+				},
+				MCPServers: map[string]*MCPClientConfig{
+					"postgres": {
+						Type:          ServerTypeDirect,
+						TransportType: MCPClientTypeSSE,
+						URL:           "http://localhost:5432",
+					},
+					"linear": {
+						Type:          ServerTypeDirect,
+						TransportType: MCPClientTypeSSE,
+						URL:           "http://localhost:3000",
+					},
+					"mcp": {
+						Type:          ServerTypeAggregate,
+						TransportType: MCPClientTypeSSE,
+						Discovery:     &DiscoveryConfig{Timeout: 10 * time.Second, CacheTTL: 60 * time.Second},
+					},
+				},
+			},
+		},
+		{
+			name: "aggregate_self_reference",
+			config: &Config{
+				Proxy: ProxyConfig{
+					BaseURL: "https://test.example.com",
+					Addr:    ":8080",
+				},
+				MCPServers: map[string]*MCPClientConfig{
+					"mcp": {
+						Type:          ServerTypeAggregate,
+						TransportType: MCPClientTypeSSE,
+						Discovery:     &DiscoveryConfig{Timeout: 10 * time.Second, CacheTTL: 60 * time.Second},
+						Servers:       []string{"mcp"},
+					},
+				},
+			},
+			expectError: "cannot reference itself",
+		},
+		{
+			name: "aggregate_references_nonexistent",
+			config: &Config{
+				Proxy: ProxyConfig{
+					BaseURL: "https://test.example.com",
+					Addr:    ":8080",
+				},
+				MCPServers: map[string]*MCPClientConfig{
+					"mcp": {
+						Type:          ServerTypeAggregate,
+						TransportType: MCPClientTypeSSE,
+						Discovery:     &DiscoveryConfig{Timeout: 10 * time.Second, CacheTTL: 60 * time.Second},
+						Servers:       []string{"ghost"},
+					},
+				},
+			},
+			expectError: "references nonexistent server",
+		},
+		{
+			name: "aggregate_invalid_transport",
+			config: &Config{
+				Proxy: ProxyConfig{
+					BaseURL: "https://test.example.com",
+					Addr:    ":8080",
+				},
+				MCPServers: map[string]*MCPClientConfig{
+					"mcp": {
+						Type:          ServerTypeAggregate,
+						TransportType: MCPClientTypeStdio,
+						Discovery:     &DiscoveryConfig{Timeout: 10 * time.Second, CacheTTL: 60 * time.Second},
+					},
+				},
+			},
+			expectError: "must use 'sse' or 'streamable-http'",
+		},
+		{
+			name: "aggregate_references_inline_server",
+			config: &Config{
+				Proxy: ProxyConfig{
+					BaseURL: "https://test.example.com",
+					Addr:    ":8080",
+				},
+				MCPServers: map[string]*MCPClientConfig{
+					"tools": {
+						Type:          ServerTypeDirect,
+						TransportType: MCPClientTypeInline,
+						InlineConfig:  []byte(`{"tools":[]}`),
+					},
+					"mcp": {
+						Type:          ServerTypeAggregate,
+						TransportType: MCPClientTypeSSE,
+						Discovery:     &DiscoveryConfig{Timeout: 10 * time.Second, CacheTTL: 60 * time.Second},
+						Servers:       []string{"tools"},
+					},
+				},
+			},
+			expectError: "cannot reference inline server",
+		},
+		{
+			name: "aggregate_nil_discovery",
+			config: &Config{
+				Proxy: ProxyConfig{
+					BaseURL: "https://test.example.com",
+					Addr:    ":8080",
+				},
+				MCPServers: map[string]*MCPClientConfig{
+					"postgres": {
+						Type:          ServerTypeDirect,
+						TransportType: MCPClientTypeSSE,
+						URL:           "http://localhost:5432",
+					},
+					"mcp": {
+						Type:          ServerTypeAggregate,
+						TransportType: MCPClientTypeSSE,
+						Servers:       []string{"postgres"},
+					},
+				},
+			},
+			expectError: "missing discovery configuration",
+		},
+		{
+			name: "aggregate_explicit_empty_servers",
+			config: &Config{
+				Proxy: ProxyConfig{
+					BaseURL: "https://test.example.com",
+					Addr:    ":8080",
+				},
+				MCPServers: map[string]*MCPClientConfig{
+					"postgres": {
+						Type:          ServerTypeDirect,
+						TransportType: MCPClientTypeSSE,
+						URL:           "http://localhost:5432",
+					},
+					"mcp": {
+						Type:          ServerTypeAggregate,
+						TransportType: MCPClientTypeSSE,
+						Servers:       []string{},
+						Discovery:     &DiscoveryConfig{Timeout: 10 * time.Second, CacheTTL: 60 * time.Second},
+					},
+				},
+			},
+			expectError: "has no servers",
+		},
+		{
+			name: "server_name_with_dot",
+			config: &Config{
+				Proxy: ProxyConfig{BaseURL: "https://test.example.com", Addr: ":8080"},
+				MCPServers: map[string]*MCPClientConfig{
+					"my.server": {Type: ServerTypeDirect, TransportType: MCPClientTypeSSE, URL: "http://localhost:5432"},
+				},
+			},
+			expectError: "is invalid",
+		},
+		{
+			name: "server_name_with_slash",
+			config: &Config{
+				Proxy: ProxyConfig{BaseURL: "https://test.example.com", Addr: ":8080"},
+				MCPServers: map[string]*MCPClientConfig{
+					"foo/bar": {Type: ServerTypeDirect, TransportType: MCPClientTypeSSE, URL: "http://localhost:5432"},
+				},
+			},
+			expectError: "is invalid",
+		},
+		{
+			name: "server_name_with_space",
+			config: &Config{
+				Proxy: ProxyConfig{BaseURL: "https://test.example.com", Addr: ":8080"},
+				MCPServers: map[string]*MCPClientConfig{
+					"my server": {Type: ServerTypeDirect, TransportType: MCPClientTypeSSE, URL: "http://localhost:5432"},
+				},
+			},
+			expectError: "is invalid",
+		},
+		{
+			name: "server_name_starting_with_hyphen",
+			config: &Config{
+				Proxy: ProxyConfig{BaseURL: "https://test.example.com", Addr: ":8080"},
+				MCPServers: map[string]*MCPClientConfig{
+					"-postgres": {Type: ServerTypeDirect, TransportType: MCPClientTypeSSE, URL: "http://localhost:5432"},
+				},
+			},
+			expectError: "is invalid",
+		},
+		{
+			name: "valid_server_name_with_hyphen_and_underscore",
+			config: &Config{
+				Proxy: ProxyConfig{BaseURL: "https://test.example.com", Addr: ":8080"},
+				MCPServers: map[string]*MCPClientConfig{
+					"my-server_01": {Type: ServerTypeDirect, TransportType: MCPClientTypeSSE, URL: "http://localhost:5432"},
+				},
+			},
+		},
+		{
+			name: "aggregate_duplicate_reference",
+			config: &Config{
+				Proxy: ProxyConfig{BaseURL: "https://test.example.com", Addr: ":8080"},
+				MCPServers: map[string]*MCPClientConfig{
+					"postgres": {Type: ServerTypeDirect, TransportType: MCPClientTypeSSE, URL: "http://localhost:5432"},
+					"mcp": {
+						Type: ServerTypeAggregate, TransportType: MCPClientTypeSSE,
+						Discovery: &DiscoveryConfig{Timeout: 10 * time.Second, CacheTTL: 60 * time.Second},
+						Servers:   []string{"postgres", "postgres"},
+					},
+				},
+			},
+			expectError: "duplicate reference 'postgres'",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ResolveDefaults(tt.config)
+			err := ValidateConfig(tt.config)
+			if tt.expectError != "" {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), tt.expectError)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestResolveDefaults(t *testing.T) {
+	t.Run("fills_aggregate_servers_with_all_non_aggregates", func(t *testing.T) {
+		cfg := &Config{
+			MCPServers: map[string]*MCPClientConfig{
+				"postgres": {Type: ServerTypeDirect, TransportType: MCPClientTypeSSE, URL: "http://localhost:5432"},
+				"linear":   {Type: ServerTypeDirect, TransportType: MCPClientTypeSSE, URL: "http://localhost:3000"},
+				"mcp":      {Type: ServerTypeAggregate, TransportType: MCPClientTypeSSE, Discovery: &DiscoveryConfig{Timeout: 10 * time.Second, CacheTTL: 60 * time.Second}},
+			},
+		}
+		ResolveDefaults(cfg)
+
+		mcp := cfg.MCPServers["mcp"]
+		assert.Equal(t, []string{"linear", "postgres"}, mcp.Servers)
+	})
+
+	t.Run("does_not_override_explicit_servers", func(t *testing.T) {
+		cfg := &Config{
+			MCPServers: map[string]*MCPClientConfig{
+				"postgres": {Type: ServerTypeDirect, TransportType: MCPClientTypeSSE, URL: "http://localhost:5432"},
+				"linear":   {Type: ServerTypeDirect, TransportType: MCPClientTypeSSE, URL: "http://localhost:3000"},
+				"mcp":      {Type: ServerTypeAggregate, TransportType: MCPClientTypeSSE, Servers: []string{"postgres"}, Discovery: &DiscoveryConfig{Timeout: 10 * time.Second, CacheTTL: 60 * time.Second}},
+			},
+		}
+		ResolveDefaults(cfg)
+
+		mcp := cfg.MCPServers["mcp"]
+		assert.Equal(t, []string{"postgres"}, mcp.Servers)
+	})
+
+	t.Run("idempotent", func(t *testing.T) {
+		cfg := &Config{
+			MCPServers: map[string]*MCPClientConfig{
+				"postgres": {Type: ServerTypeDirect, TransportType: MCPClientTypeSSE, URL: "http://localhost:5432"},
+				"mcp":      {Type: ServerTypeAggregate, TransportType: MCPClientTypeSSE, Discovery: &DiscoveryConfig{Timeout: 10 * time.Second, CacheTTL: 60 * time.Second}},
+			},
+		}
+		ResolveDefaults(cfg)
+		first := cfg.MCPServers["mcp"].Servers
+
+		ResolveDefaults(cfg)
+		second := cfg.MCPServers["mcp"].Servers
+
+		assert.Equal(t, first, second)
+	})
+
+	t.Run("excludes_inline_from_defaults", func(t *testing.T) {
+		cfg := &Config{
+			MCPServers: map[string]*MCPClientConfig{
+				"postgres": {Type: ServerTypeDirect, TransportType: MCPClientTypeSSE, URL: "http://localhost:5432"},
+				"tools":    {Type: ServerTypeDirect, TransportType: MCPClientTypeInline, InlineConfig: []byte(`{"tools":[]}`)},
+				"mcp":      {Type: ServerTypeAggregate, TransportType: MCPClientTypeSSE, Discovery: &DiscoveryConfig{Timeout: 10 * time.Second, CacheTTL: 60 * time.Second}},
+			},
+		}
+		ResolveDefaults(cfg)
+
+		mcp := cfg.MCPServers["mcp"]
+		assert.Equal(t, []string{"postgres"}, mcp.Servers)
+	})
+
+	t.Run("does_not_override_explicit_empty_servers", func(t *testing.T) {
+		cfg := &Config{
+			MCPServers: map[string]*MCPClientConfig{
+				"postgres": {Type: ServerTypeDirect, TransportType: MCPClientTypeSSE, URL: "http://localhost:5432"},
+				"mcp":      {Type: ServerTypeAggregate, TransportType: MCPClientTypeSSE, Servers: []string{}, Discovery: &DiscoveryConfig{Timeout: 10 * time.Second, CacheTTL: 60 * time.Second}},
+			},
+		}
+		ResolveDefaults(cfg)
+
+		mcp := cfg.MCPServers["mcp"]
+		assert.Equal(t, []string{}, mcp.Servers)
+	})
+
+	t.Run("excludes_aggregates_from_defaults", func(t *testing.T) {
+		cfg := &Config{
+			MCPServers: map[string]*MCPClientConfig{
+				"postgres": {Type: ServerTypeDirect, TransportType: MCPClientTypeSSE, URL: "http://localhost:5432"},
+				"agg1":     {Type: ServerTypeAggregate, TransportType: MCPClientTypeSSE, Discovery: &DiscoveryConfig{Timeout: 10 * time.Second, CacheTTL: 60 * time.Second}},
+				"agg2":     {Type: ServerTypeAggregate, TransportType: MCPClientTypeSSE, Discovery: &DiscoveryConfig{Timeout: 10 * time.Second, CacheTTL: 60 * time.Second}},
+			},
+		}
+		ResolveDefaults(cfg)
+
+		assert.Equal(t, []string{"postgres"}, cfg.MCPServers["agg1"].Servers)
+		assert.Equal(t, []string{"postgres"}, cfg.MCPServers["agg2"].Servers)
+	})
+}
+
+func TestValidateConfig_ToolFilterMode(t *testing.T) {
+	tests := []struct {
+		name        string
+		config      *Config
+		expectError string
+	}{
+		{
+			name: "valid_allow_mode",
+			config: &Config{
+				Proxy: ProxyConfig{BaseURL: "https://test.example.com", Addr: ":8080"},
+				MCPServers: map[string]*MCPClientConfig{
+					"postgres": {
+						Type: ServerTypeDirect, TransportType: MCPClientTypeSSE, URL: "http://localhost:5432",
+						Options: &Options{ToolFilter: &ToolFilterConfig{Mode: ToolFilterModeAllow, List: []string{"query"}}},
+					},
+				},
+			},
+		},
+		{
+			name: "valid_block_mode",
+			config: &Config{
+				Proxy: ProxyConfig{BaseURL: "https://test.example.com", Addr: ":8080"},
+				MCPServers: map[string]*MCPClientConfig{
+					"postgres": {
+						Type: ServerTypeDirect, TransportType: MCPClientTypeSSE, URL: "http://localhost:5432",
+						Options: &Options{ToolFilter: &ToolFilterConfig{Mode: ToolFilterModeBlock, List: []string{"drop"}}},
+					},
+				},
+			},
+		},
+		{
+			name: "invalid_mode",
+			config: &Config{
+				Proxy: ProxyConfig{BaseURL: "https://test.example.com", Addr: ":8080"},
+				MCPServers: map[string]*MCPClientConfig{
+					"postgres": {
+						Type: ServerTypeDirect, TransportType: MCPClientTypeSSE, URL: "http://localhost:5432",
+						Options: &Options{ToolFilter: &ToolFilterConfig{Mode: "allowlist", List: []string{"query"}}},
+					},
+				},
+			},
+			expectError: "invalid toolFilter mode 'allowlist'",
+		},
+		{
+			name: "list_without_mode",
+			config: &Config{
+				Proxy: ProxyConfig{BaseURL: "https://test.example.com", Addr: ":8080"},
+				MCPServers: map[string]*MCPClientConfig{
+					"postgres": {
+						Type: ServerTypeDirect, TransportType: MCPClientTypeSSE, URL: "http://localhost:5432",
+						Options: &Options{ToolFilter: &ToolFilterConfig{List: []string{"query"}}},
+					},
+				},
+			},
+			expectError: "has toolFilter list but no mode",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateConfig(tt.config)
+			if tt.expectError != "" {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), tt.expectError)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
 func TestExtractBasePath(t *testing.T) {
 	tests := []struct {
 		name         string

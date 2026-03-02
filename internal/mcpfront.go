@@ -2,6 +2,7 @@ package internal
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -10,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/dgellow/mcp-front/internal/aggregate"
 	"github.com/dgellow/mcp-front/internal/auth"
 	"github.com/dgellow/mcp-front/internal/client"
 	"github.com/dgellow/mcp-front/internal/config"
@@ -28,6 +30,7 @@ type MCPFront struct {
 	config         config.Config
 	httpServer     *server.HTTPServer
 	sessionManager *client.StdioSessionManager
+	aggregates     []*aggregate.Server
 	storage        storage.Storage
 }
 
@@ -77,6 +80,7 @@ func NewMCPFront(ctx context.Context, cfg config.Config) (*MCPFront, error) {
 		client.WithMaxPerUser(maxPerUser),
 		client.WithCleanupInterval(cleanupInterval),
 	)
+	sessionManager.Start()
 
 	userTokenService := server.NewUserTokenService(store, serviceOAuthClient)
 
@@ -85,7 +89,7 @@ func NewMCPFront(ctx context.Context, cfg config.Config) (*MCPFront, error) {
 		Version: "dev",
 	}
 
-	mux, err := buildHTTPHandler(
+	mux, aggregates, err := buildHTTPHandler(
 		cfg,
 		store,
 		authServer,
@@ -108,6 +112,7 @@ func NewMCPFront(ctx context.Context, cfg config.Config) (*MCPFront, error) {
 		config:         cfg,
 		httpServer:     httpServer,
 		sessionManager: sessionManager,
+		aggregates:     aggregates,
 		storage:        store,
 	}, nil
 }
@@ -155,11 +160,22 @@ func (m *MCPFront) Run() error {
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer shutdownCancel()
 
+	var shutdownErrors []error
+
 	if err := m.httpServer.Stop(shutdownCtx); err != nil {
 		log.LogErrorWithFields("mcpfront", "HTTP server shutdown error", map[string]any{
 			"error": err.Error(),
 		})
-		return err
+		shutdownErrors = append(shutdownErrors, err)
+	}
+
+	for _, agg := range m.aggregates {
+		if err := agg.Shutdown(shutdownCtx); err != nil {
+			log.LogWarnWithFields("mcpfront", "Aggregate server shutdown error", map[string]any{
+				"error": err.Error(),
+			})
+			shutdownErrors = append(shutdownErrors, err)
+		}
 	}
 
 	if m.sessionManager != nil {
@@ -169,7 +185,7 @@ func (m *MCPFront) Run() error {
 	log.LogInfoWithFields("mcpfront", "Application shutdown complete", map[string]any{
 		"reason": shutdownReason,
 	})
-	return nil
+	return errors.Join(shutdownErrors...)
 }
 
 func setupStorage(ctx context.Context, cfg config.Config) (storage.Storage, error) {
@@ -265,7 +281,7 @@ func buildHTTPHandler(
 	userTokenService *server.UserTokenService,
 	baseURL string,
 	info mcp.Implementation,
-) (http.Handler, error) {
+) (http.Handler, []*aggregate.Server, error) {
 	mux := http.NewServeMux()
 	basePath := cfg.Proxy.BasePath
 
@@ -340,8 +356,13 @@ func buildHTTPHandler(
 	}
 
 	sseServers := make(map[string]*mcpserver.SSEServer)
+	var aggregates []*aggregate.Server
 
 	for serverName, serverConfig := range cfg.MCPServers {
+		if serverConfig.IsAggregate() {
+			continue
+		}
+
 		log.LogInfoWithFields("server", "Registering MCP server", map[string]any{
 			"name":                serverName,
 			"transport_type":      serverConfig.TransportType,
@@ -350,19 +371,19 @@ func buildHTTPHandler(
 
 		var handler http.Handler
 		var err error
-		var mcpServer *mcpserver.MCPServer
+		var mcpSrv *mcpserver.MCPServer
 		var sseServer *mcpserver.SSEServer
 
 		if serverConfig.TransportType == config.MCPClientTypeInline {
 			handler, err = buildInlineHandler(serverName, serverConfig)
 			if err != nil {
-				return nil, fmt.Errorf("failed to create inline handler for %s: %w", serverName, err)
+				return nil, nil, fmt.Errorf("failed to create inline handler for %s: %w", serverName, err)
 			}
 		} else {
 			if serverConfig.IsStdio() {
-				sseServer, mcpServer, err = buildStdioSSEServer(serverName, baseURL, sessionManager)
+				sseServer, mcpSrv, err = buildStdioSSEServer(serverName, baseURL, sessionManager)
 				if err != nil {
-					return nil, fmt.Errorf("failed to create SSE server for %s: %w", serverName, err)
+					return nil, nil, fmt.Errorf("failed to create SSE server for %s: %w", serverName, err)
 				}
 				sseServers[serverName] = sseServer
 			}
@@ -375,7 +396,7 @@ func buildHTTPHandler(
 				info,
 				sessionManager,
 				sseServers[serverName],
-				mcpServer,
+				mcpSrv,
 				userTokenService.GetUserToken,
 			)
 		}
@@ -398,8 +419,50 @@ func buildHTTPHandler(
 		mux.Handle(route("/"+serverName+"/"), server.ChainMiddleware(handler, mcpMiddlewares...))
 	}
 
+	for serverName, serverConfig := range cfg.MCPServers {
+		if !serverConfig.IsAggregate() {
+			continue
+		}
+
+		backendConfigs := make(map[string]*config.MCPClientConfig, len(serverConfig.Servers))
+		for _, ref := range serverConfig.Servers {
+			backendConfigs[ref] = cfg.MCPServers[ref]
+		}
+
+		agg := aggregate.NewServer(aggregate.ServerConfig{
+			Name:            serverName,
+			TransportType:   serverConfig.TransportType,
+			Backends:        backendConfigs,
+			Discovery:       serverConfig.Discovery,
+			GetUserToken:    userTokenService.GetUserToken,
+			CreateTransport: client.DefaultTransportCreator,
+			BaseURL:         baseURL,
+		})
+		agg.Start()
+		aggregates = append(aggregates, agg)
+
+		aggMiddlewares := []server.MiddlewareFunc{
+			mcpLogger,
+			corsMiddleware,
+		}
+		if authServer != nil {
+			aggMiddlewares = append(aggMiddlewares, oauth.NewValidateTokenMiddleware(authServer, authConfig.Issuer, authConfig.DangerouslyAcceptIssuerAudience))
+		}
+		if len(serverConfig.ServiceAuths) > 0 {
+			aggMiddlewares = append(aggMiddlewares, server.NewServiceAuthMiddleware(serverConfig.ServiceAuths))
+		}
+		aggMiddlewares = append(aggMiddlewares, mcpRecover)
+
+		mux.Handle(route("/"+serverName+"/"), server.ChainMiddleware(agg.Handler(), aggMiddlewares...))
+
+		log.LogInfoWithFields("server", "Registered aggregate MCP server", map[string]any{
+			"name":     serverName,
+			"backends": serverConfig.Servers,
+		})
+	}
+
 	log.LogInfoWithFields("server", "MCP proxy server initialized", nil)
-	return mux, nil
+	return mux, aggregates, nil
 }
 
 func buildInlineHandler(serverName string, serverConfig *config.MCPClientConfig) (http.Handler, error) {

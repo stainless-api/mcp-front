@@ -1,36 +1,127 @@
 const http = require('http');
+const crypto = require('crypto');
 
 const PORT = process.env.PORT || 3001;
 
-// Simple mock SSE MCP server for testing
+// Map of sessionId -> SSE response writer
+const sessions = new Map();
+
+function handleRequest(request) {
+  if (request.method === 'initialize') {
+    return {
+      jsonrpc: '2.0',
+      id: request.id,
+      result: {
+        protocolVersion: '2025-06-18',
+        capabilities: { tools: { listChanged: false } },
+        serverInfo: { name: 'mock-sse-server', version: '1.0.0' }
+      }
+    };
+  }
+
+  if (request.method === 'tools/list') {
+    return {
+      jsonrpc: '2.0',
+      id: request.id,
+      result: {
+        tools: [
+          {
+            name: 'echo_text',
+            description: 'Echo the provided text',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                text: { type: 'string' }
+              },
+              required: ['text']
+            }
+          },
+          {
+            name: 'sample_stream',
+            description: 'Sample streaming tool',
+            inputSchema: {
+              type: 'object',
+              properties: {}
+            }
+          }
+        ]
+      }
+    };
+  }
+
+  if (request.method === 'tools/call') {
+    if (request.params.name === 'echo_text') {
+      return {
+        jsonrpc: '2.0',
+        id: request.id,
+        result: {
+          content: [{ type: 'text', text: request.params.arguments.text }]
+        }
+      };
+    }
+    if (request.params.name === 'non_existent_tool_xyz') {
+      return {
+        jsonrpc: '2.0',
+        id: request.id,
+        error: {
+          code: -32601,
+          message: 'Tool not found: ' + request.params.name
+        }
+      };
+    }
+    return {
+      jsonrpc: '2.0',
+      id: request.id,
+      result: {
+        content: [{ type: 'text', text: 'Tool executed successfully' }]
+      }
+    };
+  }
+
+  return {
+    jsonrpc: '2.0',
+    id: request.id,
+    result: {}
+  };
+}
+
 const server = http.createServer((req, res) => {
   console.log(`${req.method} ${req.url}`);
-  
+
   if (req.url === '/' && req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
     res.end('Mock SSE MCP Server');
-  } else if (req.url === '/sse' && req.method === 'GET') {
-    // SSE endpoint
+    return;
+  }
+
+  if (req.url === '/sse' && req.method === 'GET') {
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
       'Connection': 'keep-alive',
       'Access-Control-Allow-Origin': '*'
     });
-    
-    // Send initial endpoint message
-    res.write('data: {"jsonrpc":"2.0","method":"endpoint","params":{"type":"endpoint","url":"/message"}}\n\n');
-    
-    // Keep connection alive
+
+    const sessionId = crypto.randomUUID();
+    sessions.set(sessionId, res);
+
+    res.write(`event: endpoint\ndata: /message?sessionId=${sessionId}\r\n\r\n`);
+
     const keepAlive = setInterval(() => {
       res.write(':keepalive\n\n');
     }, 30000);
-    
+
     req.on('close', () => {
       clearInterval(keepAlive);
+      sessions.delete(sessionId);
     });
-  } else if (req.url === '/message' && req.method === 'POST') {
-    // Message endpoint
+    return;
+  }
+
+  if (req.url.startsWith('/message') && req.method === 'POST') {
+    const urlObj = new URL(req.url, `http://localhost:${PORT}`);
+    const sessionId = urlObj.searchParams.get('sessionId');
+
     let body = '';
     req.on('data', chunk => {
       body += chunk.toString();
@@ -39,71 +130,24 @@ const server = http.createServer((req, res) => {
       try {
         const request = JSON.parse(body);
         console.log('Received request:', request);
-        
-        let response;
-        if (request.method === 'tools/list') {
-          response = {
-            jsonrpc: '2.0',
-            id: request.id,
-            result: {
-              tools: [
-                {
-                  name: 'echo_text',
-                  description: 'Echo the provided text',
-                  inputSchema: {
-                    type: 'object',
-                    properties: {
-                      text: { type: 'string' }
-                    },
-                    required: ['text']
-                  }
-                },
-                {
-                  name: 'sample_stream',
-                  description: 'Sample streaming tool',
-                  inputSchema: {
-                    type: 'object',
-                    properties: {}
-                  }
-                }
-              ]
-            }
-          };
-        } else if (request.method === 'tools/call') {
-          if (request.params.name === 'echo_text') {
-            response = {
-              jsonrpc: '2.0',
-              id: request.id,
-              result: {
-                toolResult: request.params.arguments.text
-              }
-            };
-          } else if (request.params.name === 'non_existent_tool_xyz') {
-            response = {
-              jsonrpc: '2.0',
-              id: request.id,
-              error: {
-                code: -32601,
-                message: 'Tool not found: ' + request.params.name
-              }
-            };
-          } else {
-            response = {
-              jsonrpc: '2.0',
-              id: request.id,
-              result: {
-                toolResult: 'Tool executed successfully'
-              }
-            };
-          }
-        } else {
-          response = {
-            jsonrpc: '2.0',
-            id: request.id,
-            result: {}
-          };
+
+        // Notifications have no id - just acknowledge
+        if (!request.id) {
+          res.writeHead(202);
+          res.end();
+          return;
         }
-        
+
+        const response = handleRequest(request);
+        const sseRes = sessionId ? sessions.get(sessionId) : null;
+
+        if (sseRes) {
+          // Deliver via SSE stream (mcp-go SSE clients read responses from the stream)
+          const data = JSON.stringify(response);
+          sseRes.write(`event: message\ndata: ${data}\r\n\r\n`);
+        }
+
+        // Return response in POST body (direct proxy clients read from the body)
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(response));
       } catch (e) {
@@ -119,10 +163,11 @@ const server = http.createServer((req, res) => {
         }));
       }
     });
-  } else {
-    res.writeHead(404, { 'Content-Type': 'text/plain' });
-    res.end('Not found');
+    return;
   }
+
+  res.writeHead(404, { 'Content-Type': 'text/plain' });
+  res.end('Not found');
 });
 
 server.listen(PORT, () => {

@@ -25,6 +25,7 @@ func TestStdioSessionManager_CreateAndRetrieve(t *testing.T) {
 		WithClientCreator(mockCreator),
 		WithTimeout(1*time.Minute),
 	)
+	sm.Start()
 	defer sm.Shutdown()
 
 	key := SessionKey{
@@ -73,6 +74,7 @@ func TestStdioSessionManager_UserLimits(t *testing.T) {
 		WithClientCreator(mockCreator),
 		WithMaxPerUser(2),
 	)
+	sm.Start()
 	defer sm.Shutdown()
 
 	userEmail := "test@example.com"
@@ -110,6 +112,7 @@ func TestStdioSessionManager_RemoveSession(t *testing.T) {
 	}
 
 	sm := NewStdioSessionManager(WithClientCreator(mockCreator))
+	sm.Start()
 	defer sm.Shutdown()
 
 	key := SessionKey{
@@ -150,6 +153,7 @@ func TestStdioSessionManager_Timeout(t *testing.T) {
 		WithTimeout(100*time.Millisecond),
 		WithCleanupInterval(50*time.Millisecond),
 	)
+	sm.Start()
 	defer sm.Shutdown()
 
 	key := SessionKey{
@@ -186,6 +190,7 @@ func TestStdioSessionManager_ConcurrentAccess(t *testing.T) {
 	}
 
 	sm := NewStdioSessionManager(WithClientCreator(mockCreator))
+	sm.Start()
 	defer sm.Shutdown()
 
 	config := &config.MCPClientConfig{Command: "echo"}
@@ -232,6 +237,7 @@ func TestStdioSessionManager_NoLimitsForAnonymous(t *testing.T) {
 		WithClientCreator(mockCreator),
 		WithMaxPerUser(1), // Very low limit
 	)
+	sm.Start()
 	defer sm.Shutdown()
 
 	config := &config.MCPClientConfig{Command: "echo"}

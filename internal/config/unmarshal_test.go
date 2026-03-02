@@ -436,3 +436,111 @@ func TestProxyConfig_SessionConfigIntegration(t *testing.T) {
 	assert.Equal(t, 15*time.Minute, config.Sessions.Timeout)
 	assert.Equal(t, 3*time.Minute, config.Sessions.CleanupInterval)
 }
+
+func TestMCPClientConfig_AggregateDefaults(t *testing.T) {
+	input := `{
+		"type": "aggregate",
+		"servers": ["postgres", "linear"]
+	}`
+
+	var cfg MCPClientConfig
+	err := json.Unmarshal([]byte(input), &cfg)
+	require.NoError(t, err)
+
+	assert.Equal(t, ServerTypeAggregate, cfg.Type)
+	assert.Equal(t, MCPClientTypeSSE, cfg.TransportType)
+	assert.Equal(t, []string{"postgres", "linear"}, cfg.Servers)
+	require.NotNil(t, cfg.Discovery)
+	assert.Equal(t, 10*time.Second, cfg.Discovery.Timeout)
+	assert.Equal(t, 60*time.Second, cfg.Discovery.CacheTTL)
+}
+
+func TestMCPClientConfig_AggregateExplicitFields(t *testing.T) {
+	input := `{
+		"type": "aggregate",
+		"transportType": "streamable-http",
+		"servers": ["postgres"],
+		"discovery": {
+			"timeout": "30s",
+			"cacheTtl": "5m"
+		}
+	}`
+
+	var cfg MCPClientConfig
+	err := json.Unmarshal([]byte(input), &cfg)
+	require.NoError(t, err)
+
+	assert.Equal(t, ServerTypeAggregate, cfg.Type)
+	assert.Equal(t, MCPClientTypeStreamable, cfg.TransportType)
+	assert.Equal(t, []string{"postgres"}, cfg.Servers)
+	require.NotNil(t, cfg.Discovery)
+	assert.Equal(t, 30*time.Second, cfg.Discovery.Timeout)
+	assert.Equal(t, 5*time.Minute, cfg.Discovery.CacheTTL)
+}
+
+func TestMCPClientConfig_AggregateInvalidDiscoveryDurations(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       string
+		expectError string
+	}{
+		{
+			name: "zero_timeout",
+			input: `{
+				"type": "aggregate",
+				"discovery": {"timeout": "0s", "cacheTtl": "60s"}
+			}`,
+			expectError: "discovery timeout must be positive",
+		},
+		{
+			name: "negative_timeout",
+			input: `{
+				"type": "aggregate",
+				"discovery": {"timeout": "-1s", "cacheTtl": "60s"}
+			}`,
+			expectError: "discovery timeout must be positive",
+		},
+		{
+			name: "zero_cache_ttl",
+			input: `{
+				"type": "aggregate",
+				"discovery": {"timeout": "10s", "cacheTtl": "0s"}
+			}`,
+			expectError: "discovery cacheTtl must be positive",
+		},
+		{
+			name: "negative_cache_ttl",
+			input: `{
+				"type": "aggregate",
+				"discovery": {"timeout": "10s", "cacheTtl": "-5m"}
+			}`,
+			expectError: "discovery cacheTtl must be positive",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var cfg MCPClientConfig
+			err := json.Unmarshal([]byte(tt.input), &cfg)
+			assert.Error(t, err)
+			assert.Contains(t, err.Error(), tt.expectError)
+		})
+	}
+}
+
+func TestMCPClientConfig_DirectTypeDefault(t *testing.T) {
+	os.Setenv("TEST_URL", "http://localhost:5432")
+	defer os.Unsetenv("TEST_URL")
+
+	input := `{
+		"transportType": "sse",
+		"url": "http://localhost:5432"
+	}`
+
+	var cfg MCPClientConfig
+	err := json.Unmarshal([]byte(input), &cfg)
+	require.NoError(t, err)
+
+	assert.Equal(t, ServerTypeDirect, cfg.Type)
+	assert.False(t, cfg.IsAggregate())
+}

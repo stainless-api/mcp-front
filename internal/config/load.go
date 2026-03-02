@@ -5,10 +5,18 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/dgellow/mcp-front/internal/log"
 )
+
+var validServerNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]*$`)
+
+func isValidServerName(name string) bool {
+	return validServerNameRe.MatchString(name)
+}
 
 // Load loads and processes the config with immediate env var resolution
 func Load(path string) (Config, error) {
@@ -45,6 +53,8 @@ func Load(path string) (Config, error) {
 	if err := extractBasePath(&config); err != nil {
 		return Config{}, fmt.Errorf("extracting base path: %w", err)
 	}
+
+	ResolveDefaults(&config)
 
 	if err := ValidateConfig(&config); err != nil {
 		return Config{}, fmt.Errorf("config validation failed: %w", err)
@@ -108,7 +118,30 @@ func validateRawConfig(rawConfig map[string]any) error {
 	return nil
 }
 
-// ValidateConfig validates the resolved configuration
+// ResolveDefaults fills in default values that depend on the full config.
+// This is pure transformation — no validation. Must be called before ValidateConfig.
+func ResolveDefaults(config *Config) {
+	// Collect servers eligible for aggregate defaults: non-aggregate,
+	// non-inline (inline servers have no network transport).
+	eligibleNames := make([]string, 0)
+	for name, server := range config.MCPServers {
+		if !server.IsAggregate() && server.TransportType != MCPClientTypeInline {
+			eligibleNames = append(eligibleNames, name)
+		}
+	}
+	sort.Strings(eligibleNames)
+
+	for _, server := range config.MCPServers {
+		if server.IsAggregate() && server.Servers == nil {
+			serversCopy := make([]string, len(eligibleNames))
+			copy(serversCopy, eligibleNames)
+			server.Servers = serversCopy
+		}
+	}
+}
+
+// ValidateConfig validates the resolved configuration.
+// ResolveDefaults must be called first to fill in computed defaults.
 func ValidateConfig(config *Config) error {
 	if config.Proxy.BaseURL == "" {
 		return fmt.Errorf("proxy.baseURL is required")
@@ -125,12 +158,61 @@ func ValidateConfig(config *Config) error {
 
 	hasOAuth := config.Proxy.Auth != nil
 
+	aggregateNames := make(map[string]bool)
 	for name, server := range config.MCPServers {
+		if server.IsAggregate() {
+			aggregateNames[name] = true
+		}
+	}
+
+	for name, server := range config.MCPServers {
+		if !isValidServerName(name) {
+			return fmt.Errorf("server name '%s' is invalid (must start with alphanumeric, then alphanumeric/underscore/hyphen only)", name)
+		}
+
 		if err := validateMCPServer(name, server); err != nil {
 			return err
 		}
 
-		// Validate that user tokens require OAuth
+		if server.IsAggregate() {
+			if len(server.Servers) == 0 {
+				return fmt.Errorf("aggregate server '%s' has no servers (configure servers list or add non-aggregate servers)", name)
+			}
+			seen := make(map[string]bool, len(server.Servers))
+			for _, ref := range server.Servers {
+				if seen[ref] {
+					return fmt.Errorf("aggregate server '%s' has duplicate reference '%s'", name, ref)
+				}
+				seen[ref] = true
+				if ref == name {
+					return fmt.Errorf("aggregate server '%s' cannot reference itself", name)
+				}
+				if aggregateNames[ref] {
+					return fmt.Errorf("aggregate server '%s' cannot reference another aggregate '%s'", name, ref)
+				}
+				refServer, exists := config.MCPServers[ref]
+				if !exists {
+					return fmt.Errorf("aggregate server '%s' references nonexistent server '%s'", name, ref)
+				}
+				if refServer.TransportType == MCPClientTypeInline {
+					return fmt.Errorf("aggregate server '%s' cannot reference inline server '%s' (inline servers have no network transport)", name, ref)
+				}
+				if refServer.TransportType == MCPClientTypeStdio {
+					log.LogWarnWithFields("config", "Aggregate references stdio backend — this spawns a long-lived process per user", map[string]any{
+						"aggregate": name,
+						"backend":   ref,
+					})
+				}
+			}
+			if server.Discovery.Timeout >= server.Discovery.CacheTTL {
+				log.LogWarnWithFields("config", "Discovery timeout >= cacheTTL: discovery may not complete before cache expires", map[string]any{
+					"aggregate": name,
+					"timeout":   server.Discovery.Timeout,
+					"cacheTTL":  server.Discovery.CacheTTL,
+				})
+			}
+		}
+
 		if server.RequiresUserToken && !hasOAuth {
 			return fmt.Errorf("server %s requires user tokens but OAuth is not configured - user tokens require OAuth authentication", name)
 		}
@@ -225,6 +307,16 @@ func validateOAuthConfig(oauth *OAuthAuthConfig) error {
 }
 
 func validateMCPServer(name string, server *MCPClientConfig) error {
+	if server.IsAggregate() {
+		if server.TransportType != MCPClientTypeSSE && server.TransportType != MCPClientTypeStreamable {
+			return fmt.Errorf("aggregate server %s must use 'sse' or 'streamable-http' transport, got '%s'", name, server.TransportType)
+		}
+		if server.Discovery == nil {
+			return fmt.Errorf("aggregate server %s is missing discovery configuration", name)
+		}
+		return nil
+	}
+
 	// Transport type is required
 	if server.TransportType == "" {
 		return fmt.Errorf("server %s must specify transportType (stdio, sse, streamable-http, or inline)", name)
@@ -262,6 +354,28 @@ func validateMCPServer(name string, server *MCPClientConfig) error {
 		return fmt.Errorf("server %s requires user token but has no userAuthentication", name)
 	}
 
+	// Validate tool filter configuration
+	if err := validateToolFilter(name, server); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func validateToolFilter(name string, server *MCPClientConfig) error {
+	if server.Options == nil || server.Options.ToolFilter == nil {
+		return nil
+	}
+	filter := server.Options.ToolFilter
+	if len(filter.List) > 0 && filter.Mode == "" {
+		return fmt.Errorf("server %s has toolFilter list but no mode (must specify 'allow' or 'block')", name)
+	}
+	if filter.Mode != "" {
+		mode := ToolFilterMode(strings.ToLower(string(filter.Mode)))
+		if mode != ToolFilterModeAllow && mode != ToolFilterModeBlock {
+			return fmt.Errorf("server %s has invalid toolFilter mode '%s' (must be 'allow' or 'block')", name, filter.Mode)
+		}
+	}
 	return nil
 }
 

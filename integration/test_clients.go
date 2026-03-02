@@ -87,20 +87,42 @@ func (c *MCPSSEClient) ConnectToServer(serverName string) error {
 	c.sseScanner = bufio.NewScanner(resp.Body)
 
 	// Read initial SSE messages to get the endpoint
-	// For inline servers, we don't get a message endpoint - we use the server path directly
-	gotEndpointMessage := false
+	// Handles three formats:
+	// 1. event: endpoint + data: <relative-url> (proper MCP SSE protocol)
+	// 2. data: {"...":"endpoint"...} (inline server JSON blob)
+	// 3. data: http://... (full URL for stdio servers)
+	var currentEvent string
 	for c.sseScanner.Scan() {
 		line := c.sseScanner.Text()
 		tracef("ConnectToServer: SSE line: %s", line)
+
+		// Track SSE event type
+		if after, ok := strings.CutPrefix(line, "event: "); ok {
+			currentEvent = after
+			continue
+		}
 
 		// Look for data lines
 		if after, ok := strings.CutPrefix(line, "data: "); ok {
 			data := after
 
+			// Handle proper MCP SSE endpoint event
+			if currentEvent == "endpoint" {
+				if strings.HasPrefix(data, "/") {
+					// Relative URL - resolve against mcp-front base with server name prefix
+					c.messageEndpoint = c.baseURL + "/" + serverName + data
+				} else if strings.HasPrefix(data, "http") {
+					c.messageEndpoint = data
+				}
+				if u, err := url.Parse(c.messageEndpoint); err == nil {
+					c.sessionID = u.Query().Get("sessionId")
+				}
+				tracef("ConnectToServer: endpoint event, using: %s", c.messageEndpoint)
+				break
+			}
+
 			// Check if it's an endpoint message (for inline servers)
 			if strings.Contains(data, `"type":"endpoint"`) {
-				gotEndpointMessage = true
-				// For inline servers, construct the message endpoint
 				c.messageEndpoint = c.baseURL + "/" + serverName + "/message"
 				tracef("ConnectToServer: inline server detected, using endpoint: %s", c.messageEndpoint)
 				break
@@ -109,19 +131,18 @@ func (c *MCPSSEClient) ConnectToServer(serverName string) error {
 			// Check if it's a message endpoint URL (for stdio servers)
 			if strings.Contains(data, "http://") || strings.Contains(data, "https://") {
 				c.messageEndpoint = data
-
-				// Extract session ID from endpoint URL
 				if u, err := url.Parse(data); err == nil {
 					c.sessionID = u.Query().Get("sessionId")
 				}
-
 				tracef("ConnectToServer: found endpoint: %s", c.messageEndpoint)
 				break
 			}
+
+			currentEvent = ""
 		}
 	}
 
-	if c.messageEndpoint == "" && !gotEndpointMessage {
+	if c.messageEndpoint == "" {
 		c.sseConn.Close()
 		c.sseConn = nil
 		return fmt.Errorf("no message endpoint received")
