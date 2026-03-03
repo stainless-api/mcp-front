@@ -101,6 +101,13 @@ func (h *MCPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		serverConfig = serverConfig.ApplyUserToken(userToken)
 	}
 
+	// Forward inbound auth token to backend if configured
+	if serverConfig.ForwardAuthToken {
+		if authToken, ok := oauth.GetAuthTokenFromContext(ctx); ok {
+			serverConfig = serverConfig.WithForwardedAuthToken(authToken)
+		}
+	}
+
 	if serverConfig.TransportType == config.MCPClientTypeStreamable {
 		switch r.Method {
 		case http.MethodPost:

@@ -25,6 +25,7 @@ func (c *MCPClientConfig) UnmarshalJSON(data []byte) error {
 		Timeout            string                     `json:"timeout,omitempty"`
 		Options            *Options                   `json:"options,omitempty"`
 		RequiresUserToken  bool                       `json:"requiresUserToken,omitempty"`
+		ForwardAuthToken   bool                       `json:"forwardAuthToken,omitempty"`
 		UserAuthentication *UserAuthentication        `json:"userAuthentication,omitempty"`
 		ServiceAuths       []ServiceAuth              `json:"serviceAuths,omitempty"`
 		InlineConfig       json.RawMessage            `json:"inline,omitempty"`
@@ -38,6 +39,7 @@ func (c *MCPClientConfig) UnmarshalJSON(data []byte) error {
 	c.TransportType = raw.TransportType
 	c.Options = raw.Options
 	c.RequiresUserToken = raw.RequiresUserToken
+	c.ForwardAuthToken = raw.ForwardAuthToken
 	c.UserAuthentication = raw.UserAuthentication
 	c.ServiceAuths = raw.ServiceAuths
 	c.InlineConfig = raw.InlineConfig
@@ -458,6 +460,22 @@ func (c *MCPClientConfig) ApplyUserToken(userToken string) *MCPClientConfig {
 	result.URLNeedsToken = false
 	result.HeadersNeedToken = nil
 
+	return &result
+}
+
+// WithForwardedAuthToken creates a copy of the config with the Authorization header set to the given token
+func (c *MCPClientConfig) WithForwardedAuthToken(token string) *MCPClientConfig {
+	result := *c
+	if result.Headers == nil {
+		result.Headers = make(map[string]string)
+	} else {
+		headers := make(map[string]string, len(c.Headers)+1)
+		for k, v := range c.Headers {
+			headers[k] = v
+		}
+		result.Headers = headers
+	}
+	result.Headers["Authorization"] = "Bearer " + token
 	return &result
 }
 

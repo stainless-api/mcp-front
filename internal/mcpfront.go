@@ -211,7 +211,7 @@ func setupStorage(ctx context.Context, cfg config.Config) (storage.Storage, erro
 	return storage.NewMemoryStorage(), nil
 }
 
-func setupAuthentication(ctx context.Context, cfg config.Config, store storage.Storage) (*oauth.AuthorizationServer, idp.Provider, crypto.Encryptor, config.OAuthAuthConfig, *auth.ServiceOAuthClient, *oauth.GCPIDTokenValidator, error) {
+func setupAuthentication(ctx context.Context, cfg config.Config, store storage.Storage) (*oauth.AuthorizationServer, idp.Provider, crypto.Encryptor, config.OAuthAuthConfig, *auth.ServiceOAuthClient, *oauth.GCPAccessTokenValidator, error) {
 	oauthAuth := cfg.Proxy.Auth
 	if oauthAuth == nil {
 		return nil, nil, nil, config.OAuthAuthConfig{}, nil, nil, nil
@@ -260,16 +260,8 @@ func setupAuthentication(ctx context.Context, cfg config.Config, store storage.S
 
 	serviceOAuthClient := auth.NewServiceOAuthClient(store, cfg.Proxy.BaseURL, encryptionKey)
 
-	var gcpValidator *oauth.GCPIDTokenValidator
-	gcpVal, err := oauth.NewGCPIDTokenValidator(ctx, oauthAuth.Issuer)
-	if err != nil {
-		log.LogWarn("GCP ID token validation disabled: %v", err)
-	} else {
-		gcpValidator = gcpVal
-		log.LogInfoWithFields("mcpfront", "GCP ID token validation enabled", map[string]any{
-			"audience": oauthAuth.Issuer,
-		})
-	}
+	gcpValidator := oauth.NewGCPAccessTokenValidator()
+	log.LogInfoWithFields("mcpfront", "GCP access token validation enabled", nil)
 
 	return authServer, idpProvider, sessionEncryptor, *oauthAuth, serviceOAuthClient, gcpValidator, nil
 }
@@ -286,7 +278,7 @@ func buildHTTPHandler(
 	userTokenService *server.UserTokenService,
 	baseURL string,
 	info mcp.Implementation,
-	gcpValidator *oauth.GCPIDTokenValidator,
+	gcpValidator *oauth.GCPAccessTokenValidator,
 ) (http.Handler, *gateway.Server, error) {
 	mux := http.NewServeMux()
 	basePath := cfg.Proxy.BasePath

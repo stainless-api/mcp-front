@@ -182,6 +182,9 @@ type MCPClientConfig struct {
 	// Service-to-service authentication
 	ServiceAuths []ServiceAuth `json:"serviceAuths,omitempty"`
 
+	// Forward the inbound auth token to this backend's Authorization header
+	ForwardAuthToken bool `json:"forwardAuthToken,omitempty"`
+
 	// Inline MCP server configuration
 	InlineConfig json.RawMessage `json:"inline,omitempty"`
 }

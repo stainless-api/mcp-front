@@ -52,7 +52,7 @@ func GenerateJWTSecret(providedSecret string) ([]byte, error) {
 	return secret, nil
 }
 
-func NewValidateTokenMiddleware(authServer *AuthorizationServer, issuer string, acceptIssuerAudience bool, gcpValidator *GCPIDTokenValidator, allowedDomains []string) func(http.Handler) http.Handler {
+func NewValidateTokenMiddleware(authServer *AuthorizationServer, issuer string, acceptIssuerAudience bool, gcpValidator *GCPAccessTokenValidator, allowedDomains []string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ctx := r.Context()
@@ -100,6 +100,7 @@ func NewValidateTokenMiddleware(authServer *AuthorizationServer, issuer string, 
 					return
 				}
 				userEmail = gcpEmail
+				ctx = context.WithValue(ctx, authTokenContextKey, token)
 
 				if onBehalf := r.Header.Get("X-On-Behalf-Of"); onBehalf != "" {
 					domain := emailutil.ExtractDomain(onBehalf)

@@ -1,7 +1,8 @@
 package oauth
 
 import (
-	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,6 +13,96 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func newMockTokenInfoServer(email string, expiresIn int, emailVerified bool) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		token := r.URL.Query().Get("access_token")
+		if token == "" || token == "invalid-token" {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"error": "invalid_token"})
+			return
+		}
+		verified := "false"
+		if emailVerified {
+			verified = "true"
+		}
+		json.NewEncoder(w).Encode(map[string]string{
+			"email":          email,
+			"email_verified": verified,
+			"expires_in":     fmt.Sprintf("%d", expiresIn),
+		})
+	}))
+}
+
+func TestGCPAccessTokenValidator(t *testing.T) {
+	t.Run("valid token returns email", func(t *testing.T) {
+		srv := newMockTokenInfoServer("sa@project.iam.gserviceaccount.com", 3600, true)
+		defer srv.Close()
+
+		v := &GCPAccessTokenValidator{
+			tokenInfoURL: srv.URL,
+			httpClient:   srv.Client(),
+		}
+
+		email, err := v.Validate(t.Context(), "valid-token")
+		require.NoError(t, err)
+		assert.Equal(t, "sa@project.iam.gserviceaccount.com", email)
+	})
+
+	t.Run("invalid token returns error", func(t *testing.T) {
+		srv := newMockTokenInfoServer("", 0, false)
+		defer srv.Close()
+
+		v := &GCPAccessTokenValidator{
+			tokenInfoURL: srv.URL,
+			httpClient:   srv.Client(),
+		}
+
+		_, err := v.Validate(t.Context(), "invalid-token")
+		assert.Error(t, err)
+	})
+
+	t.Run("unverified email returns error", func(t *testing.T) {
+		srv := newMockTokenInfoServer("sa@example.com", 3600, false)
+		defer srv.Close()
+
+		v := &GCPAccessTokenValidator{
+			tokenInfoURL: srv.URL,
+			httpClient:   srv.Client(),
+		}
+
+		_, err := v.Validate(t.Context(), "valid-token")
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "email not verified")
+	})
+
+	t.Run("caches valid responses", func(t *testing.T) {
+		callCount := 0
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			callCount++
+			json.NewEncoder(w).Encode(map[string]string{
+				"email":          "sa@project.iam.gserviceaccount.com",
+				"email_verified": "true",
+				"expires_in":     "3600",
+			})
+		}))
+		defer srv.Close()
+
+		v := &GCPAccessTokenValidator{
+			tokenInfoURL: srv.URL,
+			httpClient:   srv.Client(),
+		}
+
+		email1, err := v.Validate(t.Context(), "cached-token")
+		require.NoError(t, err)
+
+		email2, err := v.Validate(t.Context(), "cached-token")
+		require.NoError(t, err)
+
+		assert.Equal(t, email1, email2)
+		assert.Equal(t, 1, callCount)
+	})
+}
 
 func TestValidateTokenMiddleware_GCPFallback(t *testing.T) {
 	jwtSecret := []byte(strings.Repeat("a", 32))
@@ -89,16 +180,74 @@ func TestValidateTokenMiddleware_GCPFallback(t *testing.T) {
 		assert.Equal(t, http.StatusOK, rec.Code)
 		assert.Equal(t, "user@example.com", rec.Body.String())
 	})
-}
 
-func TestValidateTokenMiddleware_GCPValidatorIntegration(t *testing.T) {
-	t.Run("GCP validator creation requires network", func(t *testing.T) {
-		ctx := context.Background()
-		validator, err := NewGCPIDTokenValidator(ctx, "https://test.example.com")
-		if err != nil {
-			t.Skipf("GCP ID token validator creation failed (expected outside GCP): %v", err)
+	t.Run("GCP access token auth with impersonation", func(t *testing.T) {
+		srv := newMockTokenInfoServer("sa@project.iam.gserviceaccount.com", 3600, true)
+		defer srv.Close()
+
+		gcpValidator := &GCPAccessTokenValidator{
+			tokenInfoURL: srv.URL,
+			httpClient:   srv.Client(),
 		}
-		assert.NotNil(t, validator)
-		assert.Equal(t, "https://test.example.com", validator.audience)
+
+		authHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			email, _ := GetUserFromContext(r.Context())
+			authToken, _ := GetAuthTokenFromContext(r.Context())
+			w.Write([]byte(email + "|" + authToken))
+		})
+
+		middleware := NewValidateTokenMiddleware(authServer, "https://test.example.com", true, gcpValidator, []string{"vori.com"})
+		wrapped := middleware(authHandler)
+
+		req := httptest.NewRequest(http.MethodGet, "/gateway/sse", nil)
+		req.Header.Set("Authorization", "Bearer gcp-access-token")
+		req.Header.Set("X-On-Behalf-Of", "user@vori.com")
+		rec := httptest.NewRecorder()
+
+		wrapped.ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Equal(t, "user@vori.com|gcp-access-token", rec.Body.String())
+	})
+
+	t.Run("GCP access token impersonation rejected for disallowed domain", func(t *testing.T) {
+		srv := newMockTokenInfoServer("sa@project.iam.gserviceaccount.com", 3600, true)
+		defer srv.Close()
+
+		gcpValidator := &GCPAccessTokenValidator{
+			tokenInfoURL: srv.URL,
+			httpClient:   srv.Client(),
+		}
+
+		middleware := NewValidateTokenMiddleware(authServer, "https://test.example.com", true, gcpValidator, []string{"vori.com"})
+		wrapped := middleware(handler)
+
+		req := httptest.NewRequest(http.MethodGet, "/gateway/sse", nil)
+		req.Header.Set("Authorization", "Bearer gcp-access-token")
+		req.Header.Set("X-On-Behalf-Of", "attacker@evil.com")
+		rec := httptest.NewRecorder()
+
+		wrapped.ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusForbidden, rec.Code)
+	})
+
+	t.Run("GCP access token without impersonation uses service account email", func(t *testing.T) {
+		srv := newMockTokenInfoServer("sa@project.iam.gserviceaccount.com", 3600, true)
+		defer srv.Close()
+
+		gcpValidator := &GCPAccessTokenValidator{
+			tokenInfoURL: srv.URL,
+			httpClient:   srv.Client(),
+		}
+
+		middleware := NewValidateTokenMiddleware(authServer, "https://test.example.com", true, gcpValidator, nil)
+		wrapped := middleware(handler)
+
+		req := httptest.NewRequest(http.MethodGet, "/gateway/sse", nil)
+		req.Header.Set("Authorization", "Bearer gcp-access-token")
+		rec := httptest.NewRecorder()
+
+		wrapped.ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Equal(t, "sa@project.iam.gserviceaccount.com", rec.Body.String())
 	})
 }

@@ -10,6 +10,7 @@ import (
 	"github.com/dgellow/mcp-front/internal/client"
 	"github.com/dgellow/mcp-front/internal/config"
 	"github.com/dgellow/mcp-front/internal/log"
+	"github.com/dgellow/mcp-front/internal/oauth"
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
@@ -152,8 +153,17 @@ func (s *Server) HandleToolCall(ctx context.Context, userEmail string, namespace
 		return s.callInlineTool(ctx, provider, toolName, args)
 	}
 
-	if _, ok := s.serverConfigs[serviceName]; !ok {
+	serverConfig, ok := s.serverConfigs[serviceName]
+	if !ok {
 		return nil, fmt.Errorf("unknown service: %s", serviceName)
+	}
+
+	req := mcp.CallToolRequest{}
+	req.Params.Name = toolName
+	req.Params.Arguments = args
+
+	if serverConfig.ForwardAuthToken {
+		return s.callWithForwardedAuth(ctx, userEmail, serviceName, serverConfig, req)
 	}
 
 	session := s.getOrCreateSession(userEmail)
@@ -163,11 +173,37 @@ func (s *Server) HandleToolCall(ctx context.Context, userEmail string, namespace
 		return nil, fmt.Errorf("failed to connect to %s: %w", serviceName, err)
 	}
 
-	req := mcp.CallToolRequest{}
-	req.Params.Name = toolName
-	req.Params.Arguments = args
-
 	return backend.client.CallTool(ctx, req)
+}
+
+func (s *Server) callWithForwardedAuth(ctx context.Context, userEmail, serviceName string, serverConfig *config.MCPClientConfig, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	appliedConfig := serverConfig
+	if authToken, ok := oauth.GetAuthTokenFromContext(ctx); ok {
+		appliedConfig = appliedConfig.WithForwardedAuthToken(authToken)
+	}
+
+	mcpClient, err := s.createTransport(serviceName, appliedConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create transport for %s: %w", serviceName, err)
+	}
+	defer mcpClient.Close()
+
+	if err := mcpClient.Start(ctx); err != nil {
+		return nil, fmt.Errorf("failed to start client for %s: %w", serviceName, err)
+	}
+
+	initReq := mcp.InitializeRequest{}
+	initReq.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
+	initReq.Params.ClientInfo = mcp.Implementation{
+		Name:    "mcp-front-gateway",
+		Version: "1.0",
+	}
+
+	if _, err := mcpClient.Initialize(ctx, initReq); err != nil {
+		return nil, fmt.Errorf("failed to initialize %s: %w", serviceName, err)
+	}
+
+	return mcpClient.CallTool(ctx, req)
 }
 
 func (s *Server) callInlineTool(ctx context.Context, provider InlineToolProvider, toolName string, args map[string]any) (*mcp.CallToolResult, error) {
@@ -356,6 +392,12 @@ func (s *Server) getOrCreateBackend(ctx context.Context, userEmail, serviceName 
 			return nil, fmt.Errorf("user token required for %s: %w", serviceName, err)
 		}
 		appliedConfig = serverConfig.ApplyUserToken(token)
+	}
+
+	if serverConfig.ForwardAuthToken {
+		if authToken, ok := oauth.GetAuthTokenFromContext(ctx); ok {
+			appliedConfig = appliedConfig.WithForwardedAuthToken(authToken)
+		}
 	}
 
 	mcpClient, err := s.createTransport(serviceName, appliedConfig)

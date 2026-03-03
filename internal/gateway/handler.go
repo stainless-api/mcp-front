@@ -102,6 +102,7 @@ func (h *Handler) handleMessage(w http.ResponseWriter, r *http.Request) {
 	_ = r.URL.Query().Get("sessionId")
 
 	userEmail, _ := oauth.GetUserFromContext(r.Context())
+	authToken, _ := oauth.GetAuthTokenFromContext(r.Context())
 
 	var request jsonrpc.Request
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
@@ -112,12 +113,16 @@ func (h *Handler) handleMessage(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusAccepted)
 
-	go h.processMessage(userEmail, &request)
+	go h.processMessage(userEmail, authToken, &request)
 }
 
-func (h *Handler) processMessage(userEmail string, request *jsonrpc.Request) {
+func (h *Handler) processMessage(userEmail string, authToken string, request *jsonrpc.Request) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
+
+	if authToken != "" {
+		ctx = oauth.WithAuthToken(ctx, authToken)
+	}
 
 	var response *jsonrpc.Response
 

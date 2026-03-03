@@ -115,6 +115,14 @@
         "displayName": "Linear"
       }
     },
+    "gke": {
+      "transportType": "streamable-http",
+      "url": "https://container.googleapis.com/mcp",
+      "headers": {
+        "x-goog-user-project": "vori-1bdf0"
+      },
+      "forwardAuthToken": true
+    },
     "ditto-read-only": {
       "transportType": "inline",
       "inline": {
