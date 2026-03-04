@@ -94,6 +94,11 @@
   color: #E5E5E5 !important;
 }
 
+/* Hide Starlight's auto-generated page title when our custom hero provides its own */
+.content-panel:has(+ .content-panel .hero) {
+  display: none;
+}
+
 /* Typography improvements */
 h1, h2, h3, h4, h5, h6 {
   font-weight: 600;

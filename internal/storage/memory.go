@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dgellow/mcp-front/internal/log"
-	"github.com/dgellow/mcp-front/internal/oauth"
+	"github.com/stainless-api/mcp-front/internal/log"
+	"github.com/stainless-api/mcp-front/internal/oauth"
 )
 
 var _ Storage = (*MemoryStorage)(nil)

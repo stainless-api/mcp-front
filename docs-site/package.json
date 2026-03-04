@@ -14,13 +14,13 @@
     "format:check": "prettier --check \"src/**/*.{astro,md,mdx,js,ts,json}\""
   },
   "dependencies": {
-    "@astrojs/starlight": "^0.34.3",
-    "astro": "^5.6.1",
-    "sharp": "^0.32.5"
+    "@astrojs/starlight": "^0.37.6",
+    "astro": "^5.18.0",
+    "sharp": "^0.34.5"
   },
   "devDependencies": {
-    "gh-pages": "^6.0.0",
-    "prettier": "^3.3.3",
+    "gh-pages": "^6.3.0",
+    "prettier": "^3.8.1",
     "prettier-plugin-astro": "^0.14.1"
   }
 }

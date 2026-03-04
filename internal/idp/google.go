@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"net/http"
 
-	emailutil "github.com/dgellow/mcp-front/internal/emailutil"
-	"github.com/dgellow/mcp-front/internal/ioutil"
+	emailutil "github.com/stainless-api/mcp-front/internal/emailutil"
+	"github.com/stainless-api/mcp-front/internal/ioutil"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 )

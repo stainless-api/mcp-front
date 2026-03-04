@@ -33,30 +33,29 @@ You want your team to use Claude with internal MCP servers (databases, Linear, N
 
 ## The solution
 
-mcp-front sits between Claude and your MCP servers as an authentication gateway. Your team authenticates with Google once. When Claude connects, mcp-front validates the OAuth token, checks the user is from your organization, and proxies to the actual MCP server in your secure environment.
+mcp-front sits between Claude and your MCP servers as an authentication gateway. Your team authenticates via OAuth once (Google, Azure AD, GitHub, or any OIDC provider). When Claude connects, mcp-front validates the token, checks the user belongs to your organization, and proxies to the actual MCP server in your secure environment.
 
-For stdio servers, each user gets an isolated subprocess. For services that need individual API keys (Notion, Linear), users connect them once through a web UI and mcp-front injects tokens automatically.
+For stdio servers, each user gets an isolated subprocess. For services that need individual API keys (Notion, Linear), users connect them once through a web UI and mcp-front injects tokens automatically. Tokens are scoped to specific services ([RFC 8707](https://datatracker.ietf.org/doc/html/rfc8707)) — a token for your Postgres server won't work for Linear.
 
 Organization-wide access control with per-user isolation. No modifications to your MCP servers. Nothing exposed to the internet.
 
 ## How it works
 
 1. User adds `https://your-domain.com/<service>/sse` to Claude
-2. Claude redirects to Google for login (first time only)
-3. mcp-front validates the user is from your organization
+2. Claude redirects to the identity provider for login (first time only)
+3. mcp-front validates the user belongs to your organization
 4. If the service needs a user API key (Notion, Linear), user connects it through a web page
 5. mcp-front proxies all MCP requests to the backend server
 
-Each stdio server gets its own isolated subprocess per user. OAuth tokens are scoped to specific services (RFC 8707) — a token for your Postgres server won't work for Linear.
+## Try it locally
 
-## Try it locally (5 minutes)
-
-Test with bearer tokens before setting up OAuth:
+Save this as `config.json`:
 
 ```json
 {
   "version": "v0.0.1-DEV_EDITION_EXPECT_CHANGES",
   "proxy": {
+    "baseURL": "http://localhost:8080",
     "addr": ":8080"
   },
   "mcpServers": {
@@ -76,54 +75,37 @@ Test with bearer tokens before setting up OAuth:
 ```
 
 ```bash
-# Run it
-docker run -p 8080:8080 -v $(pwd)/config.json:/app/config.json dgellow/mcp-front:latest
+# With Go
+go install github.com/stainless-api/mcp-front/cmd/mcp-front@main
+mcp-front -config config.json
 
-# In Claude.ai settings, add this MCP server:
-# URL: http://localhost:8080/filesystem/sse
-# Auth: Bearer Token
-# Token: dev-token-123
+# Or with Docker
+docker run -p 8080:8080 -v $(pwd)/config.json:/app/config.json dgellow/mcp-front:latest
 ```
 
-## Production setup
+In Claude.ai, add an MCP server with URL `http://localhost:8080/filesystem/sse`, auth type Bearer Token, token `dev-token-123`.
 
-For organization-wide deployment with OAuth, domain restrictions, and Firestore persistence:
+See the **[Quickstart](https://stainless-api.github.io/mcp-front/quickstart/)** for a full walkthrough.
 
-**[→ Full production setup guide](https://stainless-api.github.io/mcp-front/examples/oauth-google/)**
+## Going further
 
-The guide covers:
-- Setting up Google OAuth (Cloud Console configuration)
-- Environment variables and secret management
-- Domain validation and CORS
-- Firestore storage for production
-- HTTPS deployment considerations
-- Per-user service authentication (Notion, Linear, etc.)
+**[Identity Providers](https://stainless-api.github.io/mcp-front/identity-providers/)** — Set up Google, Azure AD, GitHub, or any OIDC provider for production OAuth.
 
-## Configuration
+**[Configuration](https://stainless-api.github.io/mcp-front/configuration/)** — All config options including Firestore persistence, HTTPS, and per-user service authentication.
 
-mcp-front supports multiple transport types (stdio, SSE, streamable-http, inline). Authentication happens at three levels: user-to-proxy (OAuth), proxy-to-server (`serviceAuths`), and per-user service tokens (`userAuthentication`).
+**[Server Types](https://stainless-api.github.io/mcp-front/server-types/)** — Stdio, SSE, streamable HTTP, inline tools, and aggregate endpoints.
 
-Example configs: [config-oauth.json](config-oauth.json) | [config-token.example.json](config-token.example.json)
+**[Service Authentication](https://stainless-api.github.io/mcp-front/service-authentication/)** — Per-user tokens for services like Notion, Linear, and other OAuth or API key services.
 
-See the [configuration reference](https://stainless-api.github.io/mcp-front/configuration/) for all options.
+**[Architecture](https://stainless-api.github.io/mcp-front/architecture/)** — Per-service audience validation, token flow, and MCP spec compliance.
+
+**[API Reference](https://stainless-api.github.io/mcp-front/api-reference/)** — HTTP endpoints, OAuth discovery, and client registration.
 
 ## Security
 
-- OAuth 2.0 with PKCE required for all flows
-- Google Workspace domain validation
-- Encrypted session cookies (AES-256-GCM)
-- Per-user session isolation for stdio servers
-- Per-service audience claims (RFC 8707) prevent token reuse across services
+mcp-front uses OAuth 2.0 with PKCE for public clients, domain and organization-based access control, per-user session isolation for stdio servers, per-service audience claims ([RFC 8707](https://datatracker.ietf.org/doc/html/rfc8707)) to prevent token reuse across services, and AES-256-GCM encryption for sensitive data at rest.
 
-⚠️ **Security boundary**: mcp-front handles authentication. MCP servers handle authorization and input validation. Only use MCP servers you trust with your data.
-
-## Documentation
-
-- **[Quickstart](https://stainless-api.github.io/mcp-front/quickstart/)** - Get running in 5 minutes with bearer tokens
-- **[Production setup](https://stainless-api.github.io/mcp-front/examples/oauth-google/)** - OAuth with Google Workspace
-- **[Configuration reference](https://stainless-api.github.io/mcp-front/configuration/)** - All config options
-- **[API reference](https://stainless-api.github.io/mcp-front/api-reference/)** - HTTP endpoints
-- **[Architecture](https://stainless-api.github.io/mcp-front/architecture/)** - How it works under the hood
+**Security boundary**: mcp-front handles authentication. MCP servers handle authorization and input validation. Only use MCP servers you trust with your data.
 
 ## License
 

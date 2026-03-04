@@ -7,7 +7,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/dgellow/mcp-front/internal/urlutil"
+	"github.com/stainless-api/mcp-front/internal/urlutil"
 )
 
 // Resource Indicators for OAuth 2.0 (RFC 8707)

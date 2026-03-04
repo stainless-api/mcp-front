@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/dgellow/mcp-front/internal/oauth"
+	"github.com/stainless-api/mcp-front/internal/oauth"
 )
 
 var ErrUserTokenNotFound = errors.New("user token not found")

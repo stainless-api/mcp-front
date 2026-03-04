@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/dgellow/mcp-front/internal/config"
+	"github.com/stainless-api/mcp-front/internal/config"
 )
 
 // ResolveConfig resolves environment variables in inline config

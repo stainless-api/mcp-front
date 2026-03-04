@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/dgellow/mcp-front/internal/log"
+	"github.com/stainless-api/mcp-front/internal/log"
 )
 
 // WriteResponse writes a JSON-RPC response to the http.ResponseWriter

@@ -11,16 +11,16 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dgellow/mcp-front/internal/auth"
-	"github.com/dgellow/mcp-front/internal/config"
-	"github.com/dgellow/mcp-front/internal/cookie"
-	"github.com/dgellow/mcp-front/internal/crypto"
-	"github.com/dgellow/mcp-front/internal/idp"
-	jsonwriter "github.com/dgellow/mcp-front/internal/json"
-	"github.com/dgellow/mcp-front/internal/log"
-	"github.com/dgellow/mcp-front/internal/oauth"
-	"github.com/dgellow/mcp-front/internal/session"
-	"github.com/dgellow/mcp-front/internal/storage"
+	"github.com/stainless-api/mcp-front/internal/auth"
+	"github.com/stainless-api/mcp-front/internal/config"
+	"github.com/stainless-api/mcp-front/internal/cookie"
+	"github.com/stainless-api/mcp-front/internal/crypto"
+	"github.com/stainless-api/mcp-front/internal/idp"
+	jsonwriter "github.com/stainless-api/mcp-front/internal/json"
+	"github.com/stainless-api/mcp-front/internal/log"
+	"github.com/stainless-api/mcp-front/internal/oauth"
+	"github.com/stainless-api/mcp-front/internal/session"
+	"github.com/stainless-api/mcp-front/internal/storage"
 )
 
 type AuthHandlers struct {

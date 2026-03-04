@@ -1,4 +1,4 @@
-module github.com/dgellow/mcp-front
+module github.com/stainless-api/mcp-front
 
 go 1.25
 

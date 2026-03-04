@@ -5,21 +5,28 @@ description: Connecting services that require per-user authentication.
 
 ## Service Authentication
 
-Notion, Linear, and Stainless need users to auth with their own accounts. mcp-front handles this after Google login via OAuth or manual token entry.
+Some services need users to authenticate with their own accounts — Notion API keys, Linear OAuth tokens, Stainless credentials. MCP Front handles this after identity provider login via OAuth or manual token entry.
 
-When users first access a service with `requiresUserToken: true`, they go through one-time setup.
+## User flow
 
-## User Flow
+When a user first accesses a service with `requiresUserToken: true`, they go through a one-time setup flow:
 
-User logs in with Google, sees an interstitial page listing services that need connection. They connect via OAuth (redirects to service, approves, returns) or manual token (enters key at `/my/tokens`). Click "Skip" or "Continue" to return to Claude. OAuth tokens refresh automatically, manual tokens persist until user updates them.
+1. The user connects to an MCP server endpoint (e.g., `/notion/sse`) through Claude.
+2. MCP Front redirects them to the identity provider for organization login.
+3. After login, if any OAuth-type services have `requiresUserToken: true` and the user hasn't connected them yet, MCP Front shows an interstitial page listing those services.
+4. The user clicks "Connect" and gets redirected to the service's authorization page (e.g., Stainless OAuth). After approving, they return to MCP Front automatically.
+5. Once all OAuth services are connected (or the user clicks "Skip" to defer), MCP Front redirects back to Claude with the authorization code.
+6. For manual token services, users manage their tokens directly at `/my/tokens` — there is no interstitial for these.
+
+OAuth tokens refresh automatically. Manual tokens persist until the user updates or deletes them at `/my/tokens`.
 
 ## Configuration
 
-Set `requiresUserToken: true` and add `userAuthentication` object specifying the method.
+Set `requiresUserToken: true` and add a `userAuthentication` object specifying the method.
 
 ### Type: `oauth`
 
-Services with OAuth 2.0 support. Handles token exchange and refresh automatically.
+For services with OAuth 2.0 support. MCP Front handles the token exchange and refresh cycle.
 
 ```json
 "stainless": {
@@ -39,15 +46,16 @@ Services with OAuth 2.0 support. Handles token exchange and refresh automaticall
 }
 ```
 
-Fields: `displayName` (shown to user), `clientId` and `clientSecret` (your OAuth app credentials), `authorizationUrl` and `tokenUrl` (service OAuth endpoints), `scopes` (permissions requested).
+Fields: `displayName` (shown on the interstitial page), `clientId` and `clientSecret` (your OAuth app credentials), `authorizationUrl` and `tokenUrl` (service OAuth endpoints), `scopes` (permissions to request).
 
 ### Type: `manual`
 
-User-generated API tokens.
+For services that use user-generated API tokens.
 
 ```json
 "notion": {
   "transportType": "stdio",
+  "command": "notion-mcp",
   "requiresUserToken": true,
   "userAuthentication": {
     "type": "manual",
@@ -59,8 +67,28 @@ User-generated API tokens.
 }
 ```
 
-Fields: `displayName` (token page label), `instructions` (how to get token), `helpUrl` (link to docs), `validation` (regex for format check).
+Fields: `displayName` (label on the token page), `instructions` (how to obtain the token), `helpUrl` (link to the service's token page), `validation` (regex to check token format before saving).
 
-## Token Management
+## Injecting tokens into MCP servers
 
-Visit `/my/tokens` to connect or disconnect OAuth services, or add and update manual tokens.
+Once a user provides their token, MCP Front injects it into the MCP server process using the `$userToken` syntax. Add it to the server's `env`, `args`, `url`, or `headers` fields:
+
+```json
+"env": {
+  "NOTION_TOKEN": { "$userToken": "{{token}}" }
+}
+```
+
+The `{{token}}` placeholder is replaced at request time with the authenticated user's service token. You can embed it in a larger string — `{"$userToken": "Bearer {{token}}"}` adds a Bearer prefix.
+
+### Token format
+
+The `tokenFormat` field in `userAuthentication` transforms the raw token before injection. It defaults to `"{{token}}"` (pass through unchanged). MCP Front replaces `{{token}}` in `tokenFormat` with the raw user token, and the result becomes the value used wherever `$userToken` appears. This is useful when the raw token needs wrapping — for example, `"tokenFormat": "token={{token}}"` would turn a raw token `abc123` into `token=abc123`.
+
+## Token storage
+
+User tokens are encrypted at rest using AES-256-GCM with the `encryptionKey` from your auth settings. When using Firestore storage, all tokens are encrypted before being written to the database.
+
+## Token management
+
+Users can manage their service connections at `/my/tokens`. This page lets them connect or disconnect OAuth services, add or update manual tokens, and delete tokens they no longer need.

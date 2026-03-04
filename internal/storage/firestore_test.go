@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/dgellow/mcp-front/internal/crypto"
+	"github.com/stainless-api/mcp-front/internal/crypto"
 	"github.com/stretchr/testify/assert"
 )
 

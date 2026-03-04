@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/dgellow/mcp-front/internal/idp"
-	"github.com/dgellow/mcp-front/internal/log"
+	"github.com/stainless-api/mcp-front/internal/idp"
+	"github.com/stainless-api/mcp-front/internal/log"
 )
 
 type AccessTokenClaims struct {

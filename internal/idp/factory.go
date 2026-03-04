@@ -3,7 +3,7 @@ package idp
 import (
 	"fmt"
 
-	"github.com/dgellow/mcp-front/internal/config"
+	"github.com/stainless-api/mcp-front/internal/config"
 )
 
 // NewProvider creates a Provider based on the IDPConfig.

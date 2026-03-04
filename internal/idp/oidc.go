@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"time"
 
-	emailutil "github.com/dgellow/mcp-front/internal/emailutil"
-	"github.com/dgellow/mcp-front/internal/ioutil"
+	emailutil "github.com/stainless-api/mcp-front/internal/emailutil"
+	"github.com/stainless-api/mcp-front/internal/ioutil"
 	"golang.org/x/oauth2"
 )
 
