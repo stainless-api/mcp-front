@@ -3,23 +3,17 @@ title: Quickstart
 description: Get MCP Front running in 5 minutes
 ---
 
-This guide gets you running with bearer token authentication. For production deployments with OAuth, see the [OAuth example](/examples/oauth-google/).
-
-## How it works
-
-![MCP Front Architecture](/mcp-front/architecture.svg)
-
-MCP Front acts as a secure gateway between AI assistants and your internal MCP servers. It handles authentication so your servers don't have to.
+This guide uses bearer token authentication for simplicity. For production deployments with OAuth, see the [Identity Providers](/mcp-front/identity-providers/) guide.
 
 ## 1. Create a config file
 
-Create `config.json` with a basic MCP server:
+Create `config.json`:
 
 ```json
 {
   "version": "v0.0.1-DEV_EDITION_EXPECT_CHANGES",
   "proxy": {
-    "name": "My MCP Proxy",
+    "baseURL": "http://localhost:8080",
     "addr": ":8080"
   },
   "mcpServers": {
@@ -30,7 +24,7 @@ Create `config.json` with a basic MCP server:
       "serviceAuths": [
         {
           "type": "bearer",
-          "tokens": ["my-secret-token"]
+          "tokens": ["dev-token-123"]
         }
       ]
     }
@@ -38,32 +32,29 @@ Create `config.json` with a basic MCP server:
 }
 ```
 
+The server name `filesystem` determines the URL path: `/filesystem/sse`.
+
 ## 2. Run MCP Front
 
-You have three options:
+### Option A: Install with Go
 
-### Option A: Docker (recommended)
+```bash
+go install github.com/dgellow/mcp-front/cmd/mcp-front@main
+mcp-front -config config.json
+```
+
+### Option B: Docker
 
 ```bash
 docker run -p 8080:8080 \
-  -v $(pwd)/config.json:/config.json \
-  ghcr.io/dgellow/mcp-front:latest
-```
-
-### Option B: Install with Go
-
-```bash
-# Install directly from GitHub
-go install github.com/dgellow/mcp-front/cmd/mcp-front@main
-
-# Then run
-mcp-front -config config.json
+  -v $(pwd)/config.json:/app/config.json \
+  docker.io/dgellow/mcp-front:latest
 ```
 
 ### Option C: Build from source
 
 ```bash
-git clone https://github.com/dgellow/mcp-front
+git clone https://github.com/stainless-api/mcp-front
 cd mcp-front
 go build -o mcp-front ./cmd/mcp-front
 ./mcp-front -config config.json
@@ -71,9 +62,7 @@ go build -o mcp-front ./cmd/mcp-front
 
 ## 3. Connect from Claude
 
-Open Claude Desktop settings and add a new MCP server. Set the URL to `http://localhost:8080/filesystem/sse`, auth type to Bearer Token, and token to `my-secret-token`. Save and restart Claude.
-
-The URL path `/filesystem/sse` must match the server name from your config.
+In Claude.ai, go to Settings and add a new MCP server. Set the URL to `http://localhost:8080/filesystem/sse`, auth type to Bearer Token, and token to `dev-token-123`.
 
 ## 4. Test it
 
@@ -83,60 +72,28 @@ You should see the filesystem tools from your MCP server.
 
 ## What's next?
 
-Switch to [OAuth authentication](/examples/oauth-google/) for production. [Add more MCP servers](/configuration#mcp-servers) to your config. Or, configure services that require per-user authentication by following the [Service Authentication Guide](/service-authentication/).
+Switch to [OAuth authentication](/mcp-front/identity-providers/) for production. [Add more MCP servers](/mcp-front/server-types/) to your config. Or, configure services that require per-user authentication by following the [Service Authentication](/mcp-front/service-authentication/) guide.
 
 ## Troubleshooting
 
 ### Connection refused
 
 ```bash
-# Check if MCP Front is running
 curl http://localhost:8080/health
-# Should return: {"status":"ok","service":"mcp-front"}
 ```
 
-If not running, check the process is actually running. Verify port 8080 isn't already in use. Make sure firewall rules allow localhost connections.
+Should return `{"status":"ok"}`. If not, verify the process is running and port 8080 isn't already in use.
 
 ### Authentication failed
 
-The token in Claude must be in the `serviceAuths` array for that server:
-
-```json
-{
-  "mcpServers": {
-    "filesystem": {
-      "serviceAuths": [
-        {
-          "type": "bearer",
-          "tokens": ["my-secret-token"] // <- Token must be in this array
-        }
-      ]
-    }
-  }
-}
-```
-
-Check logs for details:
-
-```bash
-# Docker
-docker logs <container-id>
-
-# Binary
-# Logs print to stdout
-```
+The token in Claude must match one of the tokens in the `serviceAuths` array for that server. Double-check the token string is identical — no extra whitespace or encoding differences. Check logs for details (`docker logs <container-id>` for Docker, or stdout for the binary).
 
 ### No tools available
 
-This usually means MCP Front can't start your MCP server:
-
-1. Test the MCP server directly:
+This usually means MCP Front can't start the MCP server process. Test the server directly:
 
 ```bash
 npx -y @modelcontextprotocol/server-filesystem /tmp
-# Should output JSON-RPC messages
 ```
 
-2. Check MCP Front logs for errors
-3. Ensure the command is in PATH
-4. For Docker, make sure the MCP server is accessible from the container
+If that fails, the server itself has a problem. If it works, check MCP Front logs for errors — the command might not be in PATH inside the container.

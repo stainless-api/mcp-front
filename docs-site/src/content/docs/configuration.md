@@ -3,46 +3,99 @@ title: Configuration
 description: Config file reference
 ---
 
-## Configuration basics
+## Config file structure
 
-MCP Front uses a single JSON config file. The structure is straightforward: proxy settings at the top, MCP servers at the bottom.
+MCP Front uses a single JSON config file.
 
 ```json
 {
   "version": "v0.0.1-DEV_EDITION_EXPECT_CHANGES",
   "proxy": {
-    "name": "My MCP Proxy",
     "baseURL": "https://mcp.company.com",
     "addr": ":8080",
-    "auth": {
-      /* auth config */
-    }
+    "auth": { ... }
   },
-  "mcpServers": {
-    /* server configs */
+  "mcpServers": { ... }
+}
+```
+
+The version string signals the config format may change in future releases.
+
+## CLI flags
+
+```
+mcp-front -config config.json         # Run with config file (required)
+mcp-front -config-init config.json    # Generate a default config file
+mcp-front -config config.json -validate  # Validate config and exit
+mcp-front -version                    # Print version
+mcp-front -help                       # Print usage
+```
+
+The `-validate` flag checks your config for errors without starting the server. It validates structure, field types, and references without requiring environment variables to be set.
+
+## Environment variable references
+
+Any string value in the config can reference environment variables using `{"$env": "VAR_NAME"}`. This keeps secrets out of your config files. Values are resolved at config load time.
+
+```json
+{
+  "jwtSecret": { "$env": "JWT_SECRET" },
+  "url": { "$env": "DATABASE_MCP_URL" }
+}
+```
+
+This syntax prevents accidental shell expansion when configs pass through scripts or CI/CD pipelines.
+
+## User token references
+
+For MCP servers that need per-user tokens injected at request time, use the `{"$userToken": "...{{token}}..."}` syntax. The `{{token}}` placeholder is replaced with the authenticated user's service token when a request is made.
+
+```json
+{
+  "env": {
+    "API_KEY": { "$userToken": "{{token}}" },
+    "AUTH_HEADER": { "$userToken": "Bearer {{token}}" }
   }
 }
 ```
 
-The `version` is currently "v0.0.1-DEV_EDITION_EXPECT_CHANGES" - this signals the config format may change. The `name` shows up in logs. The `addr` is where MCP Front listens, typically ":8080" for port 8080 on all interfaces.
+This works in `env`, `args`, `url`, and `headers` fields on MCP servers. See [Service Authentication](/mcp-front/service-authentication/) for how users provide these tokens.
 
-For OAuth, you need `baseURL` (note the camelCase) set to your public URL so Google can redirect back after login. For bearer tokens, you can skip it.
+## Proxy configuration
 
-The `auth` section defines how users authenticate. The `mcpServers` section lists all the MCP servers you want to proxy.
+### `proxy.baseURL`
 
-## Authentication configuration
+Your public URL. Required. Must be HTTPS in production.
 
-MCP Front has three authentication layers:
+### `proxy.addr`
 
-1. **User-to-proxy auth** (`proxy.auth`) - How users authenticate to MCP Front (OAuth with Google)
-2. **Proxy-to-server auth** (`serviceAuths`) - How MCP Front authenticates to backend MCP servers (bearer tokens or basic auth)
-3. **Per-service user tokens** (`userAuthentication`) - When backend services need individual user OAuth tokens (Linear, Notion, etc.)
+Listen address, typically `":8080"` for port 8080 on all interfaces.
 
-### User authentication (proxy.auth)
+### `proxy.name`
 
-#### OAuth 2.0 with PKCE
+Used as the MCP server implementation name. Optional.
 
-For production, use OAuth with Google. Claude redirects users to Google for authentication, and MCP Front validates their domain. All sensitive fields must use environment variables for security.
+### `proxy.sessions`
+
+Session management configuration. All fields are optional.
+
+```json
+{
+  "proxy": {
+    "sessions": {
+      "timeout": "24h",
+      "cleanupInterval": "15m",
+      "maxPerUser": 5
+    }
+  }
+}
+```
+
+`timeout` controls how long sessions last (default: `"5m"`). `cleanupInterval` is how often expired sessions are garbage collected (default: `"1m"`). `maxPerUser` limits concurrent sessions per user (default: `10`, set to `0` for unlimited).
+
+## Authentication
+
+Configure OAuth under `proxy.auth`.
 
 ```json
 {
@@ -57,7 +110,7 @@ For production, use OAuth with Google. Claude redirects users to Google for auth
     },
     "allowedDomains": ["company.com"],
     "allowedOrigins": ["https://claude.ai"],
-    "tokenTtl": "24h",
+    "tokenTtl": "4h",
     "storage": "memory",
     "jwtSecret": { "$env": "JWT_SECRET" },
     "encryptionKey": { "$env": "ENCRYPTION_KEY" }
@@ -65,278 +118,183 @@ For production, use OAuth with Google. Claude redirects users to Google for auth
 }
 ```
 
-The `issuer` should match your `baseURL`. `allowedDomains` restricts access to specific email domains. `allowedOrigins` controls which websites can make requests.
+### `auth.kind`
 
-`tokenTtl` controls how long JWT tokens are valid. Shorter times are more secure but require more frequent logins.
+Must be `"oauth"`. This is the only supported authentication kind.
 
-Security requirements: `idp.clientSecret`, `jwtSecret`, and `encryptionKey` must be environment variables. The JWT secret must be at least 32 bytes. The encryption key must be exactly 32 bytes.
+### `auth.issuer`
 
-For production, set `storage` to "firestore" and add `gcpProject`, `firestoreDatabase`, and `firestoreCollection` fields.
+The OAuth issuer URI. Should match your `baseURL`.
 
-### Storage architecture
+### `auth.idp`
 
-![Storage Architecture](/mcp-front/storage-architecture.svg)
+Identity provider configuration. MCP Front supports Google, Azure AD, GitHub, and generic OIDC providers. See [Identity Providers](/mcp-front/identity-providers/) for setup details.
 
-MCP Front supports two storage backends:
+### `auth.allowedDomains`
 
-- **Memory**: Development only, data lost on restart
-- **Firestore**: Production, with encrypted secrets and persistent sessions
+Restricts access to users with email addresses from these domains. At least one of `allowedDomains` or `idp.allowedOrgs` is required.
+
+### `auth.allowedOrigins`
+
+CORS origin whitelist. When empty, all origins are allowed. Set to `["https://claude.ai"]` to restrict to Claude, or add additional origins for other MCP clients.
+
+### `auth.tokenTtl`
+
+Access token lifetime as a Go duration string. Default: `"1h"`. Examples: `"4h"`, `"30m"`, `"24h"`.
+
+### `auth.refreshTokenTtl`
+
+Refresh token lifetime. Default: `"720h"` (30 days).
+
+### `auth.refreshTokenScopes`
+
+When set, refresh tokens are only issued if the authorization request includes at least one of these scopes. Default: empty (always issue refresh tokens).
+
+### `auth.storage`
+
+`"memory"` (default) for development — data lost on restart. `"firestore"` for production with persistent storage.
+
+### `auth.jwtSecret`
+
+Secret for signing JWT tokens. Must be at least 32 bytes. Must use `{"$env": "VAR"}` syntax.
+
+### `auth.encryptionKey`
+
+Secret for encrypting sensitive data at rest (AES-256-GCM). Must be exactly 32 bytes. Required when using OAuth authentication. Must use `{"$env": "VAR"}` syntax.
+
+### Firestore configuration
+
+When `storage` is `"firestore"`:
+
+```json
+{
+  "auth": {
+    "storage": "firestore",
+    "gcpProject": { "$env": "GOOGLE_CLOUD_PROJECT" },
+    "firestoreDatabase": "(default)",
+    "firestoreCollection": "mcp_front_data"
+  }
+}
+```
+
+`gcpProject` is your GCP project ID (required for Firestore). `firestoreDatabase` defaults to `"(default)"`. `firestoreCollection` defaults to `"mcp_front_data"`.
+
+### `auth.dangerouslyAcceptIssuerAudience`
+
+When `true`, allows tokens with just the base issuer as audience to access any service. This is a workaround for MCP clients that don't implement RFC 8707 resource indicators, but it defeats per-service token isolation. Default: `false`. Only enable if you understand the security implications.
 
 ## MCP server configuration
 
-All MCP servers need a `transportType` field. MCP Front supports four transport types for different use cases.
-
-### SSE servers (existing HTTP services)
-
-For MCP servers that already expose a Server-Sent Events endpoint:
+Each server needs at least a `transportType`. See [Server Types](/mcp-front/server-types/) for transport-specific documentation.
 
 ```json
 {
   "mcpServers": {
-    "database": {
-      "transportType": "sse",
-      "url": "http://postgres-mcp:3000/sse",
-      "options": {
-        "authTokens": ["dev", "prod"]
-      }
-    }
-  }
-}
-```
-
-### Stdio servers (spawn processes)
-
-Start MCP servers as subprocesses. Each user gets their own process. Isolation depends on your sandboxing setup:
-
-```json
-{
-  "mcpServers": {
-    "filesystem": {
+    "postgres": {
       "transportType": "stdio",
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/data"],
+      "command": "docker",
+      "args": ["run", "--rm", "-i", "my-postgres-mcp"],
       "env": {
-        "DEBUG": "1"
+        "DATABASE_URL": { "$env": "DATABASE_URL" }
       }
+    },
+    "linear": {
+      "transportType": "sse",
+      "url": "http://linear-mcp:3000/sse"
     }
   }
 }
 ```
 
-MCP Front just spawns processes directly. For actual isolation, use containers, systemd sandboxing, or similar tools.
+### Server names
 
-### Streamable HTTP servers
+Server names must start with an alphanumeric character and contain only alphanumeric characters, underscores, and hyphens. A server named `"postgres"` is accessible at `/postgres/sse`.
 
-For MCP servers that use HTTP with streaming responses:
+### `serviceAuths`
 
-```json
-{
-  "mcpServers": {
-    "api-tools": {
-      "transportType": "streamable-http",
-      "url": "http://api-mcp:8080",
-      "options": {
-        "timeout": "30s"
-      }
-    }
-  }
-}
-```
-
-### Inline servers
-
-For simple servers defined directly in the config (advanced use case):
-
-```json
-{
-  "mcpServers": {
-    "simple": {
-      "transportType": "inline",
-      "options": {
-        "handler": "builtin-echo"
-      }
-    }
-  }
-}
-```
-
-### Server options
-
-Additional configuration via `options` field.
-
-#### Proxy-to-Server Authentication (serviceAuths)
-
-Backend MCP servers may require authentication. The `serviceAuths` array configures how MCP Front authenticates when connecting to each backend server. This is separate from how users authenticate to MCP Front itself.
+Per-server authentication validated on incoming requests before proxying. Useful for development or non-OAuth MCP clients.
 
 **Bearer tokens:**
 
 ```json
-"postgres": {
-  "transportType": "sse",
-  "url": "http://postgres-mcp:3000/sse",
+{
   "serviceAuths": [
     {
       "type": "bearer",
-      "tokens": ["dev-token-postgres-1", "dev-token-postgres-2"]
+      "tokens": ["dev-token-123", "dev-token-456"]
     }
   ]
 }
 ```
 
-MCP Front will accept any request using any token from this list and forward it to the backend server. This is per-server authentication - tokens for `postgres` don't work for `linear`.
-
 **Basic authentication:**
 
 ```json
-"serviceAuths": [
-  {
-    "type": "basic",
-    "username": "admin",
-    "password": {"$env": "ADMIN_PASSWORD"}
-  }
-]
-```
-
-#### Per-User Authentication (userAuthentication)
-
-Services like Notion or Linear need individual user OAuth tokens or API keys. Set `requiresUserToken: true` and add `userAuthentication` object. Users connect their accounts through the interstitial page after Google login.
-
-##### Type: `manual`
-
-User-generated API tokens.
-
-```json
-"notion": {
-  "transportType": "stdio",
-  "requiresUserToken": true,
-  "userAuthentication": {
-    "type": "manual",
-    "displayName": "Notion Integration Token",
-    "instructions": "Create a new internal integration and copy the 'Internal Integration Secret'.",
-    "helpUrl": "https://www.notion.so/my-integrations",
-    "validation": "^secret_[a-zA-Z0-9]{43}$"
-  }
+{
+  "serviceAuths": [
+    {
+      "type": "basic",
+      "username": "admin",
+      "password": { "$env": "ADMIN_PASSWORD" }
+    }
+  ]
 }
 ```
 
-Users enter tokens at `/my/tokens`.
+Tokens for one server don't work for another — each server's `serviceAuths` are independent.
 
-##### Type: `oauth`
+### `requiresUserToken` and `userAuthentication`
 
-Services with OAuth 2.0 support. Handles flow and token refresh.
+When a backend service needs individual user tokens (Notion API keys, Linear OAuth tokens), set `requiresUserToken: true` and configure `userAuthentication`. See [Service Authentication](/mcp-front/service-authentication/) for details.
 
-```json
-"stainless": {
-  "transportType": "stdio",
-  "requiresUserToken": true,
-  "userAuthentication": {
-    "type": "oauth",
-    "displayName": "Stainless",
-    "clientId": {"$env": "STAINLESS_OAUTH_CLIENT_ID"},
-    "clientSecret": {"$env": "STAINLESS_OAUTH_CLIENT_SECRET"},
-    "authorizationUrl": "https://api.stainless.com/oauth/authorize",
-    "tokenUrl": "https://api.stainless.com/oauth/token",
-    "scopes": ["mcp:read", "mcp:write"]
-  }
-}
-```
+### `options.toolFilter`
 
-#### Other Options
-
-Configure timeouts, custom headers, and other transport-specific options:
+Filter which tools are exposed to clients.
 
 ```json
 {
-  "database": {
-    "transportType": "sse",
-    "url": "http://postgres-mcp:3000/sse",
-    "timeout": "30s",
-    "headers": {
-      "X-Custom-Header": "value",
-      "X-API-Key": { "$env": "DB_API_KEY" }
+  "options": {
+    "toolFilter": {
+      "mode": "allow",
+      "list": ["safe_tool_1", "safe_tool_2"]
     }
   }
 }
 ```
 
-### Routing to servers
+`mode` is `"allow"` (only expose listed tools) or `"block"` (hide listed tools).
 
-Claude can connect to specific servers using URL paths. For example, `GET /database/sse` connects to the "database" server, while `GET /filesystem/sse` connects to "filesystem".
+### Aggregate servers
 
-## Environment variables
-
-Any string value in the config can reference environment variables using `{"$env": "VAR_NAME"}`. This keeps secrets out of your config files.
+Set `type` to `"aggregate"` to combine tools from multiple backends into one endpoint. See [Server Types](/mcp-front/server-types/#aggregate-servers) for details.
 
 ```json
 {
-  "proxy": {
-    "baseUrl": { "$env": "BASE_URL" },
-    "auth": {
-      "tokens": {
-        "prod": { "$env": "PROD_TOKEN" }
-      },
-      "gcpProject": { "$env": "GOOGLE_CLOUD_PROJECT" }
-    }
-  },
-  "mcpServers": {
-    "database": {
-      "url": { "$env": "DATABASE_URL" }
+  "all": {
+    "type": "aggregate",
+    "servers": ["postgres", "linear"],
+    "discovery": {
+      "timeout": "10s",
+      "cacheTtl": "5m",
+      "maxConnsPerUser": 10
     }
   }
 }
 ```
 
-### OAuth requirements
+## Runtime environment variables
 
-OAuth needs these environment variables:
-
-```bash
-GOOGLE_CLIENT_ID=your-client-id
-GOOGLE_CLIENT_SECRET=your-secret
-JWT_SECRET=your-32-byte-jwt-secret-for-oauth!  # Must be 32+ bytes
-ENCRYPTION_KEY=your-32-byte-encryption-key-here!  # Must be exactly 32 bytes
-```
-
-### Runtime options
-
-Control MCP Front behavior with these optional variables:
+Optional variables that control runtime behavior:
 
 ```bash
-MCP_FRONT_ENV=development  # Relaxes OAuth validation for local dev
-LOG_LEVEL=debug           # Options: debug, info, warn, error
-LOG_FORMAT=json          # Options: json (structured) or text (human-readable)
+MCP_FRONT_ENV=development  # Relaxes OAuth validation for local dev (allows HTTP)
+LOG_LEVEL=debug            # Options: trace, debug, info, warn, error
+LOG_FORMAT=json            # Options: json (structured) or text (human-readable)
 ```
-
-Set `MCP_FRONT_ENV=development` when testing OAuth locally. It allows http:// URLs and reduces security requirements.
 
 ## Complete examples
 
-### Development with bearer tokens
-
-```json
-{
-  "version": "v0.0.1-DEV_EDITION_EXPECT_CHANGES",
-  "proxy": {
-    "name": "Dev Proxy",
-    "addr": ":8080",
-    "auth": {
-      "kind": "bearerToken",
-      "tokens": {
-        "filesystem": ["dev-token-123"]
-      }
-    }
-  },
-  "mcpServers": {
-    "filesystem": {
-      "transportType": "stdio",
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
-    }
-  }
-}
-```
-
-### Production with OAuth
+### Production with OAuth and Firestore
 
 ```json
 {
@@ -358,11 +316,11 @@ Set `MCP_FRONT_ENV=development` when testing OAuth locally. It allows http:// UR
       "allowedOrigins": ["https://claude.ai"],
       "tokenTtl": "4h",
       "storage": "firestore",
-      "jwtSecret": { "$env": "JWT_SECRET" },
-      "encryptionKey": { "$env": "ENCRYPTION_KEY" },
       "gcpProject": { "$env": "GOOGLE_CLOUD_PROJECT" },
       "firestoreDatabase": "(default)",
-      "firestoreCollection": "mcp_front_oauth_clients"
+      "firestoreCollection": "mcp_front_data",
+      "jwtSecret": { "$env": "JWT_SECRET" },
+      "encryptionKey": { "$env": "ENCRYPTION_KEY" }
     }
   },
   "mcpServers": {
@@ -370,10 +328,49 @@ Set `MCP_FRONT_ENV=development` when testing OAuth locally. It allows http:// UR
       "transportType": "sse",
       "url": { "$env": "DATABASE_MCP_URL" }
     },
-    "analytics": {
-      "transportType": "sse",
-      "url": { "$env": "ANALYTICS_MCP_URL" }
+    "notion": {
+      "transportType": "stdio",
+      "command": "notion-mcp",
+      "requiresUserToken": true,
+      "userAuthentication": {
+        "type": "manual",
+        "displayName": "Notion Integration Token",
+        "instructions": "Create a new internal integration and copy the secret.",
+        "helpUrl": "https://www.notion.so/my-integrations",
+        "validation": "^secret_[a-zA-Z0-9]{43}$"
+      },
+      "env": {
+        "NOTION_TOKEN": { "$userToken": "{{token}}" }
+      }
     }
   }
 }
 ```
+
+### Aggregate with multiple backends
+
+This example adds an aggregate server to the production config. OAuth configuration is omitted for brevity — see the production example above.
+
+```json
+{
+  "mcpServers": {
+    "postgres": {
+      "transportType": "sse",
+      "url": "http://postgres-mcp:3000/sse"
+    },
+    "linear": {
+      "transportType": "stdio",
+      "command": "linear-mcp",
+      "args": ["serve"]
+    },
+    "all": {
+      "type": "aggregate",
+      "discovery": {
+        "cacheTtl": "5m"
+      }
+    }
+  }
+}
+```
+
+Claude connects to `/all/sse` and sees namespaced tools like `postgres.query` and `linear.create_issue`.

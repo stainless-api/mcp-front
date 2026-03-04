@@ -16,25 +16,21 @@ export default defineConfig({
 				dark: './src/assets/logo.svg',
 			},
 			social: [
-				{ icon: 'github', label: 'GitHub', href: 'https://github.com/dgellow/mcp-front' },
+				{ icon: 'github', label: 'GitHub', href: 'https://github.com/stainless-api/mcp-front' },
 			],
 			sidebar: [
 				{ label: 'Introduction', slug: 'index' },
 				{ label: 'Quickstart', slug: 'quickstart' },
-				{
-					label: 'Guides',
-					items: [
-						{ label: 'OAuth with Google', slug: 'examples/oauth-google' },
-						{ label: 'Bearer Token', slug: 'examples/bearer-token' },
-					],
-				},
 				{ label: 'Configuration', slug: 'configuration' },
+				{ label: 'Identity Providers', slug: 'identity-providers' },
+				{ label: 'Server Types', slug: 'server-types' },
+				{ label: 'Service Authentication', slug: 'service-authentication' },
 				{ label: 'API Reference', slug: 'api-reference' },
+				{ label: 'Architecture', slug: 'architecture' },
 				{ label: 'License', slug: 'license' },
 			],
 			customCss: ['./src/styles/custom.css'],
 			components: {
-				Header: './src/components/CustomHeader.astro',
 				ThemeSelect: './src/components/CustomThemeSelect.astro',
 			},
 		}),

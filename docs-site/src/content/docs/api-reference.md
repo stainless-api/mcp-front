@@ -11,18 +11,17 @@ description: HTTP endpoints and authentication
 GET /health
 ```
 
-Returns service health status. Use this for monitoring and load balancer health checks.
+Returns service health. Use for monitoring and load balancer health checks.
 
 **Response:**
 
 ```json
-{ "status": "ok", "service": "mcp-front" }
+{ "status": "ok" }
 ```
 
 **Status codes:**
 
 - `200` - Service is healthy
-- `503` - Service is unhealthy
 
 ### SSE endpoint
 
@@ -33,7 +32,7 @@ Authorization: Bearer <token>
 Accept: text/event-stream
 ```
 
-Main endpoint for MCP protocol communication over Server-Sent Events. The `{server}` path segment must match an MCP server name from your configuration.
+MCP protocol communication over Server-Sent Events. The `{server}` path segment must match a server name from your config.
 
 **Request routing:**
 
@@ -67,19 +66,25 @@ Only available when using OAuth auth:
 GET /.well-known/oauth-authorization-server
 ```
 
-OAuth 2.0 Authorization Server Metadata (RFC 8414). Describes supported endpoints, grant types, and features.
+Authorization Server Metadata per RFC 8414.
 
 ```
 GET /.well-known/oauth-protected-resource
 ```
 
-OAuth 2.0 Protected Resource Metadata (RFC 9728). Describes which authorization servers can issue tokens for this resource server.
+Protected Resource Metadata per RFC 9728.
+
+```
+GET /.well-known/oauth-protected-resource/{service}
+```
+
+Per-service Protected Resource Metadata (RFC 9728). Returns the resource indicator URI for a specific service, used as the `resource` parameter in authorization requests.
 
 ```
 GET /clients/{client_id}
 ```
 
-OAuth 2.0 Client Metadata. Retrieves public metadata for a registered client. Returns client configuration including redirect URIs, grant types, response types, scopes, and authentication method. Useful for OAuth client discovery and verification.
+Client metadata for a registered OAuth client. Returns redirect URIs, grant types, response types, and authentication method.
 
 ### Authorization
 
@@ -94,17 +99,15 @@ GET /authorize?
   resource={service_uri}
 ```
 
-Initiates OAuth authorization flow. Redirects to Google for authentication.
+Initiates the OAuth authorization flow. Redirects to the configured identity provider.
 
-**Resource parameter (RFC 8707):**
-
-The optional `resource` parameter requests per-service audience claims in the issued token. Pass the full URI of the target service:
+The `resource` parameter (RFC 8707) is required and scopes the token to a specific service. Pass the full URI of the target service:
 
 ```
 resource=https://your-domain.com/postgres
 ```
 
-Tokens with audience claims only work for the specified service. This provides defense-in-depth by preventing token reuse across services.
+Tokens with audience claims only work for the specified service, preventing token reuse across services.
 
 ### Token exchange
 
@@ -125,7 +128,7 @@ Returns:
 {
   "access_token": "jwt-token",
   "token_type": "Bearer",
-  "expires_in": 86400,
+  "expires_in": 3600,
   "refresh_token": "refresh-token"
 }
 ```
@@ -157,15 +160,15 @@ Returns:
 
 ## User Service Endpoints
 
-Browser-only endpoints for service connections. Require browser SSO session.
+Browser-only endpoints for managing service connections. Require a browser SSO session.
 
 ### `GET /oauth/services`
 
-Service connection page. Lists OAuth-enabled services, shown after Google login if services need auth.
+Lists services requiring user authentication. Shown after identity provider login when services have `requiresUserToken: true`.
 
 ### `GET /my/tokens`
 
-Token management. Connect OAuth services, add manual tokens.
+Token management page. Connect OAuth services, add or update manual tokens.
 
 ### `GET /oauth/connect?service={service_name}`
 
@@ -179,13 +182,21 @@ Revoke OAuth connection. Form: `service={service_name}`.
 
 Save manual token. Form: `service={service_name}&token={user_token}`.
 
+### `POST /my/tokens/delete`
+
+Delete a manual token. Form: `service={service_name}`.
+
+### `GET /oauth/complete`
+
+Completes the OAuth flow after service connections. Redirects back to the MCP client with the authorization code.
+
 ### `GET /oauth/callback/{service_name}`
 
 OAuth callback. Set as redirect URI in service OAuth config.
 
 ## Authentication
 
-MCP Front supports two authentication methods:
+Two authentication methods are supported:
 
 ### Bearer token
 
@@ -193,18 +204,18 @@ MCP Front supports two authentication methods:
 Authorization: Bearer your-token-here
 ```
 
-Per-service bearer tokens configured in each MCP server's `serviceAuths` array. Useful for development and alternative MCP clients.
+Per-service bearer tokens from each server's `serviceAuths` array. Useful for development and non-OAuth MCP clients.
 
 ### OAuth 2.0 with PKCE
 
-Claude.ai uses this flow:
+Standard flow:
 
 1. Register client via `/register`
-2. Direct user to `/authorize` (optionally with `resource` parameter)
+2. Direct user to `/authorize` with `resource` parameter (RFC 8707)
 3. Exchange code for token at `/token`
 4. Use access token in Authorization header for `/{server}/sse` requests
 
-PKCE is required for all OAuth flows. Tokens include audience claims scoped to specific services per RFC 8707.
+PKCE is required for public clients. Tokens include per-service audience claims (RFC 8707).
 
 ## Errors
 
