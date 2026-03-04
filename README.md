@@ -76,7 +76,7 @@ Save this as `config.json`:
 
 ```bash
 # With Go
-go install github.com/dgellow/mcp-front/cmd/mcp-front@main
+go install github.com/stainless-api/mcp-front/cmd/mcp-front@main
 mcp-front -config config.json
 
 # Or with Docker

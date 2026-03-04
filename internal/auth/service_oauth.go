@@ -7,10 +7,10 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/dgellow/mcp-front/internal/config"
-	"github.com/dgellow/mcp-front/internal/crypto"
-	"github.com/dgellow/mcp-front/internal/log"
-	"github.com/dgellow/mcp-front/internal/storage"
+	"github.com/stainless-api/mcp-front/internal/config"
+	"github.com/stainless-api/mcp-front/internal/crypto"
+	"github.com/stainless-api/mcp-front/internal/log"
+	"github.com/stainless-api/mcp-front/internal/storage"
 	"golang.org/x/oauth2"
 )
 

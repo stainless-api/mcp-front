@@ -9,16 +9,16 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/dgellow/mcp-front/internal/client"
-	"github.com/dgellow/mcp-front/internal/config"
-	jsonwriter "github.com/dgellow/mcp-front/internal/json"
-	"github.com/dgellow/mcp-front/internal/jsonrpc"
-	"github.com/dgellow/mcp-front/internal/log"
-	"github.com/dgellow/mcp-front/internal/oauth"
-	"github.com/dgellow/mcp-front/internal/servicecontext"
-	"github.com/dgellow/mcp-front/internal/storage"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	"github.com/stainless-api/mcp-front/internal/client"
+	"github.com/stainless-api/mcp-front/internal/config"
+	jsonwriter "github.com/stainless-api/mcp-front/internal/json"
+	"github.com/stainless-api/mcp-front/internal/jsonrpc"
+	"github.com/stainless-api/mcp-front/internal/log"
+	"github.com/stainless-api/mcp-front/internal/oauth"
+	"github.com/stainless-api/mcp-front/internal/servicecontext"
+	"github.com/stainless-api/mcp-front/internal/storage"
 )
 
 // SessionManager defines the interface for managing stdio sessions

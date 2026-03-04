@@ -3,7 +3,7 @@ package idp
 import (
 	"testing"
 
-	"github.com/dgellow/mcp-front/internal/config"
+	"github.com/stainless-api/mcp-front/internal/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

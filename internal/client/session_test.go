@@ -5,10 +5,10 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/dgellow/mcp-front/internal/config"
-	"github.com/dgellow/mcp-front/internal/testutil"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	"github.com/stainless-api/mcp-front/internal/config"
+	"github.com/stainless-api/mcp-front/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"

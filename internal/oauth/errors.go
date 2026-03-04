@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"net/url"
 
-	"github.com/dgellow/mcp-front/internal/log"
+	"github.com/stainless-api/mcp-front/internal/log"
 )
 
 type ErrorCode string

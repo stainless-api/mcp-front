@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dgellow/mcp-front/internal/config"
 	"github.com/mark3labs/mcp-go/server"
+	"github.com/stainless-api/mcp-front/internal/config"
 	"github.com/stretchr/testify/assert"
 )
 

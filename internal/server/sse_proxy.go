@@ -6,10 +6,10 @@ import (
 	"mime"
 	"net/http"
 
-	"github.com/dgellow/mcp-front/internal/config"
-	"github.com/dgellow/mcp-front/internal/ioutil"
-	jsonwriter "github.com/dgellow/mcp-front/internal/json"
-	"github.com/dgellow/mcp-front/internal/log"
+	"github.com/stainless-api/mcp-front/internal/config"
+	"github.com/stainless-api/mcp-front/internal/ioutil"
+	jsonwriter "github.com/stainless-api/mcp-front/internal/json"
+	"github.com/stainless-api/mcp-front/internal/log"
 )
 
 // forwardSSEToBackend forwards an SSE request to the backend SSE server

@@ -8,9 +8,9 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/dgellow/mcp-front/internal/config"
-	"github.com/dgellow/mcp-front/internal/jsonrpc"
-	"github.com/dgellow/mcp-front/internal/log"
+	"github.com/stainless-api/mcp-front/internal/config"
+	"github.com/stainless-api/mcp-front/internal/jsonrpc"
+	"github.com/stainless-api/mcp-front/internal/log"
 )
 
 // forwardStreamablePostToBackend handles POST requests for streamable-http transport

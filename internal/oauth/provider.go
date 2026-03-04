@@ -8,9 +8,9 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/dgellow/mcp-front/internal/crypto"
-	jsonwriter "github.com/dgellow/mcp-front/internal/json"
-	"github.com/dgellow/mcp-front/internal/log"
+	"github.com/stainless-api/mcp-front/internal/crypto"
+	jsonwriter "github.com/stainless-api/mcp-front/internal/json"
+	"github.com/stainless-api/mcp-front/internal/log"
 )
 
 const userContextKey contextKey = "user_email"

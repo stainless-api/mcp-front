@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/dgellow/mcp-front/internal"
-	"github.com/dgellow/mcp-front/internal/config"
-	"github.com/dgellow/mcp-front/internal/log"
+	"github.com/stainless-api/mcp-front/internal"
+	"github.com/stainless-api/mcp-front/internal/config"
+	"github.com/stainless-api/mcp-front/internal/log"
 )
 
 var BuildVersion = "dev"

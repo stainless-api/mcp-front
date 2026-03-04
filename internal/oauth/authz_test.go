@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dgellow/mcp-front/internal/idp"
+	"github.com/stainless-api/mcp-front/internal/idp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/bcrypt"

@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/dgellow/mcp-front/internal/config"
-	"github.com/dgellow/mcp-front/internal/log"
+	"github.com/stainless-api/mcp-front/internal/config"
+	"github.com/stainless-api/mcp-front/internal/log"
 )
 
 const sessionCookie = "mcp_session"

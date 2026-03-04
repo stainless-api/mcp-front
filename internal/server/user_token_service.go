@@ -5,10 +5,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dgellow/mcp-front/internal/auth"
-	"github.com/dgellow/mcp-front/internal/config"
-	"github.com/dgellow/mcp-front/internal/log"
-	"github.com/dgellow/mcp-front/internal/storage"
+	"github.com/stainless-api/mcp-front/internal/auth"
+	"github.com/stainless-api/mcp-front/internal/config"
+	"github.com/stainless-api/mcp-front/internal/log"
+	"github.com/stainless-api/mcp-front/internal/storage"
 )
 
 // UserTokenService handles user token retrieval and OAuth refresh

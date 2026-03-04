@@ -6,13 +6,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dgellow/mcp-front/internal/auth"
-	"github.com/dgellow/mcp-front/internal/config"
-	"github.com/dgellow/mcp-front/internal/crypto"
-	jsonwriter "github.com/dgellow/mcp-front/internal/json"
-	"github.com/dgellow/mcp-front/internal/log"
-	"github.com/dgellow/mcp-front/internal/oauth"
-	"github.com/dgellow/mcp-front/internal/storage"
+	"github.com/stainless-api/mcp-front/internal/auth"
+	"github.com/stainless-api/mcp-front/internal/config"
+	"github.com/stainless-api/mcp-front/internal/crypto"
+	jsonwriter "github.com/stainless-api/mcp-front/internal/json"
+	"github.com/stainless-api/mcp-front/internal/log"
+	"github.com/stainless-api/mcp-front/internal/oauth"
+	"github.com/stainless-api/mcp-front/internal/storage"
 )
 
 // TokenHandlers handles the web UI for token management

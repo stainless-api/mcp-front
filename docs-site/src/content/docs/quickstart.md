@@ -39,7 +39,7 @@ The server name `filesystem` determines the URL path: `/filesystem/sse`.
 ### Option A: Install with Go
 
 ```bash
-go install github.com/dgellow/mcp-front/cmd/mcp-front@main
+go install github.com/stainless-api/mcp-front/cmd/mcp-front@main
 mcp-front -config config.json
 ```
 

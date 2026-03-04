@@ -4,11 +4,11 @@ import (
 	"context"
 	"time"
 
-	"github.com/dgellow/mcp-front/internal/client"
-	"github.com/dgellow/mcp-front/internal/config"
-	"github.com/dgellow/mcp-front/internal/log"
-	"github.com/dgellow/mcp-front/internal/storage"
 	mcpserver "github.com/mark3labs/mcp-go/server"
+	"github.com/stainless-api/mcp-front/internal/client"
+	"github.com/stainless-api/mcp-front/internal/config"
+	"github.com/stainless-api/mcp-front/internal/log"
+	"github.com/stainless-api/mcp-front/internal/storage"
 )
 
 // SessionHandlerKey is the context key for session handlers

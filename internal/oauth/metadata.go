@@ -3,7 +3,7 @@ package oauth
 import (
 	"strings"
 
-	"github.com/dgellow/mcp-front/internal/urlutil"
+	"github.com/stainless-api/mcp-front/internal/urlutil"
 )
 
 // AuthorizationServerMetadata builds OAuth 2.0 Authorization Server Metadata per RFC 8414

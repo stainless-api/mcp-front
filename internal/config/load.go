@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/dgellow/mcp-front/internal/log"
+	"github.com/stainless-api/mcp-front/internal/log"
 )
 
 var validServerNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]*$`)
