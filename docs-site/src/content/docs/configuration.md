@@ -160,7 +160,7 @@ Secret for signing JWT tokens. Must be at least 32 bytes. Must use `{"$env": "VA
 
 ### `auth.encryptionKey`
 
-Secret for encrypting sensitive data at rest (AES-256-GCM). Must be exactly 32 bytes. Required when using OAuth authentication. Must use `{"$env": "VAR"}` syntax.
+Secret for encrypting sensitive data at rest (AES-256-GCM). Must be exactly 32 bytes. Required for Firestore storage, optional for memory storage. Must use `{"$env": "VAR"}` syntax.
 
 ### Firestore configuration
 

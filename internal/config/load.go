@@ -283,8 +283,11 @@ func validateOAuthConfig(oauth *OAuthAuthConfig) error {
 	if len(oauth.JWTSecret) < 32 {
 		return fmt.Errorf("jwtSecret must be at least 32 characters (got %d). Generate with: openssl rand -base64 32", len(oauth.JWTSecret))
 	}
-	if len(oauth.EncryptionKey) != 32 {
-		return fmt.Errorf("encryptionKey must be exactly 32 characters (got %d). Generate with: openssl rand -base64 32 | head -c 32", len(oauth.EncryptionKey))
+	if oauth.Storage != "" && oauth.Storage != "memory" && oauth.EncryptionKey == "" {
+		return fmt.Errorf("encryptionKey is required when using %s storage", oauth.Storage)
+	}
+	if oauth.EncryptionKey != "" && len(oauth.EncryptionKey) != 32 {
+		return fmt.Errorf("encryptionKey must be exactly 32 bytes (got %d). Generate with: openssl rand -base64 24", len(oauth.EncryptionKey))
 	}
 
 	// Domain or org validation - at least one access control mechanism required

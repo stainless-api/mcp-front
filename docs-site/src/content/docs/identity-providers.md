@@ -134,7 +134,7 @@ Set these for your chosen provider.
 ```bash
 # JWT and encryption (required for all providers)
 JWT_SECRET=$(openssl rand -base64 32)            # At least 32 bytes (this produces 44)
-ENCRYPTION_KEY=$(openssl rand -base64 24)        # Exactly 32 bytes (required)
+ENCRYPTION_KEY=$(openssl rand -base64 24)        # Exactly 32 bytes (required for Firestore)
 
 # Google
 GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
