@@ -123,6 +123,22 @@
       },
       "forwardAuthToken": true
     },
+    "notion": {
+      "transportType": "streamable-http",
+      "url": "https://mcp.notion.com/mcp",
+      "options": { "timeout": "30s" },
+      "headers": {
+        "Authorization": { "$userToken": "Bearer {{token}}" }
+      },
+      "requiresUserToken": true,
+      "userAuthentication": {
+        "type": "oauth",
+        "authorizationUrl": "https://mcp.notion.com/authorize",
+        "tokenUrl": "https://mcp.notion.com/token",
+        "scopes": [],
+        "displayName": "Notion"
+      }
+    },
     "ditto-read-only": {
       "transportType": "inline",
       "inline": {
