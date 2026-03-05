@@ -139,6 +139,15 @@
         "displayName": "Notion"
       }
     },
+    "subcog": {
+      "transportType": "streamable-http",
+      "url": "http://localhost:8090/mcp",
+      "options": { "timeout": "30s" },
+      "headers": {
+        "Authorization": { "$env": "SUBCOG_BEARER_TOKEN" }
+      },
+      "requiresUserToken": false
+    },
     "ditto-read-only": {
       "transportType": "inline",
       "inline": {
