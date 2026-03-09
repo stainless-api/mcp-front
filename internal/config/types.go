@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-const DefaultDelimiter = "."
+const DefaultAggregateDelimiter = "."
 
 // Secret is a string type that redacts itself when printed
 type Secret string
