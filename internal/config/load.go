@@ -180,7 +180,7 @@ func ValidateConfig(config *Config) error {
 			}
 			delimiter := server.Delimiter
 			if delimiter == "" {
-				delimiter = DefaultAggregateDelimiter
+				delimiter = DefaultDelimiter
 			}
 			seen := make(map[string]bool, len(server.Servers))
 			for _, ref := range server.Servers {

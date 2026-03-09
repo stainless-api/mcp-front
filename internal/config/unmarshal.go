@@ -54,7 +54,7 @@ func (c *MCPClientConfig) UnmarshalJSON(data []byte) error {
 	if c.Type == ServerTypeAggregate {
 		c.Delimiter = raw.Delimiter
 		if c.Delimiter == "" {
-			c.Delimiter = DefaultAggregateDelimiter
+			c.Delimiter = DefaultDelimiter
 		}
 		c.Servers = raw.Servers
 		if c.TransportType == "" {

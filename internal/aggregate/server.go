@@ -99,7 +99,7 @@ type ServerConfig struct {
 func NewServer(cfg ServerConfig) *Server {
 	delimiter := cfg.Delimiter
 	if delimiter == "" {
-		delimiter = config.DefaultAggregateDelimiter
+		delimiter = config.DefaultDelimiter
 	}
 
 	s := &Server{
