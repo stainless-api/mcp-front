@@ -192,7 +192,7 @@ func TestMCPClientConfig_UnmarshalJSON_Delimiter(t *testing.T) {
 		assert.Equal(t, "_", config.Delimiter)
 	})
 
-	t.Run("no delimiter defaults to empty", func(t *testing.T) {
+	t.Run("aggregate defaults to DefaultAggregateDelimiter", func(t *testing.T) {
 		input := `{
 			"type": "aggregate",
 			"transportType": "sse",
@@ -201,7 +201,7 @@ func TestMCPClientConfig_UnmarshalJSON_Delimiter(t *testing.T) {
 		var config MCPClientConfig
 		err := json.Unmarshal([]byte(input), &config)
 		require.NoError(t, err)
-		assert.Equal(t, "", config.Delimiter)
+		assert.Equal(t, DefaultAggregateDelimiter, config.Delimiter)
 	})
 }
 

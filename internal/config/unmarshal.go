@@ -58,6 +58,9 @@ func (c *MCPClientConfig) UnmarshalJSON(data []byte) error {
 		if c.TransportType == "" {
 			c.TransportType = MCPClientTypeSSE
 		}
+		if c.Delimiter == "" {
+			c.Delimiter = DefaultAggregateDelimiter
+		}
 		if raw.Discovery != nil {
 			disc, err := parseDiscoveryConfig(raw.Discovery)
 			if err != nil {
