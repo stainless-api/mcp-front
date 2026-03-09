@@ -63,6 +63,7 @@ type Server struct {
 	name            string
 	backends        map[string]*config.MCPClientConfig
 	discovery       *config.DiscoveryConfig
+	delimiter       string
 	getUserToken    UserTokenFunc
 	createTransport client.TransportCreator
 	baseURL         string
@@ -89,16 +90,23 @@ type ServerConfig struct {
 	TransportType   config.MCPClientType
 	Backends        map[string]*config.MCPClientConfig
 	Discovery       *config.DiscoveryConfig
+	Delimiter       string
 	GetUserToken    UserTokenFunc
 	CreateTransport client.TransportCreator
 	BaseURL         string
 }
 
 func NewServer(cfg ServerConfig) *Server {
+	delimiter := cfg.Delimiter
+	if delimiter == "" {
+		delimiter = "."
+	}
+
 	s := &Server{
 		name:            cfg.Name,
 		backends:        cfg.Backends,
 		discovery:       cfg.Discovery,
+		delimiter:       delimiter,
 		getUserToken:    cfg.GetUserToken,
 		createTransport: cfg.CreateTransport,
 		baseURL:         cfg.BaseURL,
@@ -208,7 +216,7 @@ func (s *Server) onRegisterSession(ctx context.Context, session mcpserver.Client
 	sessionTools := make(map[string]mcpserver.ServerTool)
 	for backendName, backendTools := range tools {
 		for _, tool := range backendTools {
-			namespacedName := PrefixToolName(backendName, tool.Name)
+			namespacedName := PrefixToolName(backendName, tool.Name, s.delimiter)
 			tool.Name = namespacedName
 			sessionTools[namespacedName] = mcpserver.ServerTool{
 				Tool:    tool,
@@ -363,7 +371,7 @@ func (s *Server) discoverBackendTools(ctx context.Context, userEmail, backendNam
 
 func (s *Server) makeToolHandler(userEmail, backendName string) mcpserver.ToolHandlerFunc {
 	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		_, originalName, ok := ParseToolName(request.Params.Name)
+		_, originalName, ok := ParseToolName(request.Params.Name, s.delimiter)
 		if !ok {
 			return nil, fmt.Errorf("invalid namespaced tool name: %s", request.Params.Name)
 		}

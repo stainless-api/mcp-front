@@ -204,6 +204,7 @@ type MCPClientConfig struct {
 	// Aggregate server configuration
 	Servers   []string         `json:"servers,omitempty"`
 	Discovery *DiscoveryConfig `json:"discovery,omitempty"`
+	Delimiter string           `json:"delimiter,omitempty"`
 }
 
 // IsStdio returns true if this is a stdio-based MCP server

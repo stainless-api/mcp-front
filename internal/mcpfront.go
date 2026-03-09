@@ -434,6 +434,7 @@ func buildHTTPHandler(
 			TransportType:   serverConfig.TransportType,
 			Backends:        backendConfigs,
 			Discovery:       serverConfig.Discovery,
+			Delimiter:       serverConfig.Delimiter,
 			GetUserToken:    userTokenService.GetUserToken,
 			CreateTransport: client.DefaultTransportCreator,
 			BaseURL:         baseURL,

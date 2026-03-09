@@ -9,6 +9,8 @@ import (
 	"time"
 )
 
+var validToolNameChars = regexp.MustCompile(`^[A-Za-z0-9_\-.]+$`)
+
 // ValidationResult holds validation errors and warnings
 type ValidationResult struct {
 	Errors   []ValidationError
@@ -404,6 +406,23 @@ func validateAggregateServerStructure(name string, srv map[string]any, allServer
 			result.Errors = append(result.Errors, ValidationError{
 				Path:    path + ".transportType",
 				Message: "aggregate servers only support 'sse' or 'streamable-http' transport",
+			})
+		}
+	}
+
+	// Validate delimiter against MCP tool name spec.
+	// Tool names allow: A-Z, a-z, 0-9, underscore, hyphen, dot.
+	// Every character in the delimiter must be from that set.
+	if delim, ok := srv["delimiter"].(string); ok {
+		if delim == "" {
+			result.Errors = append(result.Errors, ValidationError{
+				Path:    path + ".delimiter",
+				Message: "delimiter must not be empty",
+			})
+		} else if !validToolNameChars.MatchString(delim) {
+			result.Errors = append(result.Errors, ValidationError{
+				Path:    path + ".delimiter",
+				Message: fmt.Sprintf("delimiter %q contains characters not allowed in MCP tool names (only A-Z, a-z, 0-9, '_', '-', '.' are allowed)", delim),
 			})
 		}
 	}

@@ -178,6 +178,10 @@ func ValidateConfig(config *Config) error {
 			if len(server.Servers) == 0 {
 				return fmt.Errorf("aggregate server '%s' has no servers (configure servers list or add non-aggregate servers)", name)
 			}
+			delimiter := server.Delimiter
+			if delimiter == "" {
+				delimiter = "."
+			}
 			seen := make(map[string]bool, len(server.Servers))
 			for _, ref := range server.Servers {
 				if seen[ref] {
@@ -196,6 +200,9 @@ func ValidateConfig(config *Config) error {
 				}
 				if refServer.TransportType == MCPClientTypeInline {
 					return fmt.Errorf("aggregate server '%s' cannot reference inline server '%s' (inline servers have no network transport)", name, ref)
+				}
+				if strings.Contains(ref, delimiter) {
+					return fmt.Errorf("aggregate server '%s': backend name '%s' contains the namespace delimiter '%s'", name, ref, delimiter)
 				}
 				if refServer.TransportType == MCPClientTypeStdio {
 					log.LogWarnWithFields("config", "Aggregate references stdio backend — this spawns a long-lived process per user", map[string]any{

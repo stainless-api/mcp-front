@@ -782,6 +782,114 @@ func TestValidateFile_AggregateServer(t *testing.T) {
 			}`,
 			wantErrors: []string{"only support 'sse' or 'streamable-http'"},
 		},
+		{
+			name: "delimiter_valid_dot",
+			config: `{
+				"version": "v0.0.1-DEV_EDITION",
+				"proxy": {"baseURL": "http://localhost:8080", "addr": ":8080"},
+				"mcpServers": {
+					"postgres": {"transportType": "sse", "url": "http://localhost:5432"},
+					"mcp": {"type": "aggregate", "servers": ["postgres"], "delimiter": "."}
+				}
+			}`,
+			wantErrors: nil,
+		},
+		{
+			name: "delimiter_valid_underscore",
+			config: `{
+				"version": "v0.0.1-DEV_EDITION",
+				"proxy": {"baseURL": "http://localhost:8080", "addr": ":8080"},
+				"mcpServers": {
+					"postgres": {"transportType": "sse", "url": "http://localhost:5432"},
+					"mcp": {"type": "aggregate", "servers": ["postgres"], "delimiter": "_"}
+				}
+			}`,
+			wantErrors: nil,
+		},
+		{
+			name: "delimiter_valid_hyphen",
+			config: `{
+				"version": "v0.0.1-DEV_EDITION",
+				"proxy": {"baseURL": "http://localhost:8080", "addr": ":8080"},
+				"mcpServers": {
+					"postgres": {"transportType": "sse", "url": "http://localhost:5432"},
+					"mcp": {"type": "aggregate", "servers": ["postgres"], "delimiter": "-"}
+				}
+			}`,
+			wantErrors: nil,
+		},
+		{
+			name: "delimiter_valid_multi_char",
+			config: `{
+				"version": "v0.0.1-DEV_EDITION",
+				"proxy": {"baseURL": "http://localhost:8080", "addr": ":8080"},
+				"mcpServers": {
+					"postgres": {"transportType": "sse", "url": "http://localhost:5432"},
+					"mcp": {"type": "aggregate", "servers": ["postgres"], "delimiter": "--"}
+				}
+			}`,
+			wantErrors: nil,
+		},
+		{
+			name: "delimiter_valid_mixed",
+			config: `{
+				"version": "v0.0.1-DEV_EDITION",
+				"proxy": {"baseURL": "http://localhost:8080", "addr": ":8080"},
+				"mcpServers": {
+					"postgres": {"transportType": "sse", "url": "http://localhost:5432"},
+					"mcp": {"type": "aggregate", "servers": ["postgres"], "delimiter": "._"}
+				}
+			}`,
+			wantErrors: nil,
+		},
+		{
+			name: "delimiter_invalid_slash",
+			config: `{
+				"version": "v0.0.1-DEV_EDITION",
+				"proxy": {"baseURL": "http://localhost:8080", "addr": ":8080"},
+				"mcpServers": {
+					"postgres": {"transportType": "sse", "url": "http://localhost:5432"},
+					"mcp": {"type": "aggregate", "servers": ["postgres"], "delimiter": "/"}
+				}
+			}`,
+			wantErrors: []string{"not allowed in MCP tool names"},
+		},
+		{
+			name: "delimiter_invalid_colon",
+			config: `{
+				"version": "v0.0.1-DEV_EDITION",
+				"proxy": {"baseURL": "http://localhost:8080", "addr": ":8080"},
+				"mcpServers": {
+					"postgres": {"transportType": "sse", "url": "http://localhost:5432"},
+					"mcp": {"type": "aggregate", "servers": ["postgres"], "delimiter": "::"}
+				}
+			}`,
+			wantErrors: []string{"not allowed in MCP tool names"},
+		},
+		{
+			name: "delimiter_invalid_space",
+			config: `{
+				"version": "v0.0.1-DEV_EDITION",
+				"proxy": {"baseURL": "http://localhost:8080", "addr": ":8080"},
+				"mcpServers": {
+					"postgres": {"transportType": "sse", "url": "http://localhost:5432"},
+					"mcp": {"type": "aggregate", "servers": ["postgres"], "delimiter": " "}
+				}
+			}`,
+			wantErrors: []string{"not allowed in MCP tool names"},
+		},
+		{
+			name: "delimiter_invalid_mixed_with_bad_char",
+			config: `{
+				"version": "v0.0.1-DEV_EDITION",
+				"proxy": {"baseURL": "http://localhost:8080", "addr": ":8080"},
+				"mcpServers": {
+					"postgres": {"transportType": "sse", "url": "http://localhost:5432"},
+					"mcp": {"type": "aggregate", "servers": ["postgres"], "delimiter": ".-/"}
+				}
+			}`,
+			wantErrors: []string{"not allowed in MCP tool names"},
+		},
 	}
 
 	for _, tt := range tests {

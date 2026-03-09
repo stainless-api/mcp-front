@@ -2,14 +2,14 @@ package aggregate
 
 import "strings"
 
-func PrefixToolName(serverName, toolName string) string {
-	return serverName + "." + toolName
+func PrefixToolName(serverName, toolName, delimiter string) string {
+	return serverName + delimiter + toolName
 }
 
-func ParseToolName(namespacedName string) (serverName, toolName string, ok bool) {
-	idx := strings.IndexByte(namespacedName, '.')
+func ParseToolName(namespacedName, delimiter string) (serverName, toolName string, ok bool) {
+	idx := strings.Index(namespacedName, delimiter)
 	if idx < 0 {
 		return "", "", false
 	}
-	return namespacedName[:idx], namespacedName[idx+1:], true
+	return namespacedName[:idx], namespacedName[idx+len(delimiter):], true
 }
