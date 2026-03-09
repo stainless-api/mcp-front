@@ -52,14 +52,14 @@ func (c *MCPClientConfig) UnmarshalJSON(data []byte) error {
 	c.ServiceAuths = raw.ServiceAuths
 	c.InlineConfig = raw.InlineConfig
 	c.Delimiter = raw.Delimiter
+	if c.Delimiter == "" {
+		c.Delimiter = DefaultAggregateDelimiter
+	}
 
 	if c.Type == ServerTypeAggregate {
 		c.Servers = raw.Servers
 		if c.TransportType == "" {
 			c.TransportType = MCPClientTypeSSE
-		}
-		if c.Delimiter == "" {
-			c.Delimiter = DefaultAggregateDelimiter
 		}
 		if raw.Discovery != nil {
 			disc, err := parseDiscoveryConfig(raw.Discovery)
