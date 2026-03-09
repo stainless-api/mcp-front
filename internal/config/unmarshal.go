@@ -51,11 +51,12 @@ func (c *MCPClientConfig) UnmarshalJSON(data []byte) error {
 	c.UserAuthentication = raw.UserAuthentication
 	c.ServiceAuths = raw.ServiceAuths
 	c.InlineConfig = raw.InlineConfig
+	c.Delimiter = raw.Delimiter
+	if c.Delimiter == "" {
+		c.Delimiter = DefaultDelimiter
+	}
+
 	if c.Type == ServerTypeAggregate {
-		c.Delimiter = raw.Delimiter
-		if c.Delimiter == "" {
-			c.Delimiter = DefaultDelimiter
-		}
 		c.Servers = raw.Servers
 		if c.TransportType == "" {
 			c.TransportType = MCPClientTypeSSE
