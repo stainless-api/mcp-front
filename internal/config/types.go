@@ -260,10 +260,16 @@ type ProxyConfig struct {
 	Sessions *SessionConfig   `json:"sessions,omitempty"`
 }
 
+// GatewayConfig represents configuration for the gateway multiplexer endpoint
+type GatewayConfig struct {
+	StreamlineResponses bool `json:"streamlineResponses,omitempty"`
+}
+
 // Config represents the config structure with resolved values
 type Config struct {
 	Proxy      ProxyConfig                 `json:"proxy"`
 	MCPServers map[string]*MCPClientConfig `json:"mcpServers"`
+	Gateway    GatewayConfig               `json:"gateway,omitempty"`
 }
 
 // RawConfigValue represents a value that could be a string, env ref, or user token ref

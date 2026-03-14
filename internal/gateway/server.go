@@ -37,11 +37,12 @@ type InlineTool struct {
 }
 
 type Server struct {
-	serverConfigs   map[string]*config.MCPClientConfig
-	inlineProviders map[string]InlineToolProvider
-	getUserToken    UserTokenFunc
-	baseURL         string
-	createTransport TransportCreator
+	serverConfigs        map[string]*config.MCPClientConfig
+	inlineProviders      map[string]InlineToolProvider
+	getUserToken         UserTokenFunc
+	baseURL              string
+	createTransport      TransportCreator
+	streamlineResponses  bool
 
 	mu       sync.Mutex
 	sessions map[string]*userSession
@@ -70,8 +71,9 @@ func NewServer(
 	inlineProviders map[string]InlineToolProvider,
 	getUserToken UserTokenFunc,
 	baseURL string,
+	streamlineResponses bool,
 ) *Server {
-	return newServer(serverConfigs, inlineProviders, getUserToken, baseURL, defaultCreateTransport)
+	return newServer(serverConfigs, inlineProviders, getUserToken, baseURL, defaultCreateTransport, streamlineResponses)
 }
 
 func newServer(
@@ -80,14 +82,16 @@ func newServer(
 	getUserToken UserTokenFunc,
 	baseURL string,
 	createTransport TransportCreator,
+	streamlineResponses bool,
 ) *Server {
 	return &Server{
-		serverConfigs:   serverConfigs,
-		inlineProviders: inlineProviders,
-		getUserToken:    getUserToken,
-		baseURL:         baseURL,
-		createTransport: createTransport,
-		sessions:        make(map[string]*userSession),
+		serverConfigs:       serverConfigs,
+		inlineProviders:     inlineProviders,
+		getUserToken:        getUserToken,
+		baseURL:             baseURL,
+		createTransport:     createTransport,
+		streamlineResponses: streamlineResponses,
+		sessions:            make(map[string]*userSession),
 	}
 }
 
@@ -125,7 +129,7 @@ func (s *Server) HandleToolsList(ctx context.Context, userEmail string) ([]map[s
 
 	session.cacheMu.Lock()
 	if time.Now().Before(session.cacheExp) && session.toolCache != nil {
-		tools := formatTools(session.toolCache)
+		tools := formatTools(session.toolCache, s.streamlineResponses)
 		session.cacheMu.Unlock()
 		return tools, nil
 	}
@@ -141,7 +145,7 @@ func (s *Server) HandleToolsList(ctx context.Context, userEmail string) ([]map[s
 	session.cacheExp = time.Now().Add(toolCacheTTL)
 	session.cacheMu.Unlock()
 
-	return formatTools(tools), nil
+	return formatTools(tools, s.streamlineResponses), nil
 }
 
 func (s *Server) HandleToolCall(ctx context.Context, userEmail string, namespacedName string, args map[string]any) (*mcp.CallToolResult, error) {
@@ -441,18 +445,28 @@ func (s *Server) getOrCreateBackend(ctx context.Context, userEmail, serviceName 
 	return backend, nil
 }
 
-func formatTools(tools []cachedTool) []map[string]any {
+func formatTools(tools []cachedTool, streamline bool) []map[string]any {
 	result := make([]map[string]any, 0, len(tools))
 	for _, t := range tools {
 		entry := map[string]any{
 			"name": t.Tool.Name,
 		}
-		if t.Tool.Description != "" {
-			entry["description"] = t.Tool.Description
+
+		desc := t.Tool.Description
+		if streamline && desc != "" {
+			desc = streamlineDescription(desc)
 		}
+		if desc != "" {
+			entry["description"] = desc
+		}
+
 		if len(t.Tool.RawInputSchema) > 0 {
+			raw := t.Tool.RawInputSchema
+			if streamline {
+				raw = streamlineInputSchema(raw)
+			}
 			var schema any
-			if err := json.Unmarshal(t.Tool.RawInputSchema, &schema); err == nil {
+			if err := json.Unmarshal(raw, &schema); err == nil {
 				entry["inputSchema"] = schema
 			}
 		} else if t.Tool.InputSchema.Type != "" {

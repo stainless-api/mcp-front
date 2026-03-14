@@ -24,6 +24,9 @@
       "encryptionKey": { "$env": "ENCRYPTION_KEY" }
     }
   },
+  "gateway": {
+    "streamlineResponses": true
+  },
   "mcpServers": {
     "postgres": {
       "transportType": "streamable-http",

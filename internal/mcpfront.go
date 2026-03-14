@@ -416,7 +416,7 @@ func buildHTTPHandler(
 		mux.Handle(route("/"+serverName+"/"), server.ChainMiddleware(handler, mcpMiddlewares...))
 	}
 
-	gatewayServer := gateway.NewServer(cfg.MCPServers, inlineProviders, userTokenService.GetUserToken, baseURL)
+	gatewayServer := gateway.NewServer(cfg.MCPServers, inlineProviders, userTokenService.GetUserToken, baseURL, cfg.Gateway.StreamlineResponses)
 	gatewayHandler := gateway.NewHandler("gateway", gatewayServer, baseURL)
 
 	gatewayMiddlewares := []server.MiddlewareFunc{
