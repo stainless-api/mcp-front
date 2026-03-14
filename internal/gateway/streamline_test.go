@@ -209,4 +209,71 @@ func TestStreamlineInputSchema(t *testing.T) {
 			t.Error("nil input should return nil")
 		}
 	})
+
+	t.Run("strips validation constraints and extensions", func(t *testing.T) {
+		input := json.RawMessage(`{
+			"type": "object",
+			"additionalProperties": false,
+			"properties": {
+				"limit": {
+					"type": "number",
+					"minimum": 1,
+					"maximum": 100,
+					"default": 10
+				},
+				"query": {
+					"type": "string",
+					"minLength": 2,
+					"maxLength": 200,
+					"pattern": "^[a-z]+$",
+					"format": "uri"
+				},
+				"output": {
+					"type": "string",
+					"enum": ["TABLE", "WIDE", "YAML"],
+					"x-google-enum-descriptions": ["Table format", "Wide format", "YAML format"]
+				}
+			}
+		}`)
+
+		result := streamlineInputSchema(input)
+
+		var parsed map[string]any
+		if err := json.Unmarshal(result, &parsed); err != nil {
+			t.Fatalf("failed to unmarshal result: %v", err)
+		}
+
+		if _, has := parsed["additionalProperties"]; has {
+			t.Error("top-level additionalProperties should be stripped")
+		}
+
+		props := parsed["properties"].(map[string]any)
+
+		limit := props["limit"].(map[string]any)
+		if _, has := limit["minimum"]; has {
+			t.Error("minimum should be stripped")
+		}
+		if _, has := limit["maximum"]; has {
+			t.Error("maximum should be stripped")
+		}
+		if limit["default"] != float64(10) {
+			t.Error("default should be preserved")
+		}
+
+		query := props["query"].(map[string]any)
+		for _, field := range []string{"minLength", "maxLength", "pattern", "format"} {
+			if _, has := query[field]; has {
+				t.Errorf("%s should be stripped", field)
+			}
+		}
+
+		output := props["output"].(map[string]any)
+		if _, has := output["x-google-enum-descriptions"]; has {
+			t.Error("x-google-* fields should be stripped")
+		}
+		enumVals := output["enum"].([]any)
+		if len(enumVals) != 3 {
+			t.Error("enum values should be preserved")
+		}
+	})
 }

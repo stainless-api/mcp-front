@@ -42,7 +42,7 @@ func streamlineInputSchema(raw json.RawMessage) json.RawMessage {
 		return raw
 	}
 
-	stripDescriptions(schema)
+	stripSchemaClutter(schema)
 	simplifyNullableTypes(schema)
 
 	result, err := json.Marshal(schema)
@@ -52,7 +52,21 @@ func streamlineInputSchema(raw json.RawMessage) json.RawMessage {
 	return result
 }
 
-func stripDescriptions(schema map[string]any) {
+// Fields that are only used for validation, not for understanding tool usage.
+var validationOnlyFields = []string{
+	"description",
+	"additionalProperties",
+	"minimum",
+	"maximum",
+	"minLength",
+	"maxLength",
+	"pattern",
+	"format",
+}
+
+func stripSchemaClutter(schema map[string]any) {
+	delete(schema, "additionalProperties")
+
 	props, ok := schema["properties"].(map[string]any)
 	if !ok {
 		return
@@ -63,15 +77,26 @@ func stripDescriptions(schema map[string]any) {
 		if !ok {
 			continue
 		}
-		delete(propMap, "description")
+		for _, field := range validationOnlyFields {
+			delete(propMap, field)
+		}
+
+		// Strip x-google-* extension fields
+		for k := range propMap {
+			if strings.HasPrefix(k, "x-") {
+				delete(propMap, k)
+			}
+		}
 
 		// Recurse into nested objects
-		stripDescriptions(propMap)
+		stripSchemaClutter(propMap)
 
 		// Handle items for arrays
 		if items, ok := propMap["items"].(map[string]any); ok {
-			delete(items, "description")
-			stripDescriptions(items)
+			for _, field := range validationOnlyFields {
+				delete(items, field)
+			}
+			stripSchemaClutter(items)
 		}
 	}
 }
