@@ -55,6 +55,9 @@ gcp-service-account.json
 config-oauth-local.json
 *-local.json
 
+# Node modules
+node_modules/
+
 # Temporary directories
 tmp/
 temp/
