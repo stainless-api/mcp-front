@@ -89,6 +89,10 @@ func ResolveConfig(rawConfig json.RawMessage) (Config, []ResolvedToolConfig, err
 			resolved.HTTP = resolvedHTTP
 		}
 
+		if tool.HTMLFetch != nil {
+			resolved.HTMLFetch = tool.HTMLFetch
+		}
+
 		// Validate timeout format if specified
 		if resolved.Timeout != "" {
 			if _, err := time.ParseDuration(resolved.Timeout); err != nil {

@@ -142,6 +142,52 @@
       },
       "requiresUserToken": false
     },
+    "help-docs": {
+      "transportType": "inline",
+      "inline": {
+        "description": "Vori help documentation search and retrieval",
+        "tools": [
+          {
+            "name": "search",
+            "description": "Search Vori help documentation by keyword",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "q": { "type": "string", "description": "Search query" },
+                "limit": { "type": "integer", "description": "Max results (default 10)" },
+                "offset": { "type": "integer", "description": "Pagination offset (default 0)" }
+              },
+              "required": ["q"]
+            },
+            "http": {
+              "method": "GET",
+              "url": "https://help.vori.com/_hcms/v3/site-search/search?type=KNOWLEDGE_ARTICLE&groupId=193687494995&analytics=false",
+              "headers": {
+                "User-Agent": "Vori-MCP/1.0"
+              }
+            },
+            "timeout": "15s"
+          },
+          {
+            "name": "fetch",
+            "description": "Fetch full article content from a help.vori.com URL",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "url": { "type": "string", "description": "Article URL (must be help.vori.com)" }
+              },
+              "required": ["url"]
+            },
+            "htmlFetch": {
+              "urlArg": "url",
+              "allowedDomains": ["help.vori.com"],
+              "selector": "#main-content"
+            },
+            "timeout": "15s"
+          }
+        ]
+      }
+    },
     "ditto-read-only": {
       "transportType": "inline",
       "inline": {

@@ -3,6 +3,8 @@ package inline
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -223,4 +225,129 @@ func TestServer_HandleToolCall_Timeout(t *testing.T) {
 				strings.Contains(errorMsg, "killed"),
 			"Expected error to contain signal/terminated/killed, got stderr: %s, error: %s", stderr, errorMsg)
 	}
+}
+
+func TestServer_HandleToolCall_HTTP_GET(t *testing.T) {
+	var receivedQuery string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedQuery = r.URL.RawQuery
+		assert.Equal(t, http.MethodGet, r.Method)
+
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"results": [{"title": "Test Article"}]}`))
+	}))
+	defer ts.Close()
+
+	resolvedTools := []ResolvedToolConfig{
+		{
+			Name:        "search",
+			Description: "Search",
+			HTTP: &ResolvedHTTPConfig{
+				Method: "GET",
+				URL:    ts.URL + "?type=KNOWLEDGE_ARTICLE&analytics=false",
+			},
+		},
+	}
+
+	server := NewServer("test", Config{}, resolvedTools)
+	result, err := server.HandleToolCall(context.Background(), "search", map[string]any{
+		"q":     "inventory",
+		"limit": 5,
+	})
+
+	require.NoError(t, err)
+
+	assert.Contains(t, receivedQuery, "type=KNOWLEDGE_ARTICLE")
+	assert.Contains(t, receivedQuery, "analytics=false")
+	assert.Contains(t, receivedQuery, "q=inventory")
+	assert.Contains(t, receivedQuery, "limit=5")
+
+	resultMap, ok := result.(map[string]any)
+	require.True(t, ok)
+	results, ok := resultMap["results"].([]any)
+	require.True(t, ok)
+	assert.Len(t, results, 1)
+}
+
+func TestServer_HandleToolCall_HTMLFetch(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte(`<html><body>
+			<nav>Nav bar</nav>
+			<main id="main-content">
+				<h1>Help Article</h1>
+				<p>This is the article body.</p>
+			</main>
+			<footer>Footer</footer>
+		</body></html>`))
+	}))
+	defer ts.Close()
+
+	resolvedTools := []ResolvedToolConfig{
+		{
+			Name:        "fetch",
+			Description: "Fetch article",
+			HTMLFetch: &HTMLFetchConfig{
+				URLArg:         "url",
+				AllowedDomains: []string{"127.0.0.1"},
+				Selector:       "#main-content",
+			},
+		},
+	}
+
+	server := NewServer("test", Config{}, resolvedTools)
+	result, err := server.HandleToolCall(context.Background(), "fetch", map[string]any{
+		"url": ts.URL + "/article",
+	})
+
+	require.NoError(t, err)
+
+	text, ok := result.(string)
+	require.True(t, ok)
+	assert.Contains(t, text, "Help Article")
+	assert.Contains(t, text, "This is the article body.")
+	assert.NotContains(t, text, "Nav bar")
+	assert.NotContains(t, text, "Footer")
+}
+
+func TestServer_HandleToolCall_HTMLFetch_DomainValidation(t *testing.T) {
+	resolvedTools := []ResolvedToolConfig{
+		{
+			Name:        "fetch",
+			Description: "Fetch article",
+			HTMLFetch: &HTMLFetchConfig{
+				URLArg:         "url",
+				AllowedDomains: []string{"help.vori.com"},
+				Selector:       "#main-content",
+			},
+		},
+	}
+
+	server := NewServer("test", Config{}, resolvedTools)
+	_, err := server.HandleToolCall(context.Background(), "fetch", map[string]any{
+		"url": "https://evil.com/phishing",
+	})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not in the allowed list")
+}
+
+func TestServer_HandleToolCall_HTMLFetch_MissingURL(t *testing.T) {
+	resolvedTools := []ResolvedToolConfig{
+		{
+			Name:        "fetch",
+			Description: "Fetch article",
+			HTMLFetch: &HTMLFetchConfig{
+				URLArg:         "url",
+				AllowedDomains: []string{"help.vori.com"},
+				Selector:       "#main-content",
+			},
+		},
+	}
+
+	server := NewServer("test", Config{}, resolvedTools)
+	_, err := server.HandleToolCall(context.Background(), "fetch", map[string]any{})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "missing required argument")
 }

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"strings"
@@ -94,6 +95,10 @@ func (s *Server) HandleToolCall(ctx context.Context, toolName string, args map[s
 		}
 	}
 
+	if tool.HTMLFetch != nil {
+		return s.executeHTMLFetch(ctx, tool, args)
+	}
+
 	if tool.HTTP != nil {
 		return s.executeHTTP(ctx, tool, args)
 	}
@@ -145,21 +150,36 @@ func (s *Server) HandleToolCall(ctx context.Context, toolName string, args map[s
 }
 
 func (s *Server) executeHTTP(ctx context.Context, tool ResolvedToolConfig, args map[string]any) (any, error) {
-	body, err := json.Marshal(args)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal arguments: %w", err)
-	}
+	var req *http.Request
+	var err error
 
-	req, err := http.NewRequestWithContext(ctx, tool.HTTP.Method, tool.HTTP.URL, bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+	if strings.EqualFold(tool.HTTP.Method, "GET") {
+		req, err = http.NewRequestWithContext(ctx, http.MethodGet, tool.HTTP.URL, nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create request: %w", err)
+		}
+
+		q := req.URL.Query()
+		for k, v := range args {
+			q.Set(k, fmt.Sprintf("%v", v))
+		}
+		req.URL.RawQuery = q.Encode()
+	} else {
+		body, err := json.Marshal(args)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal arguments: %w", err)
+		}
+		req, err = http.NewRequestWithContext(ctx, tool.HTTP.Method, tool.HTTP.URL, bytes.NewReader(body))
+		if err != nil {
+			return nil, fmt.Errorf("failed to create request: %w", err)
+		}
 	}
 
 	for k, v := range tool.HTTP.Headers {
 		req.Header.Set(k, v)
 	}
 
-	log.LogDebug("Executing inline HTTP tool: %s %s", tool.HTTP.Method, tool.HTTP.URL)
+	log.LogDebug("Executing inline HTTP tool: %s %s", tool.HTTP.Method, req.URL.String())
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -182,4 +202,56 @@ func (s *Server) executeHTTP(ctx context.Context, tool ResolvedToolConfig, args 
 	}
 
 	return map[string]any{"output": string(respBody)}, nil
+}
+
+func (s *Server) executeHTMLFetch(ctx context.Context, tool ResolvedToolConfig, args map[string]any) (any, error) {
+	rawURL, ok := args[tool.HTMLFetch.URLArg].(string)
+	if !ok || rawURL == "" {
+		return nil, fmt.Errorf("missing required argument: %s", tool.HTMLFetch.URLArg)
+	}
+
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid URL: %w", err)
+	}
+
+	if len(tool.HTMLFetch.AllowedDomains) > 0 {
+		allowed := false
+		for _, domain := range tool.HTMLFetch.AllowedDomains {
+			if strings.EqualFold(parsed.Hostname(), domain) {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			return nil, fmt.Errorf("domain %q is not in the allowed list", parsed.Hostname())
+		}
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("User-Agent", "Vori-MCP/1.0")
+
+	log.LogDebug("Executing inline HTML fetch tool: GET %s", rawURL)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("HTTP request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("HTTP %d fetching %s", resp.StatusCode, rawURL)
+	}
+
+	body := io.LimitReader(resp.Body, 2*1024*1024)
+
+	text, err := ExtractText(body, tool.HTMLFetch.Selector)
+	if err != nil {
+		return nil, fmt.Errorf("failed to extract content: %w", err)
+	}
+
+	return text, nil
 }
