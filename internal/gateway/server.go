@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -443,6 +444,89 @@ func (s *Server) getOrCreateBackend(ctx context.Context, userEmail, serviceName 
 	})
 
 	return backend, nil
+}
+
+// ToolInfo represents a tool for display purposes.
+type ToolInfo struct {
+	Name        string
+	Description string
+}
+
+// ServiceTools groups tools by service for display purposes.
+type ServiceTools struct {
+	Name              string
+	Tools             []ToolInfo
+	RequiresUserToken bool
+	NeedsAuth         bool // requires user token but user hasn't authenticated
+}
+
+// ListToolsByService returns tools grouped by service for the given user.
+// Services needing authentication are sorted first, then alphabetically.
+// Tools within each service are sorted alphabetically by name.
+// Uses the same tool cache as HandleToolsList to avoid redundant discovery.
+func (s *Server) ListToolsByService(ctx context.Context, userEmail string) ([]ServiceTools, error) {
+	session := s.getOrCreateSession(userEmail)
+
+	session.cacheMu.Lock()
+	cached := session.toolCache
+	valid := time.Now().Before(session.cacheExp) && cached != nil
+	session.cacheMu.Unlock()
+
+	var tools []cachedTool
+	if valid {
+		tools = cached
+	} else {
+		var err error
+		tools, err = s.discoverTools(ctx, userEmail, session)
+		if err != nil {
+			return nil, err
+		}
+
+		session.cacheMu.Lock()
+		session.toolCache = tools
+		session.cacheExp = time.Now().Add(toolCacheTTL)
+		session.cacheMu.Unlock()
+	}
+
+	grouped := make(map[string][]ToolInfo)
+	for _, t := range tools {
+		_, toolName, _ := ParseNamespacedTool(t.Tool.Name)
+		grouped[t.ServiceName] = append(grouped[t.ServiceName], ToolInfo{
+			Name:        toolName,
+			Description: t.Tool.Description,
+		})
+	}
+
+	result := make([]ServiceTools, 0, len(s.serverConfigs))
+	for name := range s.serverConfigs {
+		svcTools := grouped[name]
+		sort.Slice(svcTools, func(i, j int) bool {
+			return svcTools[i].Name < svcTools[j].Name
+		})
+		needsAuth := s.requiresUserToken(name) && len(svcTools) == 0
+		result = append(result, ServiceTools{
+			Name:              name,
+			Tools:             svcTools,
+			RequiresUserToken: s.requiresUserToken(name),
+			NeedsAuth:         needsAuth,
+		})
+	}
+
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].NeedsAuth != result[j].NeedsAuth {
+			return result[i].NeedsAuth
+		}
+		return result[i].Name < result[j].Name
+	})
+
+	return result, nil
+}
+
+func (s *Server) requiresUserToken(serviceName string) bool {
+	if cfg, ok := s.serverConfigs[serviceName]; ok {
+		return cfg.RequiresUserToken
+	}
+	return false
 }
 
 func formatTools(tools []cachedTool, streamline bool) []map[string]any {

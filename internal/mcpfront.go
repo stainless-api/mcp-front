@@ -430,6 +430,17 @@ func buildHTTPHandler(
 
 	mux.Handle(route("/gateway/"), server.ChainMiddleware(gatewayHandler, gatewayMiddlewares...))
 
+	if authServer != nil {
+		toolsHandler := server.NewToolsHandler(gatewayServer)
+		toolsMiddleware := []server.MiddlewareFunc{
+			corsMiddleware,
+			tokenLogger,
+			server.NewBrowserSSOMiddleware(authConfig, idpProvider, sessionEncryptor, browserStateToken),
+			mcpRecover,
+		}
+		mux.Handle(route("/tools"), server.ChainMiddleware(toolsHandler, toolsMiddleware...))
+	}
+
 	log.LogInfoWithFields("server", "MCP proxy server initialized", nil)
 	return mux, gatewayServer, nil
 }

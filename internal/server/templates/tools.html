@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gateway Tools</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background-color: #f5f5f5;
+            color: #333;
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        header {
+            background-color: #fff;
+            padding: 20px;
+            margin-bottom: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        h1 {
+            font-size: 28px;
+        }
+
+        .stats {
+            color: #666;
+            font-size: 14px;
+        }
+
+        .service-section {
+            margin-bottom: 30px;
+        }
+
+        .service-name {
+            font-size: 18px;
+            font-weight: 600;
+            color: #fff;
+            background-color: #333;
+            padding: 10px 16px;
+            border-radius: 8px 8px 0 0;
+        }
+
+        .service-name .count {
+            font-weight: 400;
+            color: #aaa;
+            margin-left: 8px;
+        }
+
+        .service-name .badge {
+            font-size: 11px;
+            font-weight: 500;
+            padding: 2px 8px;
+            border-radius: 4px;
+            margin-left: 10px;
+        }
+
+        .badge-user-auth {
+            background-color: #5a4a00;
+            color: #ffd54f;
+        }
+
+        .badge-needs-auth {
+            background-color: #b71c1c;
+            color: #fff;
+        }
+
+        .needs-auth-msg {
+            padding: 16px;
+            color: #999;
+            font-size: 13px;
+            font-style: italic;
+        }
+
+        .tool-list {
+            background-color: #fff;
+            border-radius: 0 0 8px 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .tool {
+            padding: 12px 16px;
+            border-bottom: 1px solid #eee;
+        }
+
+        .tool:last-child {
+            border-bottom: none;
+        }
+
+        .tool-name {
+            font-family: 'SF Mono', SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+            font-size: 13px;
+            font-weight: 600;
+            color: #0366d6;
+        }
+
+        .tool-description {
+            font-size: 13px;
+            color: #666;
+            margin-top: 2px;
+        }
+
+        .error {
+            background-color: #fff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            color: #d32f2f;
+        }
+
+        .filter-bar {
+            margin-bottom: 20px;
+        }
+
+        .filter-bar input {
+            width: 100%;
+            padding: 10px 16px;
+            font-size: 14px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            outline: none;
+        }
+
+        .filter-bar input:focus {
+            border-color: #0366d6;
+            box-shadow: 0 0 0 3px rgba(3, 102, 214, 0.1);
+        }
+
+        .hidden {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div>
+                <h1>Gateway Tools</h1>
+                <div class="stats">{{.UserEmail}}</div>
+            </div>
+            <div class="stats">{{.TotalTools}} tools across {{.ServiceCount}} services</div>
+        </header>
+
+        {{if .Error}}
+        <div class="error">{{.Error}}</div>
+        {{else}}
+
+        <div class="filter-bar">
+            <input type="text" id="filter" placeholder="Filter tools..." autofocus>
+        </div>
+
+        {{range .Services}}
+        <div class="service-section" data-service="{{.Name}}">
+            <div class="service-name">{{.Name}}<span class="count">{{len .Tools}} tools</span>{{if .NeedsAuth}}<span class="badge badge-needs-auth">not connected</span>{{else if .RequiresUserToken}}<span class="badge badge-user-auth">user auth</span>{{end}}</div>
+            <div class="tool-list">
+                {{if .NeedsAuth}}
+                <div class="needs-auth-msg">Connect this service at <a href="/my/tokens">/my/tokens</a> to see its tools.</div>
+                {{else}}
+                {{range .Tools}}
+                <div class="tool" data-search="{{.Name}} {{.Description}}">
+                    <div class="tool-name">{{.Name}}</div>
+                    {{if .Description}}<div class="tool-description">{{.Description}}</div>{{end}}
+                </div>
+                {{end}}
+                {{end}}
+            </div>
+        </div>
+        {{end}}
+
+        {{end}}
+    </div>
+
+    <script>
+        document.getElementById('filter')?.addEventListener('input', function(e) {
+            const q = e.target.value.toLowerCase();
+            document.querySelectorAll('.tool').forEach(function(el) {
+                const text = el.getAttribute('data-search').toLowerCase();
+                el.classList.toggle('hidden', q && !text.includes(q));
+            });
+            document.querySelectorAll('.service-section').forEach(function(el) {
+                const visible = el.querySelectorAll('.tool:not(.hidden)').length;
+                el.classList.toggle('hidden', visible === 0 && q);
+                const countEl = el.querySelector('.count');
+                if (countEl && q) {
+                    countEl.textContent = visible + ' tools';
+                }
+            });
+        });
+    </script>
+</body>
+</html>

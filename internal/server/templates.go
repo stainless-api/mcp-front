@@ -11,8 +11,12 @@ var tokenPageTemplateHTML string
 //go:embed templates/services.html
 var servicesPageTemplateHTML string
 
+//go:embed templates/tools.html
+var toolsPageTemplateHTML string
+
 var tokenPageTemplate = template.Must(template.New("tokens").Parse(tokenPageTemplateHTML))
 var servicesPageTemplate = template.Must(template.New("services").Parse(servicesPageTemplateHTML))
+var toolsPageTemplate = template.Must(template.New("tools").Parse(toolsPageTemplateHTML))
 
 // TokenPageData represents the data for the token management page
 type TokenPageData struct {

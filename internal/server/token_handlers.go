@@ -3,6 +3,7 @@ package server
 import (
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -117,6 +118,15 @@ func (h *TokenHandlers) ListTokensHandler(w http.ResponseWriter, r *http.Request
 
 		services = append(services, service)
 	}
+
+	sort.Slice(services, func(i, j int) bool {
+		iNeedsAuth := services[i].RequiresToken && !services[i].HasToken
+		jNeedsAuth := services[j].RequiresToken && !services[j].HasToken
+		if iNeedsAuth != jNeedsAuth {
+			return iNeedsAuth
+		}
+		return services[i].Name < services[j].Name
+	})
 
 	// Generate CSRF token
 	csrfToken, err := h.csrf.Generate()
