@@ -190,7 +190,8 @@ func (m *MCPFront) Run() error {
 
 func setupStorage(ctx context.Context, cfg config.Config) (storage.Storage, error) {
 	if oauthAuth := cfg.Proxy.Auth; oauthAuth != nil {
-		if oauthAuth.Storage == "firestore" {
+		switch oauthAuth.Storage {
+		case "firestore":
 			log.LogInfoWithFields("storage", "Using Firestore storage", map[string]any{
 				"project":    oauthAuth.GCPProject,
 				"database":   oauthAuth.FirestoreDatabase,
@@ -211,6 +212,23 @@ func setupStorage(ctx context.Context, cfg config.Config) (storage.Storage, erro
 				return nil, fmt.Errorf("failed to create Firestore storage: %w", err)
 			}
 			return firestoreStorage, nil
+		case "sqlite":
+			log.LogInfoWithFields("storage", "Using SQLite storage", map[string]any{
+				"path": oauthAuth.SQLitePath,
+			})
+			encryptor, err := crypto.NewEncryptor([]byte(oauthAuth.EncryptionKey))
+			if err != nil {
+				return nil, fmt.Errorf("failed to create encryptor: %w", err)
+			}
+			sqliteStorage, err := storage.NewSQLiteStorage(
+				ctx,
+				oauthAuth.SQLitePath,
+				encryptor,
+			)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create SQLite storage: %w", err)
+			}
+			return sqliteStorage, nil
 		}
 	}
 
