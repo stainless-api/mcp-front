@@ -3,6 +3,8 @@ package server
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"maps"
 	"net/http"
@@ -12,6 +14,8 @@ import (
 	"github.com/stainless-api/mcp-front/internal/jsonrpc"
 	"github.com/stainless-api/mcp-front/internal/log"
 )
+
+var errNoBackendSessionID = errors.New("backend did not return Mcp-Session-Id header")
 
 // forwardStreamablePostToBackend handles POST requests for streamable-http transport
 func forwardStreamablePostToBackend(ctx context.Context, w http.ResponseWriter, r *http.Request, cfg *config.MCPClientConfig) {
@@ -128,18 +132,22 @@ func initBackendSession(ctx context.Context, srcHeaders http.Header, cfg *config
 	headers.Del("Mcp-Session-Id")
 
 	// Step 1: send initialize
-	initBody := []byte(`{"jsonrpc":"2.0","id":"_mcp_front_reinit","method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"mcp-front","version":"1.0.0"}}}`)
+	initBody := []byte(`{"jsonrpc":"2.0","id":"_mcp_front_reinit","method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"mcp-front","version":"1.0.0"}}}`)
 
 	resp, err := sendStreamablePost(ctx, initBody, headers, cfg)
 	if err != nil {
 		return "", err
 	}
-	newSessionID := resp.Header.Get("Mcp-Session-Id")
 	io.Copy(io.Discard, resp.Body)
 	resp.Body.Close()
 
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("backend initialize returned status %d", resp.StatusCode)
+	}
+
+	newSessionID := resp.Header.Get("Mcp-Session-Id")
 	if newSessionID == "" {
-		return "", io.ErrUnexpectedEOF
+		return "", errNoBackendSessionID
 	}
 
 	log.LogInfoWithFields("streamable_proxy", "New backend session established", map[string]any{
