@@ -292,3 +292,37 @@ func TestSQLiteStorageFileCreated(t *testing.T) {
 	_, err = os.Stat(dbPath)
 	assert.NoError(t, err)
 }
+
+func TestSQLiteStorageClientIsolation(t *testing.T) {
+	store := newTestSQLiteStorage(t)
+	ctx := context.Background()
+
+	uris := []string{"https://example.com/callback"}
+	scopes := []string{"read", "write"}
+
+	_, err := store.CreateClient(ctx, "client-1", uris, scopes, "https://issuer.com")
+	require.NoError(t, err)
+
+	uris[0] = "https://attacker.com/callback"
+	scopes[0] = "admin"
+
+	stored, err := store.GetClient(ctx, "client-1")
+	require.NoError(t, err)
+	assert.Equal(t, "https://example.com/callback", stored.RedirectURIs[0], "stored client should not be affected by caller mutation")
+	assert.Equal(t, "read", stored.Scopes[0], "stored client should not be affected by caller mutation")
+}
+
+func TestSQLiteStorageGetClientIsolation(t *testing.T) {
+	store := newTestSQLiteStorage(t)
+	ctx := context.Background()
+
+	_, err := store.CreateClient(ctx, "client-2", []string{"https://example.com/callback"}, []string{"read"}, "https://issuer.com")
+	require.NoError(t, err)
+
+	c1, _ := store.GetClient(ctx, "client-2")
+	c2, _ := store.GetClient(ctx, "client-2")
+
+	c1.RedirectURIs[0] = "https://attacker.com"
+
+	assert.Equal(t, "https://example.com/callback", c2.RedirectURIs[0], "mutating one copy should not affect another")
+}

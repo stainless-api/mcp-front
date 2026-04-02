@@ -483,12 +483,6 @@ func (p *ProxyConfig) UnmarshalJSON(data []byte) error {
 					oauth.FirestoreCollection = "mcp_front_data"
 				}
 			}
-			// Apply defaults for SQLite configuration
-			if oauth.Storage == "sqlite" {
-				if oauth.SQLitePath == "" {
-					oauth.SQLitePath = "mcp_front.db"
-				}
-			}
 			p.Auth = &oauth
 		default:
 			return fmt.Errorf("unknown auth kind: %s (only 'oauth' is supported for proxy auth)", authKind.Kind)

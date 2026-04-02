@@ -380,8 +380,14 @@ func (s *SQLiteStorage) ConsumeGrant(ctx context.Context, code string) (*oauth.G
 		return nil, fmt.Errorf("failed to decode identity: %w", err)
 	}
 
-	createdAt, _ := time.Parse(time.RFC3339Nano, createdAtStr)
-	expiresAt, _ := time.Parse(time.RFC3339Nano, expiresAtStr)
+	createdAt, err := time.Parse(time.RFC3339Nano, createdAtStr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse grant created_at: %w", err)
+	}
+	expiresAt, err := time.Parse(time.RFC3339Nano, expiresAtStr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse grant expires_at: %w", err)
+	}
 
 	return &oauth.Grant{
 		Code:          code,
@@ -415,7 +421,10 @@ func (s *SQLiteStorage) GetUserToken(ctx context.Context, userEmail, service str
 		return nil, fmt.Errorf("failed to get user token from SQLite: %w", err)
 	}
 
-	updatedAt, _ := time.Parse(time.RFC3339Nano, updatedAtStr)
+	updatedAt, err := time.Parse(time.RFC3339Nano, updatedAtStr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse token updated_at: %w", err)
+	}
 	storedToken := &StoredToken{
 		Type:      TokenType(tokenType),
 		UpdatedAt: updatedAt,
