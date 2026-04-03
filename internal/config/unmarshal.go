@@ -207,6 +207,7 @@ func (o *OAuthAuthConfig) UnmarshalJSON(data []byte) error {
 		Storage                         string          `json:"storage"`
 		FirestoreDatabase               string          `json:"firestoreDatabase,omitempty"`
 		FirestoreCollection             string          `json:"firestoreCollection,omitempty"`
+		SQLitePath                      string          `json:"sqlitePath,omitempty"`
 		JWTSecret                       json.RawMessage `json:"jwtSecret"`
 		EncryptionKey                   json.RawMessage `json:"encryptionKey,omitempty"`
 		DangerouslyAcceptIssuerAudience bool            `json:"dangerouslyAcceptIssuerAudience,omitempty"`
@@ -224,6 +225,7 @@ func (o *OAuthAuthConfig) UnmarshalJSON(data []byte) error {
 	o.Storage = raw.Storage
 	o.FirestoreDatabase = raw.FirestoreDatabase
 	o.FirestoreCollection = raw.FirestoreCollection
+	o.SQLitePath = raw.SQLitePath
 	o.DangerouslyAcceptIssuerAudience = raw.DangerouslyAcceptIssuerAudience
 
 	// RefreshTokenScopes: if set, refresh tokens are only issued when the
@@ -319,6 +321,12 @@ func (o *OAuthAuthConfig) UnmarshalJSON(data []byte) error {
 	// Validate encryption key if storage requires it
 	if o.Storage == "firestore" && o.EncryptionKey == "" {
 		return fmt.Errorf("encryption key is required when using firestore storage")
+	}
+	if o.Storage == "sqlite" && o.EncryptionKey == "" {
+		return fmt.Errorf("encryption key is required when using sqlite storage")
+	}
+	if o.Storage == "sqlite" && o.SQLitePath == "" {
+		return fmt.Errorf("sqlitePath is required when using sqlite storage")
 	}
 	if o.EncryptionKey != "" && len(o.EncryptionKey) != 32 {
 		return fmt.Errorf("encryption key must be exactly 32 bytes, got %d", len(o.EncryptionKey))
