@@ -263,9 +263,10 @@ type OAuthAuthConfig struct {
 	TokenTTL            time.Duration `json:"tokenTtl"`
 	RefreshTokenTTL     time.Duration `json:"refreshTokenTtl"`
 	RefreshTokenScopes  []string      `json:"refreshTokenScopes"`
-	Storage             string        `json:"storage"`                       // "memory" or "firestore"
+	Storage             string        `json:"storage"`                       // "memory", "firestore", or "sqlite"
 	FirestoreDatabase   string        `json:"firestoreDatabase,omitempty"`   // Optional: Firestore database name
 	FirestoreCollection string        `json:"firestoreCollection,omitempty"` // Optional: Firestore collection name
+	SQLitePath          string        `json:"sqlitePath,omitempty"`          // Optional: SQLite database file path
 	JWTSecret           Secret        `json:"jwtSecret"`
 	EncryptionKey       Secret        `json:"encryptionKey"`
 	// DangerouslyAcceptIssuerAudience allows tokens with just the base issuer as audience
