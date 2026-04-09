@@ -34,7 +34,7 @@ func NewSQLiteStorage(ctx context.Context, dbPath string, encryptor crypto.Encry
 		return nil, fmt.Errorf("database path is required")
 	}
 
-	db, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
+	db, err := sql.Open("sqlite", dbPath+"?_busy_timeout=5000")
 	if err != nil {
 		return nil, fmt.Errorf("failed to open SQLite database: %w", err)
 	}
@@ -45,6 +45,22 @@ func NewSQLiteStorage(ctx context.Context, dbPath string, encryptor crypto.Encry
 	}
 
 	db.SetMaxOpenConns(1)
+
+	// Set PRAGMAs explicitly — connection string parameters are not reliably
+	// interpreted by modernc.org/sqlite.
+	var journalMode string
+	if err := db.QueryRowContext(ctx, "PRAGMA journal_mode=WAL").Scan(&journalMode); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to set journal_mode=WAL: %w", err)
+	}
+	if journalMode != "wal" {
+		db.Close()
+		return nil, fmt.Errorf("failed to enable WAL mode, got %q", journalMode)
+	}
+	if _, err := db.ExecContext(ctx, "PRAGMA synchronous=NORMAL"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to set synchronous=NORMAL: %w", err)
+	}
 
 	s := &SQLiteStorage{
 		db:        db,

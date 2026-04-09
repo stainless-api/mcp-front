@@ -33,6 +33,20 @@ func TestSQLiteStorageDefault(t *testing.T) {
 	assert.NotNil(t, s)
 }
 
+func TestSQLiteStorageWALEnabled(t *testing.T) {
+	s := newTestSQLiteStorage(t)
+
+	var journalMode string
+	err := s.db.QueryRow("PRAGMA journal_mode").Scan(&journalMode)
+	require.NoError(t, err)
+	assert.Equal(t, "wal", journalMode)
+
+	var synchronous int
+	err = s.db.QueryRow("PRAGMA synchronous").Scan(&synchronous)
+	require.NoError(t, err)
+	assert.Equal(t, 1, synchronous) // NORMAL = 1
+}
+
 func TestSQLiteStorageRequiresEncryptor(t *testing.T) {
 	dir := t.TempDir()
 	_, err := NewSQLiteStorage(context.Background(), filepath.Join(dir, "test.db"), nil)
