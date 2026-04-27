@@ -109,12 +109,13 @@ func testOAuthConfigFromEnv() map[string]any {
 			"tokenUrl":         "http://localhost:9090/token",
 			"userInfoUrl":      "http://localhost:9090/userinfo",
 		},
-		"allowedDomains": []string{"test.com", "stainless.com", "claude.ai"},
-		"allowedOrigins": []string{"https://claude.ai"},
-		"tokenTtl":       "1h",
-		"storage":        "memory",
-		"jwtSecret":      map[string]string{"$env": "JWT_SECRET"},
-		"encryptionKey":  map[string]string{"$env": "ENCRYPTION_KEY"},
+		"allowedDomains":          []string{"test.com", "stainless.com", "claude.ai"},
+		"allowedOrigins":          []string{"https://claude.ai"},
+		"allowAnyRedirectUriHost": true,
+		"tokenTtl":                "1h",
+		"storage":                 "memory",
+		"jwtSecret":               map[string]string{"$env": "JWT_SECRET"},
+		"encryptionKey":           map[string]string{"$env": "ENCRYPTION_KEY"},
 	}
 }
 
@@ -135,16 +136,17 @@ func testGitHubOAuthConfig(allowedOrgs ...string) map[string]any {
 		idpCfg["allowedOrgs"] = allowedOrgs
 	}
 	return map[string]any{
-		"kind":           "oauth",
-		"issuer":         "http://localhost:8080",
-		"gcpProject":     "test-project",
-		"idp":            idpCfg,
-		"allowedDomains": []string{"test.com"},
-		"allowedOrigins": []string{"https://claude.ai"},
-		"tokenTtl":       "1h",
-		"storage":        "memory",
-		"jwtSecret":      map[string]string{"$env": "JWT_SECRET"},
-		"encryptionKey":  map[string]string{"$env": "ENCRYPTION_KEY"},
+		"kind":                    "oauth",
+		"issuer":                  "http://localhost:8080",
+		"gcpProject":              "test-project",
+		"idp":                     idpCfg,
+		"allowedDomains":          []string{"test.com"},
+		"allowedOrigins":          []string{"https://claude.ai"},
+		"allowAnyRedirectUriHost": true,
+		"tokenTtl":                "1h",
+		"storage":                 "memory",
+		"jwtSecret":               map[string]string{"$env": "JWT_SECRET"},
+		"encryptionKey":           map[string]string{"$env": "ENCRYPTION_KEY"},
 	}
 }
 
@@ -165,12 +167,13 @@ func testOIDCOAuthConfig() map[string]any {
 			"tokenUrl":         "http://localhost:9093/token",
 			"userInfoUrl":      "http://localhost:9093/userinfo",
 		},
-		"allowedDomains": []string{"oidc-test.com"},
-		"allowedOrigins": []string{"https://claude.ai"},
-		"tokenTtl":       "1h",
-		"storage":        "memory",
-		"jwtSecret":      map[string]string{"$env": "JWT_SECRET"},
-		"encryptionKey":  map[string]string{"$env": "ENCRYPTION_KEY"},
+		"allowedDomains":          []string{"oidc-test.com"},
+		"allowedOrigins":          []string{"https://claude.ai"},
+		"allowAnyRedirectUriHost": true,
+		"tokenTtl":                "1h",
+		"storage":                 "memory",
+		"jwtSecret":               map[string]string{"$env": "JWT_SECRET"},
+		"encryptionKey":           map[string]string{"$env": "ENCRYPTION_KEY"},
 	}
 }
 
@@ -192,12 +195,13 @@ func testAzureOAuthConfig() map[string]any {
 			"tokenUrl":         "http://localhost:9093/token",
 			"userInfoUrl":      "http://localhost:9093/userinfo",
 		},
-		"allowedDomains": []string{"oidc-test.com"},
-		"allowedOrigins": []string{"https://claude.ai"},
-		"tokenTtl":       "1h",
-		"storage":        "memory",
-		"jwtSecret":      map[string]string{"$env": "JWT_SECRET"},
-		"encryptionKey":  map[string]string{"$env": "ENCRYPTION_KEY"},
+		"allowedDomains":          []string{"oidc-test.com"},
+		"allowedOrigins":          []string{"https://claude.ai"},
+		"allowAnyRedirectUriHost": true,
+		"tokenTtl":                "1h",
+		"storage":                 "memory",
+		"jwtSecret":               map[string]string{"$env": "JWT_SECRET"},
+		"encryptionKey":           map[string]string{"$env": "ENCRYPTION_KEY"},
 	}
 }
 

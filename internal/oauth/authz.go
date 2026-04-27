@@ -59,20 +59,20 @@ func NewAuthorizationServer(cfg AuthorizationServerConfig) (*AuthorizationServer
 	}, nil
 }
 
-func (s *AuthorizationServer) ValidateAuthorizeRequest(r *http.Request, client Client) (*AuthorizeParams, error) {
+// ValidateAuthorizeRequest validates the non-redirect-URI portions of an
+// authorize request. The caller is responsible for resolving and validating
+// redirect_uri *before* calling this function (see
+// ValidateRequestedRedirectURI), and passes the validated URI in. This split
+// exists so the handler can return a direct error response when the
+// redirect_uri itself is invalid, per RFC 6749 §3.1.2.4 ("MUST NOT
+// automatically redirect the user-agent to the invalid redirection URI").
+// Errors returned here may safely be conveyed via a 302 to redirectURI.
+func (s *AuthorizationServer) ValidateAuthorizeRequest(r *http.Request, client Client, redirectURI string) (*AuthorizeParams, error) {
 	q := r.URL.Query()
 
 	responseType := q.Get("response_type")
 	if responseType != "code" {
 		return nil, NewOAuthError(ErrUnsupportedResponseType, "only response_type=code is supported")
-	}
-
-	redirectURI := q.Get("redirect_uri")
-	if redirectURI == "" {
-		return nil, NewOAuthError(ErrInvalidRequest, "redirect_uri is required")
-	}
-	if err := ValidateRedirectURI(redirectURI, client); err != nil {
-		return nil, NewOAuthError(ErrInvalidRequest, err.Error())
 	}
 
 	state := q.Get("state")

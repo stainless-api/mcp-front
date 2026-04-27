@@ -60,7 +60,8 @@ func TestValidateFile(t *testing.T) {
 						"jwtSecret": {"$env": "JWT_SECRET"},
 						"encryptionKey": {"$env": "ENCRYPTION_KEY"},
 						"allowedDomains": ["example.com"],
-						"allowedOrigins": ["https://claude.ai"]
+						"allowedOrigins": ["https://claude.ai"],
+						"allowedRedirectUriHosts": ["https://claude.ai"]
 					}
 				},
 				"mcpServers": {
@@ -237,7 +238,8 @@ func TestValidateFile(t *testing.T) {
 						"jwtSecret": "secret",
 						"encryptionKey": "key",
 						"allowedDomains": ["example.com"],
-						"allowedOrigins": ["https://claude.ai"]
+						"allowedOrigins": ["https://claude.ai"],
+						"allowedRedirectUriHosts": ["https://claude.ai"]
 					}
 				},
 				"mcpServers": {
@@ -272,6 +274,10 @@ func TestValidateFile(t *testing.T) {
 				"at least one allowed origin is required for OAuth (CORS configuration)",
 			},
 			wantErrCount: 5,
+			wantWarnings: []string{
+				"no redirect-URI host policy set",
+			},
+			wantWarnCount: 1,
 		},
 		{
 			name: "valid_manual_user_authentication",
@@ -292,7 +298,8 @@ func TestValidateFile(t *testing.T) {
 						"jwtSecret": "secret123456789012345678901234567890",
 						"encryptionKey": "key12345678901234567890123456789",
 						"allowedDomains": ["example.com"],
-						"allowedOrigins": ["https://claude.ai"]
+						"allowedOrigins": ["https://claude.ai"],
+						"allowedRedirectUriHosts": ["https://claude.ai"]
 					}
 				},
 				"mcpServers": {
@@ -330,7 +337,8 @@ func TestValidateFile(t *testing.T) {
 						"jwtSecret": "secret123456789012345678901234567890",
 						"encryptionKey": "key12345678901234567890123456789",
 						"allowedDomains": ["example.com"],
-						"allowedOrigins": ["https://claude.ai"]
+						"allowedOrigins": ["https://claude.ai"],
+						"allowedRedirectUriHosts": ["https://claude.ai"]
 					}
 				},
 				"mcpServers": {
@@ -372,7 +380,8 @@ func TestValidateFile(t *testing.T) {
 						"jwtSecret": "secret123456789012345678901234567890",
 						"encryptionKey": "key12345678901234567890123456789",
 						"allowedDomains": ["example.com"],
-						"allowedOrigins": ["https://claude.ai"]
+						"allowedOrigins": ["https://claude.ai"],
+						"allowedRedirectUriHosts": ["https://claude.ai"]
 					}
 				},
 				"mcpServers": {
@@ -442,6 +451,130 @@ func TestValidateFile(t *testing.T) {
 					}
 				}
 				assert.True(t, found, "expected warning containing '%s' not found in %v", wantWarn, result.Warnings)
+			}
+		})
+	}
+}
+
+func TestValidateFile_RedirectURIHostPolicy(t *testing.T) {
+	baseAuth := `"kind": "oauth",
+		"issuer": "https://example.com",
+		"idp": {
+			"provider": "google",
+			"clientId": "id",
+			"clientSecret": "secret",
+			"redirectUri": "https://example.com/callback"
+		},
+		"jwtSecret": {"$env": "JWT_SECRET"},
+		"encryptionKey": {"$env": "ENCRYPTION_KEY"},
+		"allowedDomains": ["example.com"],
+		"allowedOrigins": ["https://claude.ai"]`
+
+	wrap := func(authExtra string) string {
+		auth := baseAuth
+		if authExtra != "" {
+			auth += ",\n\t\t" + authExtra
+		}
+		return `{
+			"version": "v0.0.1-DEV_EDITION",
+			"proxy": {
+				"baseURL": "http://localhost:8080",
+				"addr": ":8080",
+				"auth": {` + auth + `}
+			},
+			"mcpServers": {}
+		}`
+	}
+
+	tests := []struct {
+		name        string
+		extraAuth   string
+		wantErrs    []string
+		wantWarns   []string
+	}{
+		{
+			name:      "missing both fields warns",
+			extraAuth: "",
+			wantWarns: []string{"no redirect-URI host policy set"},
+		},
+		{
+			name:      "allowlist configured passes cleanly",
+			extraAuth: `"allowedRedirectUriHosts": ["https://claude.ai"]`,
+		},
+		{
+			name:      "explicit opt-out passes cleanly",
+			extraAuth: `"allowAnyRedirectUriHost": true`,
+		},
+		{
+			name:      "conflict errors",
+			extraAuth: `"allowedRedirectUriHosts": ["https://claude.ai"], "allowAnyRedirectUriHost": true`,
+			wantErrs:  []string{"cannot be true when allowedRedirectUriHosts is non-empty"},
+		},
+		{
+			name:      "entry with path errors",
+			extraAuth: `"allowedRedirectUriHosts": ["https://claude.ai/cb"]`,
+			wantErrs:  []string{"must not include a path"},
+		},
+		{
+			name:      "entry without scheme errors",
+			extraAuth: `"allowedRedirectUriHosts": ["claude.ai"]`,
+			wantErrs:  []string{"must be in the form scheme://host"},
+		},
+		{
+			name:      "entry with fragment errors",
+			extraAuth: `"allowedRedirectUriHosts": ["https://claude.ai#x"]`,
+			wantErrs:  []string{"must not include a query or fragment"},
+		},
+		{
+			name:      "non-string entry errors",
+			extraAuth: `"allowedRedirectUriHosts": [42]`,
+			wantErrs:  []string{"must be a string"},
+		},
+		{
+			name:      "wrong type errors",
+			extraAuth: `"allowedRedirectUriHosts": "not-an-array"`,
+			wantErrs:  []string{"must be an array"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			configPath := filepath.Join(tmpDir, "config.json")
+			err := os.WriteFile(configPath, []byte(wrap(tt.extraAuth)), 0644)
+			require.NoError(t, err)
+
+			result, err := ValidateFile(configPath)
+			require.NoError(t, err)
+
+			for _, want := range tt.wantErrs {
+				found := false
+				for _, e := range result.Errors {
+					if strings.Contains(e.Message, want) {
+						found = true
+						break
+					}
+				}
+				assert.True(t, found, "expected error containing %q not found in %v", want, result.Errors)
+			}
+			for _, want := range tt.wantWarns {
+				found := false
+				for _, w := range result.Warnings {
+					if strings.Contains(w.Message, want) {
+						found = true
+						break
+					}
+				}
+				assert.True(t, found, "expected warning containing %q not found in %v", want, result.Warnings)
+			}
+			if len(tt.wantErrs) == 0 && len(tt.wantWarns) == 0 {
+				// Confirm no policy-related noise on the clean cases.
+				for _, e := range result.Errors {
+					assert.NotContains(t, e.Path, "RedirectUri")
+				}
+				for _, w := range result.Warnings {
+					assert.NotContains(t, w.Path, "RedirectUri")
+				}
 			}
 		})
 	}
@@ -536,7 +669,8 @@ func TestValidateFile_ImprovedErrorMessages(t *testing.T) {
 						"jwtSecret": "secret123456789012345678901234567890",
 						"encryptionKey": "key12345678901234567890123456789",
 						"allowedDomains": ["example.com"],
-						"allowedOrigins": ["https://claude.ai"]
+						"allowedOrigins": ["https://claude.ai"],
+						"allowedRedirectUriHosts": ["https://claude.ai"]
 					}
 				},
 				"mcpServers": {

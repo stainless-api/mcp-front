@@ -302,6 +302,10 @@ func validateOAuthConfig(oauth *OAuthAuthConfig) error {
 		return fmt.Errorf("at least one of allowedDomains or idp.allowedOrgs is required")
 	}
 
+	if err := validateRedirectURIHostPolicy(oauth); err != nil {
+		return err
+	}
+
 	if oauth.Storage == "firestore" {
 		if oauth.GCPProject == "" {
 			return fmt.Errorf("gcpProject is required when using firestore storage")
@@ -312,6 +316,31 @@ func validateOAuthConfig(oauth *OAuthAuthConfig) error {
 	}
 	if oauth.RefreshTokenTTL <= 0 {
 		return fmt.Errorf("refreshTokenTtl must be positive")
+	}
+	return nil
+}
+
+func validateRedirectURIHostPolicy(oauth *OAuthAuthConfig) error {
+	if len(oauth.AllowedRedirectURIHosts) > 0 && oauth.AllowAnyRedirectURIHost {
+		return fmt.Errorf("allowAnyRedirectURIHost cannot be set when allowedRedirectURIHosts is non-empty")
+	}
+	if !IsDev() && len(oauth.AllowedRedirectURIHosts) == 0 && !oauth.AllowAnyRedirectURIHost {
+		return fmt.Errorf("allowedRedirectURIHosts must be configured (or set allowAnyRedirectURIHost to true to disable the policy)")
+	}
+	for i, entry := range oauth.AllowedRedirectURIHosts {
+		u, err := url.Parse(entry)
+		if err != nil {
+			return fmt.Errorf("allowedRedirectURIHosts[%d] %q is not a valid URI: %w", i, entry, err)
+		}
+		if u.Scheme == "" || u.Host == "" {
+			return fmt.Errorf("allowedRedirectURIHosts[%d] %q must be in the form scheme://host[:port]", i, entry)
+		}
+		if u.Path != "" && u.Path != "/" {
+			return fmt.Errorf("allowedRedirectURIHosts[%d] %q must not include a path", i, entry)
+		}
+		if u.RawQuery != "" || u.Fragment != "" {
+			return fmt.Errorf("allowedRedirectURIHosts[%d] %q must not include a query or fragment", i, entry)
+		}
 	}
 	return nil
 }

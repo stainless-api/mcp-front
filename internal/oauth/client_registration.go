@@ -5,9 +5,12 @@ import (
 	"strings"
 )
 
-// ParseClientRegistration parses MCP client registration metadata.
-// This is provider-agnostic as it deals with MCP client registration, not IDP.
-func ParseClientRegistration(metadata map[string]any) (redirectURIs []string, scopes []string, err error) {
+// ParseClientRegistration parses MCP client registration metadata and applies
+// the configured redirect-URI policy. Each redirect URI must satisfy
+// ValidateRedirectURIPolicy: well-formed, absolute, no fragment, hierarchical
+// scheme, and (unless allowAny is true) scheme+host(+port) match an entry in
+// allowedHosts.
+func ParseClientRegistration(metadata map[string]any, allowedHosts []string, allowAny bool) (redirectURIs []string, scopes []string, err error) {
 	redirectURIs = []string{}
 	if uris, ok := metadata["redirect_uris"].([]any); ok {
 		for _, uri := range uris {
@@ -19,6 +22,12 @@ func ParseClientRegistration(metadata map[string]any) (redirectURIs []string, sc
 
 	if len(redirectURIs) == 0 {
 		return nil, nil, fmt.Errorf("no valid redirect URIs provided")
+	}
+
+	for _, uri := range redirectURIs {
+		if err := ValidateRedirectURIPolicy(uri, allowedHosts, allowAny); err != nil {
+			return nil, nil, fmt.Errorf("redirect_uri %q rejected: %w", uri, err)
+		}
 	}
 
 	scopes = []string{"read", "write"}

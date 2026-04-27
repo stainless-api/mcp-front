@@ -82,56 +82,49 @@ func TestAuthorizationServer_ValidateAuthorizeRequest(t *testing.T) {
 	client := newPublicClient()
 	verifier := "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
 	challenge := pkceChallenge(verifier)
+	redirectURI := "http://localhost:6274/callback"
+
+	// Note: redirect_uri validation (presence, registered set, host policy) is
+	// handled by ValidateRequestedRedirectURI before this function is called,
+	// so those cases are covered in client_val_test.go rather than here.
 
 	t.Run("valid request", func(t *testing.T) {
-		r := httptest.NewRequest("GET", "/authorize?response_type=code&client_id=test-client-id&redirect_uri=http://localhost:6274/callback&code_challenge="+challenge+"&code_challenge_method=S256&scope=read+write&state=test-state&resource=https://mcp.example.com/postgres", nil)
-		params, err := s.ValidateAuthorizeRequest(r, client)
+		r := httptest.NewRequest("GET", "/authorize?response_type=code&client_id=test-client-id&redirect_uri="+redirectURI+"&code_challenge="+challenge+"&code_challenge_method=S256&scope=read+write&state=test-state&resource=https://mcp.example.com/postgres", nil)
+		params, err := s.ValidateAuthorizeRequest(r, client, redirectURI)
 		require.NoError(t, err)
 		assert.Equal(t, "test-client-id", params.ClientID)
-		assert.Equal(t, "http://localhost:6274/callback", params.RedirectURI)
+		assert.Equal(t, redirectURI, params.RedirectURI)
 		assert.Equal(t, "test-state", params.State)
 		assert.Equal(t, []string{"read", "write"}, params.Scopes)
 		assert.Equal(t, challenge, params.PKCEChallenge)
 	})
 
 	t.Run("unsupported response_type", func(t *testing.T) {
-		r := httptest.NewRequest("GET", "/authorize?response_type=token&client_id=test-client-id&redirect_uri=http://localhost:6274/callback", nil)
-		_, err := s.ValidateAuthorizeRequest(r, client)
+		r := httptest.NewRequest("GET", "/authorize?response_type=token&client_id=test-client-id", nil)
+		_, err := s.ValidateAuthorizeRequest(r, client, redirectURI)
 		require.Error(t, err)
 		var oauthErr *OAuthError
 		require.ErrorAs(t, err, &oauthErr)
 		assert.Equal(t, ErrUnsupportedResponseType, oauthErr.Code)
 	})
 
-	t.Run("missing redirect_uri", func(t *testing.T) {
-		r := httptest.NewRequest("GET", "/authorize?response_type=code&client_id=test-client-id", nil)
-		_, err := s.ValidateAuthorizeRequest(r, client)
-		require.Error(t, err)
-	})
-
-	t.Run("unregistered redirect_uri", func(t *testing.T) {
-		r := httptest.NewRequest("GET", "/authorize?response_type=code&client_id=test-client-id&redirect_uri=http://evil.com/callback&code_challenge="+challenge+"&code_challenge_method=S256", nil)
-		_, err := s.ValidateAuthorizeRequest(r, client)
-		require.Error(t, err)
-	})
-
 	t.Run("missing PKCE for public client", func(t *testing.T) {
-		r := httptest.NewRequest("GET", "/authorize?response_type=code&client_id=test-client-id&redirect_uri=http://localhost:6274/callback&state=x", nil)
-		_, err := s.ValidateAuthorizeRequest(r, client)
+		r := httptest.NewRequest("GET", "/authorize?response_type=code&client_id=test-client-id&state=x", nil)
+		_, err := s.ValidateAuthorizeRequest(r, client, redirectURI)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "PKCE")
 	})
 
 	t.Run("unsupported PKCE method", func(t *testing.T) {
-		r := httptest.NewRequest("GET", "/authorize?response_type=code&client_id=test-client-id&redirect_uri=http://localhost:6274/callback&code_challenge=abc&code_challenge_method=plain&state=x", nil)
-		_, err := s.ValidateAuthorizeRequest(r, client)
+		r := httptest.NewRequest("GET", "/authorize?response_type=code&client_id=test-client-id&code_challenge=abc&code_challenge_method=plain&state=x", nil)
+		_, err := s.ValidateAuthorizeRequest(r, client, redirectURI)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "S256")
 	})
 
 	t.Run("missing resource parameter", func(t *testing.T) {
-		r := httptest.NewRequest("GET", "/authorize?response_type=code&client_id=test-client-id&redirect_uri=http://localhost:6274/callback&code_challenge="+challenge+"&code_challenge_method=S256&state=x", nil)
-		_, err := s.ValidateAuthorizeRequest(r, client)
+		r := httptest.NewRequest("GET", "/authorize?response_type=code&client_id=test-client-id&code_challenge="+challenge+"&code_challenge_method=S256&state=x", nil)
+		_, err := s.ValidateAuthorizeRequest(r, client, redirectURI)
 		require.Error(t, err)
 		var oauthErr *OAuthError
 		require.ErrorAs(t, err, &oauthErr)
@@ -140,8 +133,8 @@ func TestAuthorizationServer_ValidateAuthorizeRequest(t *testing.T) {
 	})
 
 	t.Run("with resource parameters", func(t *testing.T) {
-		r := httptest.NewRequest("GET", "/authorize?response_type=code&client_id=test-client-id&redirect_uri=http://localhost:6274/callback&code_challenge="+challenge+"&code_challenge_method=S256&state=x&resource=https://mcp.example.com/postgres", nil)
-		params, err := s.ValidateAuthorizeRequest(r, client)
+		r := httptest.NewRequest("GET", "/authorize?response_type=code&client_id=test-client-id&code_challenge="+challenge+"&code_challenge_method=S256&state=x&resource=https://mcp.example.com/postgres", nil)
+		params, err := s.ValidateAuthorizeRequest(r, client, redirectURI)
 		require.NoError(t, err)
 		assert.Equal(t, []string{"https://mcp.example.com/postgres"}, params.Audience)
 	})
@@ -153,9 +146,10 @@ func TestAuthorizationServer_FullFlow(t *testing.T) {
 	verifier := "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
 	challenge := pkceChallenge(verifier)
 
-	r := httptest.NewRequest("GET", "/authorize?response_type=code&client_id=test-client-id&redirect_uri=http://localhost:6274/callback&code_challenge="+challenge+"&code_challenge_method=S256&scope=read+write&state=test-state&resource=https://mcp.example.com/postgres", nil)
+	redirectURI := "http://localhost:6274/callback"
+	r := httptest.NewRequest("GET", "/authorize?response_type=code&client_id=test-client-id&redirect_uri="+redirectURI+"&code_challenge="+challenge+"&code_challenge_method=S256&scope=read+write&state=test-state&resource=https://mcp.example.com/postgres", nil)
 
-	params, err := s.ValidateAuthorizeRequest(r, client)
+	params, err := s.ValidateAuthorizeRequest(r, client, redirectURI)
 	require.NoError(t, err)
 
 	identity := idp.Identity{
@@ -496,16 +490,18 @@ func TestAuthorizationServer_MinStateEntropy(t *testing.T) {
 	verifier := "test-verifier"
 	challenge := pkceChallenge(verifier)
 
+	redirectURI := "http://localhost:6274/callback"
+
 	t.Run("rejects short state", func(t *testing.T) {
-		r := httptest.NewRequest("GET", "/authorize?response_type=code&client_id=test-client-id&redirect_uri=http://localhost:6274/callback&code_challenge="+challenge+"&code_challenge_method=S256&state=short", nil)
-		_, err := s.ValidateAuthorizeRequest(r, client)
+		r := httptest.NewRequest("GET", "/authorize?response_type=code&client_id=test-client-id&code_challenge="+challenge+"&code_challenge_method=S256&state=short", nil)
+		_, err := s.ValidateAuthorizeRequest(r, client, redirectURI)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "state parameter must be at least")
 	})
 
 	t.Run("accepts long enough state", func(t *testing.T) {
-		r := httptest.NewRequest("GET", "/authorize?response_type=code&client_id=test-client-id&redirect_uri=http://localhost:6274/callback&code_challenge="+challenge+"&code_challenge_method=S256&state=long-enough-state-value&resource=https://example.com/svc", nil)
-		params, err := s.ValidateAuthorizeRequest(r, client)
+		r := httptest.NewRequest("GET", "/authorize?response_type=code&client_id=test-client-id&code_challenge="+challenge+"&code_challenge_method=S256&state=long-enough-state-value&resource=https://example.com/svc", nil)
+		params, err := s.ValidateAuthorizeRequest(r, client, redirectURI)
 		require.NoError(t, err)
 		assert.Equal(t, "long-enough-state-value", params.State)
 	})

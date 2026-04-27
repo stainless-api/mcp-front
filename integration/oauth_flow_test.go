@@ -596,6 +596,150 @@ func TestOAuthEndpoints(t *testing.T) {
 	})
 }
 
+// TestRedirectURIHostPolicy verifies the configured redirect-URI host
+// allowlist is enforced end-to-end at /register and at /authorize. With a
+// real allowlist in place (not the test default of allowAnyRedirectUriHost):
+//
+//   - /register rejects dangerous schemes (javascript:) and off-allowlist hosts
+//   - /register accepts URIs whose host is on the allowlist
+//   - /authorize with an unregistered redirect_uri returns a direct error
+//     (RFC 6749 §3.1.2.4 — MUST NOT 302 to the invalid URI)
+//   - /authorize with a valid registered redirect_uri but a different
+//     validation failure still uses the legitimate OAuth error channel
+//     (302 to the registered URI with ?error=...).
+func TestRedirectURIHostPolicy(t *testing.T) {
+	auth := testOAuthConfigFromEnv()
+	delete(auth, "allowAnyRedirectUriHost")
+	auth["allowedRedirectUriHosts"] = []string{"http://127.0.0.1", "https://claude.ai"}
+
+	cfg := buildTestConfig("http://localhost:8080", "mcp-front-redirect-policy-test",
+		auth,
+		map[string]any{"postgres": testPostgresServer()},
+	)
+	startMCPFront(t, writeTestConfig(t, cfg),
+		"JWT_SECRET=test-jwt-secret-32-bytes-exactly!",
+		"ENCRYPTION_KEY=test-encryption-key-32-bytes-ok!",
+		"GOOGLE_CLIENT_ID=test-client-id-for-oauth",
+		"GOOGLE_CLIENT_SECRET=test-client-secret-for-oauth",
+		"MCP_FRONT_ENV=development",
+	)
+	waitForMCPFront(t)
+
+	postRegister := func(t *testing.T, redirectURIs []string) (int, string) {
+		t.Helper()
+		body, _ := json.Marshal(map[string]any{
+			"redirect_uris": redirectURIs,
+			"scope":         "read write",
+		})
+		resp, err := http.Post("http://localhost:8080/register", "application/json", bytes.NewBuffer(body))
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		respBody, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, string(respBody)
+	}
+
+	t.Run("register_rejects_javascript_scheme", func(t *testing.T) {
+		status, body := postRegister(t, []string{"javascript:alert(1)"})
+		assert.Equal(t, http.StatusBadRequest, status, body)
+		assert.Contains(t, body, "redirect_uri")
+	})
+
+	t.Run("register_rejects_data_scheme", func(t *testing.T) {
+		status, body := postRegister(t, []string{"data:text/html,<script>alert(1)</script>"})
+		assert.Equal(t, http.StatusBadRequest, status, body)
+	})
+
+	t.Run("register_rejects_off_allowlist_host", func(t *testing.T) {
+		status, body := postRegister(t, []string{"https://attacker.example/cb"})
+		assert.Equal(t, http.StatusBadRequest, status, body)
+		assert.Contains(t, body, "allowlist")
+	})
+
+	t.Run("register_rejects_uri_with_fragment", func(t *testing.T) {
+		status, body := postRegister(t, []string{"https://claude.ai/cb#token=stolen"})
+		assert.Equal(t, http.StatusBadRequest, status, body)
+		assert.Contains(t, body, "fragment")
+	})
+
+	t.Run("register_accepts_allowlist_host", func(t *testing.T) {
+		status, body := postRegister(t, []string{"https://claude.ai/api/mcp/auth_callback"})
+		assert.Equal(t, http.StatusCreated, status, body)
+	})
+
+	t.Run("register_accepts_loopback_with_arbitrary_port", func(t *testing.T) {
+		// Native MCP clients use loopback IP with a runtime-chosen port (RFC 8252).
+		status, body := postRegister(t, []string{"http://127.0.0.1:54321/oauth/callback"})
+		assert.Equal(t, http.StatusCreated, status, body)
+	})
+
+	// For the /authorize tests, register a legitimate client whose redirect URI
+	// IS on the allowlist, then probe how /authorize handles unregistered
+	// redirect_uri values supplied in the query.
+	body, _ := json.Marshal(map[string]any{
+		"redirect_uris": []string{"https://claude.ai/cb"},
+		"scope":         "read write",
+	})
+	resp, err := http.Post("http://localhost:8080/register", "application/json", bytes.NewBuffer(body))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+	var clientResp map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&clientResp))
+	clientID := clientResp["client_id"].(string)
+
+	noFollow := &http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse },
+	}
+
+	t.Run("authorize_with_unregistered_redirect_uri_does_not_redirect", func(t *testing.T) {
+		params := url.Values{
+			"response_type":         {"code"},
+			"client_id":             {clientID},
+			"redirect_uri":          {"https://attacker.example/steal"},
+			"state":                 {"state-value-long-enough"},
+			"code_challenge":        {"E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"},
+			"code_challenge_method": {"S256"},
+			"resource":              {"http://localhost:8080/postgres"},
+			"scope":                 {"read"},
+		}
+		resp, err := noFollow.Get("http://localhost:8080/authorize?" + params.Encode())
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		// MUST NOT be a redirect to the attacker URI.
+		if resp.StatusCode == http.StatusFound || resp.StatusCode == http.StatusSeeOther {
+			loc := resp.Header.Get("Location")
+			assert.NotContains(t, loc, "attacker.example",
+				"open redirect: 302 Location targets attacker-supplied unregistered redirect_uri (Location=%s)", loc)
+		}
+		assert.GreaterOrEqual(t, resp.StatusCode, 400, "expected a direct error response (4xx)")
+	})
+
+	t.Run("authorize_with_registered_uri_uses_oauth_error_channel", func(t *testing.T) {
+		// Registered redirect_uri, but response_type is unsupported. The
+		// legitimate OAuth error channel (302 to the registered URI with
+		// ?error=...) must still work.
+		params := url.Values{
+			"response_type":         {"token"}, // unsupported
+			"client_id":             {clientID},
+			"redirect_uri":          {"https://claude.ai/cb"},
+			"state":                 {"state-value-long-enough"},
+			"code_challenge":        {"E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"},
+			"code_challenge_method": {"S256"},
+			"resource":              {"http://localhost:8080/postgres"},
+			"scope":                 {"read"},
+		}
+		resp, err := noFollow.Get("http://localhost:8080/authorize?" + params.Encode())
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		require.Equal(t, http.StatusFound, resp.StatusCode, "expected 302 error redirect to registered URI")
+		loc := resp.Header.Get("Location")
+		assert.Contains(t, loc, "claude.ai/cb")
+		assert.Contains(t, loc, "error=")
+	})
+}
+
 // TestCORSHeaders tests CORS headers for Claude.ai compatibility
 func TestCORSHeaders(t *testing.T) {
 	mcpCmd := startOAuthServer(t, map[string]string{

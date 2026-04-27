@@ -16,6 +16,7 @@
       },
       "allowedDomains": ["yourcompany.com", "contractors.yourcompany.com"],
       "allowedOrigins": ["https://claude.ai", "https://yourcompany.com"],
+      "allowedRedirectUriHosts": ["https://claude.ai"],
       "tokenTtl": "24h",
       "storage": "firestore",
       "jwtSecret": {"$env": "JWT_SECRET"},

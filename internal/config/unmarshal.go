@@ -201,6 +201,8 @@ func (o *OAuthAuthConfig) UnmarshalJSON(data []byte) error {
 		IDP                             json.RawMessage `json:"idp"`
 		AllowedDomains                  []string        `json:"allowedDomains"`
 		AllowedOrigins                  []string        `json:"allowedOrigins"`
+		AllowedRedirectURIHosts         []string        `json:"allowedRedirectUriHosts"`
+		AllowAnyRedirectURIHost         bool            `json:"allowAnyRedirectUriHost"`
 		TokenTTL                        string          `json:"tokenTtl"`
 		RefreshTokenTTL                 string          `json:"refreshTokenTtl"`
 		RefreshTokenScopes              []string        `json:"refreshTokenScopes"`
@@ -221,6 +223,8 @@ func (o *OAuthAuthConfig) UnmarshalJSON(data []byte) error {
 	o.Kind = raw.Kind
 	o.AllowedDomains = raw.AllowedDomains
 	o.AllowedOrigins = raw.AllowedOrigins
+	o.AllowedRedirectURIHosts = raw.AllowedRedirectURIHosts
+	o.AllowAnyRedirectURIHost = raw.AllowAnyRedirectURIHost
 	o.Storage = raw.Storage
 	o.FirestoreDatabase = raw.FirestoreDatabase
 	o.FirestoreCollection = raw.FirestoreCollection

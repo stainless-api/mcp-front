@@ -19,6 +19,7 @@
       },
       "allowedDomains": ["test.com"],
       "allowedOrigins": ["https://claude.ai"],
+      "allowAnyRedirectUriHost": true,
       "tokenTtl": "1h",
       "storage": "memory",
       "jwtSecret": {"$env": "JWT_SECRET"},

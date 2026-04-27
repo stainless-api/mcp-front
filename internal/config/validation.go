@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"regexp"
 	"strings"
@@ -161,11 +162,87 @@ func validateAuthStructure(auth map[string]any, result *ValidationResult) {
 				Message: "at least one allowed origin is required for OAuth (CORS configuration)",
 			})
 		}
+
+		validateRedirectURIHostStructure(auth, result)
 	default:
 		result.Errors = append(result.Errors, ValidationError{
 			Path:    "proxy.auth.kind",
 			Message: fmt.Sprintf("unknown auth kind '%s' - only 'oauth' is supported for proxy auth", kind),
 		})
+	}
+}
+
+// validateRedirectURIHostStructure checks the redirect-URI host policy
+// configuration. The policy is required at runtime in non-dev environments;
+// at static-lint time we warn rather than error so dev-only configs that
+// rely on MCP_FRONT_ENV=development aren't broken, while still nudging
+// operators toward being explicit.
+func validateRedirectURIHostStructure(auth map[string]any, result *ValidationResult) {
+	hostsRaw, hostsKeyPresent := auth["allowedRedirectUriHosts"]
+	hosts, hostsIsList := hostsRaw.([]any)
+	allowAny, _ := auth["allowAnyRedirectUriHost"].(bool)
+
+	if hostsKeyPresent && !hostsIsList {
+		result.Errors = append(result.Errors, ValidationError{
+			Path:    "proxy.auth.allowedRedirectUriHosts",
+			Message: "must be an array of origin strings (e.g. [\"https://claude.ai\"])",
+		})
+		return
+	}
+
+	hasHosts := hostsIsList && len(hosts) > 0
+
+	if hasHosts && allowAny {
+		result.Errors = append(result.Errors, ValidationError{
+			Path:    "proxy.auth.allowAnyRedirectUriHost",
+			Message: "cannot be true when allowedRedirectUriHosts is non-empty; choose one",
+		})
+	}
+
+	if !hasHosts && !allowAny {
+		result.Warnings = append(result.Warnings, ValidationError{
+			Path:    "proxy.auth.allowedRedirectUriHosts",
+			Message: "no redirect-URI host policy set; the server will fail to start unless MCP_FRONT_ENV=development. Set allowedRedirectUriHosts to a list of trusted client origins (e.g. [\"https://claude.ai\"]) or allowAnyRedirectUriHost: true to opt out explicitly",
+		})
+	}
+
+	for i, entry := range hosts {
+		path := fmt.Sprintf("proxy.auth.allowedRedirectUriHosts[%d]", i)
+		entryStr, ok := entry.(string)
+		if !ok {
+			result.Errors = append(result.Errors, ValidationError{
+				Path:    path,
+				Message: "must be a string",
+			})
+			continue
+		}
+		u, err := url.Parse(entryStr)
+		if err != nil {
+			result.Errors = append(result.Errors, ValidationError{
+				Path:    path,
+				Message: fmt.Sprintf("%q is not a valid URI: %v", entryStr, err),
+			})
+			continue
+		}
+		if u.Scheme == "" || u.Host == "" {
+			result.Errors = append(result.Errors, ValidationError{
+				Path:    path,
+				Message: fmt.Sprintf("%q must be in the form scheme://host[:port]", entryStr),
+			})
+			continue
+		}
+		if u.Path != "" && u.Path != "/" {
+			result.Errors = append(result.Errors, ValidationError{
+				Path:    path,
+				Message: fmt.Sprintf("%q must not include a path", entryStr),
+			})
+		}
+		if u.RawQuery != "" || u.Fragment != "" {
+			result.Errors = append(result.Errors, ValidationError{
+				Path:    path,
+				Message: fmt.Sprintf("%q must not include a query or fragment", entryStr),
+			})
+		}
 	}
 }
 

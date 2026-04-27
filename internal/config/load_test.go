@@ -49,12 +49,13 @@ func TestValidateConfig_UserTokensRequireOAuth(t *testing.T) {
 							ClientSecret: "test-secret",
 							RedirectURI:  "https://test.example.com/callback",
 						},
-						JWTSecret:       "test-jwt-secret-must-be-32-bytes-long",
-						EncryptionKey:   "test-encryption-key-32-bytes-ok!",
-						AllowedDomains:  []string{"example.com"},
-						AllowedOrigins:  []string{"https://test.example.com"},
-						TokenTTL:        time.Hour,
-						RefreshTokenTTL: 30 * 24 * time.Hour,
+						JWTSecret:               "test-jwt-secret-must-be-32-bytes-long",
+						EncryptionKey:           "test-encryption-key-32-bytes-ok!",
+						AllowedDomains:          []string{"example.com"},
+						AllowedOrigins:          []string{"https://test.example.com"},
+						AllowAnyRedirectURIHost: true,
+						TokenTTL:                time.Hour,
+						RefreshTokenTTL:         30 * 24 * time.Hour,
 					},
 				},
 				MCPServers: map[string]*MCPClientConfig{
@@ -109,12 +110,13 @@ func TestValidateConfig_SessionConfig(t *testing.T) {
 							ClientSecret: "test-secret",
 							RedirectURI:  "https://test.example.com/callback",
 						},
-						JWTSecret:       "test-jwt-secret-must-be-32-bytes-long",
-						EncryptionKey:   "test-encryption-key-32-bytes-ok!",
-						AllowedDomains:  []string{"example.com"},
-						AllowedOrigins:  []string{"https://test.example.com"},
-						TokenTTL:        time.Hour,
-						RefreshTokenTTL: 30 * 24 * time.Hour,
+						JWTSecret:               "test-jwt-secret-must-be-32-bytes-long",
+						EncryptionKey:           "test-encryption-key-32-bytes-ok!",
+						AllowedDomains:          []string{"example.com"},
+						AllowedOrigins:          []string{"https://test.example.com"},
+						AllowAnyRedirectURIHost: true,
+						TokenTTL:                time.Hour,
+						RefreshTokenTTL:         30 * 24 * time.Hour,
 					},
 					Sessions: &SessionConfig{
 						Timeout:         10 * time.Minute,
@@ -142,12 +144,13 @@ func TestValidateConfig_SessionConfig(t *testing.T) {
 							ClientSecret: "test-secret",
 							RedirectURI:  "https://test.example.com/callback",
 						},
-						JWTSecret:       "test-jwt-secret-must-be-32-bytes-long",
-						EncryptionKey:   "test-encryption-key-32-bytes-ok!",
-						AllowedDomains:  []string{"example.com"},
-						AllowedOrigins:  []string{"https://test.example.com"},
-						TokenTTL:        time.Hour,
-						RefreshTokenTTL: 30 * 24 * time.Hour,
+						JWTSecret:               "test-jwt-secret-must-be-32-bytes-long",
+						EncryptionKey:           "test-encryption-key-32-bytes-ok!",
+						AllowedDomains:          []string{"example.com"},
+						AllowedOrigins:          []string{"https://test.example.com"},
+						AllowAnyRedirectURIHost: true,
+						TokenTTL:                time.Hour,
+						RefreshTokenTTL:         30 * 24 * time.Hour,
 					},
 					Sessions: &SessionConfig{
 						Timeout:         -1 * time.Minute,
@@ -173,12 +176,13 @@ func TestValidateConfig_SessionConfig(t *testing.T) {
 							ClientSecret: "test-secret",
 							RedirectURI:  "https://test.example.com/callback",
 						},
-						JWTSecret:       "test-jwt-secret-must-be-32-bytes-long",
-						EncryptionKey:   "test-encryption-key-32-bytes-ok!",
-						AllowedDomains:  []string{"example.com"},
-						AllowedOrigins:  []string{"https://test.example.com"},
-						TokenTTL:        time.Hour,
-						RefreshTokenTTL: 30 * 24 * time.Hour,
+						JWTSecret:               "test-jwt-secret-must-be-32-bytes-long",
+						EncryptionKey:           "test-encryption-key-32-bytes-ok!",
+						AllowedDomains:          []string{"example.com"},
+						AllowedOrigins:          []string{"https://test.example.com"},
+						AllowAnyRedirectURIHost: true,
+						TokenTTL:                time.Hour,
+						RefreshTokenTTL:         30 * 24 * time.Hour,
 					},
 					Sessions: &SessionConfig{
 						Timeout:         10 * time.Minute,
@@ -204,12 +208,13 @@ func TestValidateConfig_SessionConfig(t *testing.T) {
 							ClientSecret: "test-secret",
 							RedirectURI:  "https://test.example.com/callback",
 						},
-						JWTSecret:       "test-jwt-secret-must-be-32-bytes-long",
-						EncryptionKey:   "test-encryption-key-32-bytes-ok!",
-						AllowedDomains:  []string{"example.com"},
-						AllowedOrigins:  []string{"https://test.example.com"},
-						TokenTTL:        time.Hour,
-						RefreshTokenTTL: 30 * 24 * time.Hour,
+						JWTSecret:               "test-jwt-secret-must-be-32-bytes-long",
+						EncryptionKey:           "test-encryption-key-32-bytes-ok!",
+						AllowedDomains:          []string{"example.com"},
+						AllowedOrigins:          []string{"https://test.example.com"},
+						AllowAnyRedirectURIHost: true,
+						TokenTTL:                time.Hour,
+						RefreshTokenTTL:         30 * 24 * time.Hour,
 					},
 					Sessions: &SessionConfig{
 						Timeout:         0,
@@ -692,6 +697,118 @@ func TestExtractBasePath(t *testing.T) {
 				assert.NoError(t, err)
 				assert.Equal(t, tt.expectedPath, cfg.Proxy.BasePath)
 			}
+		})
+	}
+}
+
+func TestValidateOAuthConfig_RedirectURIHostPolicy(t *testing.T) {
+	baseConfig := func() *OAuthAuthConfig {
+		return &OAuthAuthConfig{
+			Kind:   AuthKindOAuth,
+			Issuer: "https://test.example.com",
+			IDP: IDPConfig{
+				Provider:     "google",
+				ClientID:     "client",
+				ClientSecret: "secret",
+				RedirectURI:  "https://test.example.com/callback",
+			},
+			JWTSecret:       "test-jwt-secret-must-be-32-bytes-long",
+			AllowedDomains:  []string{"example.com"},
+			TokenTTL:        time.Hour,
+			RefreshTokenTTL: 30 * 24 * time.Hour,
+		}
+	}
+
+	tests := []struct {
+		name        string
+		env         string // value for MCP_FRONT_ENV
+		hosts       []string
+		allowAny    bool
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name:        "production_requires_policy_or_explicit_disable",
+			env:         "",
+			wantErr:     true,
+			errContains: "must be configured",
+		},
+		{
+			name:    "production_with_allowlist_passes",
+			env:     "",
+			hosts:   []string{"https://claude.ai"},
+			wantErr: false,
+		},
+		{
+			name:     "production_with_allow_any_passes",
+			env:      "",
+			allowAny: true,
+			wantErr:  false,
+		},
+		{
+			name:    "development_without_policy_passes",
+			env:     "development",
+			wantErr: false,
+		},
+		{
+			name:        "rejects_both_set",
+			env:         "",
+			hosts:       []string{"https://claude.ai"},
+			allowAny:    true,
+			wantErr:     true,
+			errContains: "cannot be set when",
+		},
+		{
+			name:        "rejects_entry_with_path",
+			env:         "",
+			hosts:       []string{"https://claude.ai/cb"},
+			wantErr:     true,
+			errContains: "must not include a path",
+		},
+		{
+			name:        "rejects_entry_without_scheme",
+			env:         "",
+			hosts:       []string{"claude.ai"},
+			wantErr:     true,
+			errContains: "scheme://host",
+		},
+		{
+			name:        "rejects_entry_with_fragment",
+			env:         "",
+			hosts:       []string{"https://claude.ai#x"},
+			wantErr:     true,
+			errContains: "fragment",
+		},
+		{
+			name:    "accepts_entry_with_explicit_port",
+			env:     "",
+			hosts:   []string{"https://claude.ai:8443"},
+			wantErr: false,
+		},
+		{
+			name:    "accepts_loopback_entry",
+			env:     "",
+			hosts:   []string{"http://127.0.0.1"},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("MCP_FRONT_ENV", tt.env)
+			cfg := baseConfig()
+			cfg.AllowedRedirectURIHosts = tt.hosts
+			cfg.AllowAnyRedirectURIHost = tt.allowAny
+
+			err := validateOAuthConfig(cfg)
+			if tt.wantErr {
+				assert.Error(t, err)
+				if tt.errContains != "" {
+					assert.Contains(t, err.Error(), tt.errContains)
+				}
+				return
+			}
+			assert.NoError(t, err)
 		})
 	}
 }

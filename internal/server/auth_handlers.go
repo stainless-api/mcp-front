@@ -224,11 +224,25 @@ func (h *AuthHandlers) AuthorizeHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	params, err := h.authServer.ValidateAuthorizeRequest(r, client)
+	// Resolve and validate redirect_uri before any other authorize-request
+	// validation. Per RFC 6749 §3.1.2.4 we MUST NOT redirect the user-agent
+	// to a redirect_uri that is missing, malformed, unregistered, or off the
+	// configured host allowlist — those failures return a direct error.
+	redirectURI := r.URL.Query().Get("redirect_uri")
+	if err := oauth.ValidateRequestedRedirectURI(redirectURI, client, h.authConfig.AllowedRedirectURIHosts, h.authConfig.AllowAnyRedirectURIHost); err != nil {
+		log.LogWarnWithFields("oauth", "Rejected authorize request with invalid redirect_uri", map[string]any{
+			"client_id":    clientID,
+			"redirect_uri": redirectURI,
+			"error":        err.Error(),
+		})
+		jsonwriter.WriteBadRequest(w, fmt.Sprintf("redirect_uri rejected: %v", err))
+		return
+	}
+
+	params, err := h.authServer.ValidateAuthorizeRequest(r, client, redirectURI)
 	if err != nil {
 		var oauthErr *oauth.OAuthError
 		if errors.As(err, &oauthErr) {
-			redirectURI := r.URL.Query().Get("redirect_uri")
 			state := r.URL.Query().Get("state")
 			oauth.WriteAuthorizeError(w, r, redirectURI, state, oauthErr)
 		} else {
@@ -549,7 +563,7 @@ func (h *AuthHandlers) RegisterHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	redirectURIs, scopes, err := oauth.ParseClientRegistration(metadata)
+	redirectURIs, scopes, err := oauth.ParseClientRegistration(metadata, h.authConfig.AllowedRedirectURIHosts, h.authConfig.AllowAnyRedirectURIHost)
 	if err != nil {
 		log.LogError("Client request parsing error: %v", err)
 		jsonwriter.WriteBadRequest(w, err.Error())

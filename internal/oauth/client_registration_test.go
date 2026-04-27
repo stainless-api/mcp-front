@@ -11,6 +11,8 @@ func TestParseClientRegistration(t *testing.T) {
 	tests := []struct {
 		name             string
 		metadata         map[string]any
+		allowedHosts     []string
+		allowAny         bool
 		wantRedirectURIs []string
 		wantScopes       []string
 		wantErr          bool
@@ -21,6 +23,7 @@ func TestParseClientRegistration(t *testing.T) {
 			metadata: map[string]any{
 				"redirect_uris": []any{"https://example.com/callback"},
 			},
+			allowAny:         true,
 			wantRedirectURIs: []string{"https://example.com/callback"},
 			wantScopes:       []string{"read", "write"},
 			wantErr:          false,
@@ -33,6 +36,7 @@ func TestParseClientRegistration(t *testing.T) {
 					"https://example.com/callback2",
 				},
 			},
+			allowAny: true,
 			wantRedirectURIs: []string{
 				"https://example.com/callback",
 				"https://example.com/callback2",
@@ -46,6 +50,7 @@ func TestParseClientRegistration(t *testing.T) {
 				"redirect_uris": []any{"https://example.com/callback"},
 				"scope":         "openid profile email",
 			},
+			allowAny:         true,
 			wantRedirectURIs: []string{"https://example.com/callback"},
 			wantScopes:       []string{"openid", "profile", "email"},
 			wantErr:          false,
@@ -56,6 +61,7 @@ func TestParseClientRegistration(t *testing.T) {
 				"redirect_uris": []any{"https://example.com/callback"},
 				"scope":         "   ",
 			},
+			allowAny:         true,
 			wantRedirectURIs: []string{"https://example.com/callback"},
 			wantScopes:       []string{"read", "write"},
 			wantErr:          false,
@@ -63,6 +69,7 @@ func TestParseClientRegistration(t *testing.T) {
 		{
 			name:        "missing_redirect_uris",
 			metadata:    map[string]any{},
+			allowAny:    true,
 			wantErr:     true,
 			errContains: "no valid redirect URIs",
 		},
@@ -71,6 +78,7 @@ func TestParseClientRegistration(t *testing.T) {
 			metadata: map[string]any{
 				"redirect_uris": []any{},
 			},
+			allowAny:    true,
 			wantErr:     true,
 			errContains: "no valid redirect URIs",
 		},
@@ -79,6 +87,7 @@ func TestParseClientRegistration(t *testing.T) {
 			metadata: map[string]any{
 				"redirect_uris": "https://example.com/callback",
 			},
+			allowAny:    true,
 			wantErr:     true,
 			errContains: "no valid redirect URIs",
 		},
@@ -87,15 +96,86 @@ func TestParseClientRegistration(t *testing.T) {
 			metadata: map[string]any{
 				"redirect_uris": []any{123, "https://example.com/callback", nil},
 			},
+			allowAny:         true,
 			wantRedirectURIs: []string{"https://example.com/callback"},
 			wantScopes:       []string{"read", "write"},
 			wantErr:          false,
+		},
+
+		// Policy enforcement: structural rejection (apply regardless of allowlist)
+		{
+			name: "rejects_javascript_scheme",
+			metadata: map[string]any{
+				"redirect_uris": []any{"javascript:alert(1)"},
+			},
+			allowedHosts: []string{"https://claude.ai"},
+			wantErr:      true,
+			errContains:  "redirect_uri",
+		},
+		{
+			name: "rejects_data_scheme",
+			metadata: map[string]any{
+				"redirect_uris": []any{"data:text/html,<script>alert(1)</script>"},
+			},
+			allowedHosts: []string{"https://claude.ai"},
+			wantErr:      true,
+			errContains:  "redirect_uri",
+		},
+		{
+			name: "rejects_uri_with_fragment",
+			metadata: map[string]any{
+				"redirect_uris": []any{"https://claude.ai/cb#stolen"},
+			},
+			allowedHosts: []string{"https://claude.ai"},
+			wantErr:      true,
+			errContains:  "fragment",
+		},
+		{
+			name: "rejects_relative_uri",
+			metadata: map[string]any{
+				"redirect_uris": []any{"/callback"},
+			},
+			allowedHosts: []string{"https://claude.ai"},
+			wantErr:      true,
+			errContains:  "absolute",
+		},
+		// Policy enforcement: host allowlist
+		{
+			name: "rejects_host_not_in_allowlist",
+			metadata: map[string]any{
+				"redirect_uris": []any{"https://attacker.example/cb"},
+			},
+			allowedHosts: []string{"https://claude.ai"},
+			wantErr:      true,
+			errContains:  "allowlist",
+		},
+		{
+			name: "accepts_host_in_allowlist",
+			metadata: map[string]any{
+				"redirect_uris": []any{"https://claude.ai/api/mcp/auth_callback"},
+			},
+			allowedHosts:     []string{"https://claude.ai"},
+			wantRedirectURIs: []string{"https://claude.ai/api/mcp/auth_callback"},
+			wantScopes:       []string{"read", "write"},
+			wantErr:          false,
+		},
+		{
+			name: "rejects_when_one_of_many_uris_violates_policy",
+			metadata: map[string]any{
+				"redirect_uris": []any{
+					"https://claude.ai/cb",
+					"https://attacker.example/cb",
+				},
+			},
+			allowedHosts: []string{"https://claude.ai"},
+			wantErr:      true,
+			errContains:  "attacker.example",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			redirectURIs, scopes, err := ParseClientRegistration(tt.metadata)
+			redirectURIs, scopes, err := ParseClientRegistration(tt.metadata, tt.allowedHosts, tt.allowAny)
 
 			if tt.wantErr {
 				require.Error(t, err)

@@ -16,6 +16,7 @@
       },
       "allowedDomains": ["yourcompany.com"],
       "allowedOrigins": ["https://claude.ai"],
+      "allowedRedirectUriHosts": ["https://claude.ai"],
       "tokenTtl": "24h",
       "storage": "memory",
       "jwtSecret": {"$env": "JWT_SECRET"},

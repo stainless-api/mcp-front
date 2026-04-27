@@ -292,6 +292,7 @@ func TestOAuthAuthConfig_UnmarshalJSON(t *testing.T) {
 		"gcpProject": "test-project",
 		"allowedDomains": ["example.com"],
 		"allowedOrigins": ["https://claude.ai", "https://example.com"],
+		"allowedRedirectUriHosts": ["https://claude.ai", "http://127.0.0.1"],
 		"tokenTtl": "1h",
 		"storage": "firestore",
 		"idp": {
@@ -313,12 +314,28 @@ func TestOAuthAuthConfig_UnmarshalJSON(t *testing.T) {
 	assert.Equal(t, "test-project", config.GCPProject)
 	assert.Equal(t, []string{"example.com"}, config.AllowedDomains)
 	assert.Equal(t, []string{"https://claude.ai", "https://example.com"}, config.AllowedOrigins)
+	assert.Equal(t, []string{"https://claude.ai", "http://127.0.0.1"}, config.AllowedRedirectURIHosts)
+	assert.False(t, config.AllowAnyRedirectURIHost)
 	assert.Equal(t, "google", config.IDP.Provider)
 	assert.Equal(t, "test-client-id", config.IDP.ClientID)
 	assert.Equal(t, Secret("test-secret-value"), config.IDP.ClientSecret)
 	assert.Equal(t, "https://example.com/callback", config.IDP.RedirectURI)
 	assert.Equal(t, Secret("this-is-a-very-long-jwt-secret-key"), config.JWTSecret)
 	assert.Equal(t, Secret("exactly-32-bytes-long-encryptkey"), config.EncryptionKey)
+}
+
+func TestOAuthAuthConfig_UnmarshalJSON_AllowAnyRedirectUriHost(t *testing.T) {
+	t.Setenv("JWT_SECRET", "this-is-a-very-long-jwt-secret-key")
+	input := `{
+		"kind": "oauth",
+		"jwtSecret": {"$env": "JWT_SECRET"},
+		"allowAnyRedirectUriHost": true
+	}`
+	var config OAuthAuthConfig
+	err := json.Unmarshal([]byte(input), &config)
+	require.NoError(t, err)
+	assert.True(t, config.AllowAnyRedirectURIHost)
+	assert.Empty(t, config.AllowedRedirectURIHosts)
 }
 
 func TestOAuthAuthConfig_ValidationErrors(t *testing.T) {

@@ -110,6 +110,7 @@ Configure OAuth under `proxy.auth`.
     },
     "allowedDomains": ["company.com"],
     "allowedOrigins": ["https://claude.ai"],
+    "allowedRedirectUriHosts": ["https://claude.ai"],
     "tokenTtl": "4h",
     "storage": "memory",
     "jwtSecret": { "$env": "JWT_SECRET" },
@@ -137,6 +138,18 @@ Restricts access to users with email addresses from these domains. At least one 
 ### `auth.allowedOrigins`
 
 CORS origin whitelist. When empty, all origins are allowed. Set to `["https://claude.ai"]` to restrict to Claude, or add additional origins for other MCP clients.
+
+### `auth.allowedRedirectUriHosts`
+
+Allowlist of permitted redirect-URI origins for OAuth client registration and authorization. Each entry is an origin in the form `scheme://host[:port]` (for example `"https://claude.ai"` or `"http://127.0.0.1"` for native MCP clients per RFC 8252). A registered redirect URI passes when its scheme and hostname match an entry, case-insensitively per RFC 3986. An entry without a port matches any port for that host; an entry with an explicit port matches only that port.
+
+This gates Dynamic Client Registration: an MCP client trying to register a `redirect_uris` value whose host is not on this list is rejected with `400 Bad Request` at `/register`. The same check is re-applied at `/authorize` to catch clients registered before the allowlist was tightened. Structural checks always apply regardless of this list — a redirect URI must be an absolute URI, must have a host, must not be opaque (which catches the common form of `javascript:` and `data:` URIs), and must not contain a fragment.
+
+In production (i.e. when `MCP_FRONT_ENV` is not `development`), one of `allowedRedirectUriHosts` or `allowAnyRedirectUriHost` is required at startup. The server fails to boot if both are absent.
+
+### `auth.allowAnyRedirectUriHost`
+
+Set to `true` to explicitly disable the host allowlist. Structural checks still apply. Cannot be combined with a non-empty `allowedRedirectUriHosts`. Intended for local development and trusted-tenant deployments where the operator has other controls in place; production deployments should prefer the explicit allowlist.
 
 ### `auth.tokenTtl`
 
@@ -287,7 +300,7 @@ Set `type` to `"aggregate"` to combine tools from multiple backends into one end
 Optional variables that control runtime behavior:
 
 ```bash
-MCP_FRONT_ENV=development  # Relaxes OAuth validation for local dev (allows HTTP)
+MCP_FRONT_ENV=development  # Relaxes OAuth validation for local dev (allows HTTP, makes allowedRedirectUriHosts optional)
 LOG_LEVEL=debug            # Options: trace, debug, info, warn, error
 LOG_FORMAT=json            # Options: json (structured) or text (human-readable)
 ```
@@ -314,6 +327,7 @@ LOG_FORMAT=json            # Options: json (structured) or text (human-readable)
       },
       "allowedDomains": ["company.com"],
       "allowedOrigins": ["https://claude.ai"],
+      "allowedRedirectUriHosts": ["https://claude.ai"],
       "tokenTtl": "4h",
       "storage": "firestore",
       "gcpProject": { "$env": "GOOGLE_CLOUD_PROJECT" },
