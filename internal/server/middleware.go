@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"slices"
 	"strings"
@@ -178,7 +179,20 @@ func NewRecoverMiddleware(prefix string) MiddlewareFunc {
 // continues. On any failure (missing header, wrong scheme, unknown token, bad
 // password) it passes through unchanged — the downstream RequireAuth gate
 // produces the 401 with the appropriate WWW-Authenticate challenge.
+//
+// Basic auth always runs bcrypt regardless of whether the username matches a
+// configured entry, so the response time does not reveal which usernames exist.
+// A dummy hash generated once at construction time is used to equalize timing
+// for unknown usernames.
 func NewServiceAuthMiddleware(serviceAuths []config.ServiceAuth) MiddlewareFunc {
+	dummyBasicHash, err := bcrypt.GenerateFromPassword([]byte("\x00mcp-front-dummy-password"), bcrypt.DefaultCost)
+	if err != nil {
+		// bcrypt.GenerateFromPassword only fails on cost-out-of-range, which
+		// can't happen with DefaultCost. Panic so misconfiguration surfaces
+		// at startup rather than silently disabling the timing defense.
+		panic(fmt.Sprintf("service auth: failed to generate dummy bcrypt hash: %v", err))
+	}
+
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			authHeader := r.Header.Get("Authorization")
@@ -222,19 +236,33 @@ func NewServiceAuthMiddleware(serviceAuths []config.ServiceAuth) MiddlewareFunc 
 				}
 				username := credentials[:colonIdx]
 				password := credentials[colonIdx+1:]
-				for _, serviceAuth := range serviceAuths {
-					if serviceAuth.Type != config.ServiceAuthTypeBasic {
+
+				// Find the entry whose username matches, if any. The hash to
+				// compare against is the matched entry's hash, or the dummy
+				// hash when no username matched. We always run bcrypt so an
+				// attacker cannot distinguish "unknown user" from "wrong
+				// password" by timing.
+				var matched *config.ServiceAuth
+				for i := range serviceAuths {
+					sa := &serviceAuths[i]
+					if sa.Type != config.ServiceAuthTypeBasic {
 						continue
 					}
-					if username != serviceAuth.Username {
-						continue
+					if username == sa.Username {
+						matched = sa
+						break
 					}
-					if err := bcrypt.CompareHashAndPassword([]byte(string(serviceAuth.HashedPassword)), []byte(password)); err == nil {
-						log.LogTraceWithFields("service_auth", "Basic service auth successful", map[string]any{"username": username})
-						ctx := servicecontext.WithAuthInfo(r.Context(), serviceAuth.Username, string(serviceAuth.UserToken))
-						next.ServeHTTP(w, r.WithContext(ctx))
-						return
-					}
+				}
+				hashToCompare := dummyBasicHash
+				if matched != nil {
+					hashToCompare = []byte(string(matched.HashedPassword))
+				}
+				bcryptErr := bcrypt.CompareHashAndPassword(hashToCompare, []byte(password))
+				if matched != nil && bcryptErr == nil {
+					log.LogTraceWithFields("service_auth", "Basic service auth successful", map[string]any{"username": username})
+					ctx := servicecontext.WithAuthInfo(r.Context(), matched.Username, string(matched.UserToken))
+					next.ServeHTTP(w, r.WithContext(ctx))
+					return
 				}
 				log.LogTraceWithFields("service_auth", "Basic service auth: no match", nil)
 			}

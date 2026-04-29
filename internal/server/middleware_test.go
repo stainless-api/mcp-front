@@ -4,7 +4,9 @@ import (
 	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
+	"time"
 
 	"github.com/stainless-api/mcp-front/internal/config"
 	"github.com/stainless-api/mcp-front/internal/servicecontext"
@@ -251,4 +253,67 @@ func TestServiceAuthMiddleware(t *testing.T) {
 			assert.Empty(t, rr.Header().Get("WWW-Authenticate"), "trier must not set WWW-Authenticate")
 		})
 	}
+}
+
+// TestServiceAuthMiddleware_BasicTimingEqualized verifies that Basic auth
+// always runs bcrypt regardless of whether the username is configured, so the
+// response timing does not leak which usernames exist.
+//
+// We don't measure absolute timing (too noisy in CI) — instead we measure the
+// timing GAP between known-user and unknown-user requests over many trials.
+// With the dummy-hash defense, both paths run one bcrypt; the median timing
+// gap should be a tiny fraction of a single bcrypt call. Without the defense,
+// the gap would be on the order of one bcrypt call (~tens of milliseconds at
+// DefaultCost).
+func TestServiceAuthMiddleware_BasicTimingEqualized(t *testing.T) {
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte("password123"), bcrypt.DefaultCost)
+	require.NoError(t, err)
+
+	mw := NewServiceAuthMiddleware([]config.ServiceAuth{{
+		Type:           config.ServiceAuthTypeBasic,
+		Username:       "alice",
+		HashedPassword: config.Secret(hashedPassword),
+	}})
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	timeRequest := func(authHeader string) time.Duration {
+		req := httptest.NewRequest("GET", "/test", nil)
+		req.Header.Set("Authorization", authHeader)
+		rr := httptest.NewRecorder()
+		start := time.Now()
+		handler.ServeHTTP(rr, req)
+		return time.Since(start)
+	}
+
+	const trials = 5
+	known := make([]time.Duration, trials)
+	unknown := make([]time.Duration, trials)
+	for i := 0; i < trials; i++ {
+		known[i] = timeRequest("Basic " + base64.StdEncoding.EncodeToString([]byte("alice:wrongpass")))
+		unknown[i] = timeRequest("Basic " + base64.StdEncoding.EncodeToString([]byte("nobody:wrongpass")))
+	}
+
+	// Take medians to suppress GC/scheduler noise.
+	median := func(ds []time.Duration) time.Duration {
+		sorted := slices.Clone(ds)
+		slices.Sort(sorted)
+		return sorted[len(sorted)/2]
+	}
+	knownMed := median(known)
+	unknownMed := median(unknown)
+	gap := knownMed - unknownMed
+	if gap < 0 {
+		gap = -gap
+	}
+
+	// A single bcrypt at DefaultCost (10) takes ~50-100ms on typical hardware.
+	// If the dummy-hash defense were missing, unknown would skip bcrypt entirely
+	// and the gap would be roughly equal to knownMed. We assert the gap is well
+	// under half of knownMed — generous to absorb CI noise but tight enough to
+	// catch a regression that drops the dummy-hash call.
+	assert.Less(t, gap, knownMed/2,
+		"timing gap %v between known-user and unknown-user must be << bcrypt cost (known median %v, unknown median %v) — dummy-hash equalization regressed?",
+		gap, knownMed, unknownMed)
 }
