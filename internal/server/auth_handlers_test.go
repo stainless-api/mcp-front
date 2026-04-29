@@ -541,68 +541,6 @@ func TestAuthorizeHandler_RedirectURIErrorPath(t *testing.T) {
 	})
 }
 
-func TestBearerTokenAuth(t *testing.T) {
-	// Unit test for bearer token authentication middleware
-	serviceAuths := []config.ServiceAuth{
-		{
-			Type:   config.ServiceAuthTypeBearer,
-			Tokens: []string{"valid-token-1", "valid-token-2"},
-		},
-	}
-
-	tests := []struct {
-		name         string
-		authHeader   string
-		expectStatus int
-	}{
-		{
-			name:         "valid token 1",
-			authHeader:   "Bearer valid-token-1",
-			expectStatus: http.StatusOK,
-		},
-		{
-			name:         "valid token 2",
-			authHeader:   "Bearer valid-token-2",
-			expectStatus: http.StatusOK,
-		},
-		{
-			name:         "invalid token",
-			authHeader:   "Bearer invalid-token",
-			expectStatus: http.StatusUnauthorized,
-		},
-		{
-			name:         "no auth header",
-			authHeader:   "",
-			expectStatus: http.StatusUnauthorized,
-		},
-		{
-			name:         "malformed header",
-			authHeader:   "InvalidFormat",
-			expectStatus: http.StatusUnauthorized,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.WriteHeader(http.StatusOK)
-			})
-
-			authHandler := NewServiceAuthMiddleware(serviceAuths)(handler)
-
-			req := httptest.NewRequest("GET", "/test", nil)
-			if tt.authHeader != "" {
-				req.Header.Set("Authorization", tt.authHeader)
-			}
-
-			rec := httptest.NewRecorder()
-			authHandler.ServeHTTP(rec, req)
-
-			assert.Equal(t, tt.expectStatus, rec.Code)
-		})
-	}
-}
-
 func TestListTokensAuthType(t *testing.T) {
 	store := storage.NewMemoryStorage()
 	encKey := []byte(strings.Repeat("b", 32))

@@ -40,21 +40,3 @@ func TestWithAuthInfoAndGetAuthInfo(t *testing.T) {
 	})
 }
 
-func TestGetServiceName(t *testing.T) {
-	t.Run("get service name from context", func(t *testing.T) {
-		ctx := context.Background()
-		ctx = WithAuthInfo(ctx, "my-service", "token-123")
-
-		serviceName, ok := GetServiceName(ctx)
-		assert.True(t, ok)
-		assert.Equal(t, "my-service", serviceName)
-	})
-
-	t.Run("get service name when not set", func(t *testing.T) {
-		ctx := context.Background()
-
-		serviceName, ok := GetServiceName(ctx)
-		assert.False(t, ok)
-		assert.Empty(t, serviceName)
-	})
-}

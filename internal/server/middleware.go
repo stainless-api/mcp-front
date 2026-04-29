@@ -173,95 +173,115 @@ func NewRecoverMiddleware(prefix string) MiddlewareFunc {
 	}
 }
 
-// NewServiceAuthMiddleware creates middleware for service-to-service authentication
+// NewServiceAuthMiddleware tries to authenticate the request against the
+// configured serviceAuths. On success it sets servicecontext.WithAuthInfo and
+// continues. On any failure (missing header, wrong scheme, unknown token, bad
+// password) it passes through unchanged — the downstream RequireAuth gate
+// produces the 401 with the appropriate WWW-Authenticate challenge.
 func NewServiceAuthMiddleware(serviceAuths []config.ServiceAuth) MiddlewareFunc {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			ctx := r.Context()
-
-			// Check if user context is already set — OAuth succeeded, no need for further auth
-			if userEmail, ok := oauth.GetUserFromContext(ctx); ok && userEmail != "" {
-				log.LogTraceWithFields("service_auth", "Skipping service auth, user already authenticated via OAuth", map[string]any{
-					"user": userEmail,
-				})
+			authHeader := r.Header.Get("Authorization")
+			if authHeader == "" {
 				next.ServeHTTP(w, r)
 				return
 			}
 
-			authHeader := r.Header.Get("Authorization")
-			if authHeader == "" {
-				log.LogTraceWithFields("service_auth", "Service auth failed: missing Authorization header", nil)
-				jsonwriter.WriteUnauthorized(w, "Unauthorized")
-				return
-			}
-
-			if strings.HasPrefix(authHeader, "Bearer ") {
-				token := authHeader[7:]
+			if token, ok := strings.CutPrefix(authHeader, "Bearer "); ok {
 				log.LogTraceWithFields("service_auth", "Attempting bearer token service auth", nil)
 				for _, serviceAuth := range serviceAuths {
 					if serviceAuth.Type != config.ServiceAuthTypeBearer {
 						continue
 					}
-
 					if slices.Contains(serviceAuth.Tokens, token) {
-						// Auth succeeded
-						log.LogTraceWithFields("service_auth", "Bearer token service auth successful", map[string]any{
-							"service_name": "service",
-						})
+						log.LogTraceWithFields("service_auth", "Bearer token service auth successful", nil)
 						ctx := servicecontext.WithAuthInfo(r.Context(), "service", string(serviceAuth.UserToken))
 						next.ServeHTTP(w, r.WithContext(ctx))
 						return
 					}
 				}
-				log.LogTraceWithFields("service_auth", "Bearer token service auth failed: invalid token", nil)
+				log.LogTraceWithFields("service_auth", "Bearer token service auth: no match", nil)
+				next.ServeHTTP(w, r)
+				return
 			}
 
-			if strings.HasPrefix(authHeader, "Basic ") {
-				encoded := authHeader[6:]
+			if encoded, ok := strings.CutPrefix(authHeader, "Basic "); ok {
 				log.LogTraceWithFields("service_auth", "Attempting basic service auth", nil)
 				decoded, err := base64.StdEncoding.DecodeString(encoded)
 				if err != nil {
-					log.LogTraceWithFields("service_auth", "Basic service auth failed: invalid base64 encoding", map[string]any{
-						"error": err.Error(),
-					})
-					w.Header().Set("WWW-Authenticate", `Basic realm="mcp-front"`)
-					jsonwriter.WriteUnauthorized(w, "Unauthorized")
+					log.LogTraceWithFields("service_auth", "Basic service auth: invalid base64", map[string]any{"error": err.Error()})
+					next.ServeHTTP(w, r)
 					return
 				}
-
 				credentials := string(decoded)
 				colonIdx := strings.IndexByte(credentials, ':')
 				if colonIdx == -1 {
-					log.LogTraceWithFields("service_auth", "Basic service auth failed: malformed credentials", nil)
-					w.Header().Set("WWW-Authenticate", `Basic realm="mcp-front"`)
-					jsonwriter.WriteUnauthorized(w, "Unauthorized")
+					log.LogTraceWithFields("service_auth", "Basic service auth: malformed credentials", nil)
+					next.ServeHTTP(w, r)
 					return
 				}
-
 				username := credentials[:colonIdx]
 				password := credentials[colonIdx+1:]
-
 				for _, serviceAuth := range serviceAuths {
 					if serviceAuth.Type != config.ServiceAuthTypeBasic {
 						continue
 					}
-
-					if username == serviceAuth.Username {
-						if err := bcrypt.CompareHashAndPassword([]byte(string(serviceAuth.HashedPassword)), []byte(password)); err == nil {
-							// Auth succeeded
-							log.LogTraceWithFields("service_auth", "Basic service auth successful", map[string]any{
-								"username": username,
-							})
-							ctx := servicecontext.WithAuthInfo(r.Context(), serviceAuth.Username, string(serviceAuth.UserToken))
-							next.ServeHTTP(w, r.WithContext(ctx))
-							return
-						}
+					if username != serviceAuth.Username {
+						continue
+					}
+					if err := bcrypt.CompareHashAndPassword([]byte(string(serviceAuth.HashedPassword)), []byte(password)); err == nil {
+						log.LogTraceWithFields("service_auth", "Basic service auth successful", map[string]any{"username": username})
+						ctx := servicecontext.WithAuthInfo(r.Context(), serviceAuth.Username, string(serviceAuth.UserToken))
+						next.ServeHTTP(w, r.WithContext(ctx))
+						return
 					}
 				}
-				log.LogTraceWithFields("service_auth", "Basic service auth failed: invalid username or password", nil)
+				log.LogTraceWithFields("service_auth", "Basic service auth: no match", nil)
 			}
 
-			jsonwriter.WriteUnauthorized(w, "Unauthorized")
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// NewRequireAuthMiddleware is the policy gate at the end of the auth chain. It
+// passes through requests that any upstream trier authenticated (OAuth user or
+// service auth info), and produces the 401 + WWW-Authenticate response for
+// everything else. The shape of the challenge depends on the deployment:
+//   - oauthEnabled: RFC 9728 Bearer challenge with the per-service
+//     resource_metadata URI derived from the request path
+//   - service-auth-only: Basic realm="mcp-front"
+func NewRequireAuthMiddleware(oauthEnabled bool, issuer string) MiddlewareFunc {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx := r.Context()
+			// Either authenticator marks success by setting its context key.
+			// We check presence (ok), not value: an OAuth token with an empty
+			// email claim is still a successfully-validated token and should
+			// pass — the rejection of empty-email identities happens earlier
+			// in the OAuth flow, not at the per-request gate.
+			if _, ok := oauth.GetUserFromContext(ctx); ok {
+				next.ServeHTTP(w, r)
+				return
+			}
+			if _, ok := servicecontext.GetAuthInfo(ctx); ok {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			if !oauthEnabled {
+				w.Header().Set("WWW-Authenticate", `Basic realm="mcp-front"`)
+				jsonwriter.WriteUnauthorized(w, "Unauthorized")
+				return
+			}
+
+			metadataURI := ""
+			if serviceName := oauth.ExtractServiceNameFromPath(r.URL.Path, issuer); serviceName != "" {
+				if uri, err := oauth.ServiceProtectedResourceMetadataURI(issuer, serviceName); err == nil {
+					metadataURI = uri
+				}
+			}
+			jsonwriter.WriteUnauthorizedRFC9728(w, "Missing or invalid credentials", metadataURI)
 		})
 	}
 }

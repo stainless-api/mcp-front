@@ -401,19 +401,8 @@ func buildHTTPHandler(
 			)
 		}
 
-		mcpMiddlewares := []server.MiddlewareFunc{
-			mcpLogger,
-			corsMiddleware,
-		}
-
-		if authServer != nil {
-			mcpMiddlewares = append(mcpMiddlewares, oauth.NewValidateTokenMiddleware(authServer, authConfig.Issuer, authConfig.DangerouslyAcceptIssuerAudience))
-		}
-
-		if len(serverConfig.ServiceAuths) > 0 {
-			mcpMiddlewares = append(mcpMiddlewares, server.NewServiceAuthMiddleware(serverConfig.ServiceAuths))
-		}
-
+		mcpMiddlewares := []server.MiddlewareFunc{mcpLogger, corsMiddleware}
+		mcpMiddlewares = append(mcpMiddlewares, buildAuthMiddlewares(authServer, authConfig, serverConfig.ServiceAuths)...)
 		mcpMiddlewares = append(mcpMiddlewares, mcpRecover)
 
 		mux.Handle(route("/"+serverName+"/"), server.ChainMiddleware(handler, mcpMiddlewares...))
@@ -442,16 +431,8 @@ func buildHTTPHandler(
 		agg.Start()
 		aggregates = append(aggregates, agg)
 
-		aggMiddlewares := []server.MiddlewareFunc{
-			mcpLogger,
-			corsMiddleware,
-		}
-		if authServer != nil {
-			aggMiddlewares = append(aggMiddlewares, oauth.NewValidateTokenMiddleware(authServer, authConfig.Issuer, authConfig.DangerouslyAcceptIssuerAudience))
-		}
-		if len(serverConfig.ServiceAuths) > 0 {
-			aggMiddlewares = append(aggMiddlewares, server.NewServiceAuthMiddleware(serverConfig.ServiceAuths))
-		}
+		aggMiddlewares := []server.MiddlewareFunc{mcpLogger, corsMiddleware}
+		aggMiddlewares = append(aggMiddlewares, buildAuthMiddlewares(authServer, authConfig, serverConfig.ServiceAuths)...)
 		aggMiddlewares = append(aggMiddlewares, mcpRecover)
 
 		mux.Handle(route("/"+serverName+"/"), server.ChainMiddleware(agg.Handler(), aggMiddlewares...))
@@ -481,6 +462,36 @@ func buildInlineHandler(serverName string, serverConfig *config.MCPClientConfig)
 	})
 
 	return handler, nil
+}
+
+// buildAuthMiddlewares assembles the per-route auth chain. Triers (ServiceAuth,
+// OAuthValidate) are non-rejecting — each tries to authenticate and either sets
+// context or passes through. The final RequireAuth gate produces the 401 with
+// the correct WWW-Authenticate when no trier succeeded.
+//
+// Desired execution order (outermost first): ServiceAuth → OAuthValidate →
+// RequireAuth → handler. ServiceAuth runs first so cheap string comparison
+// short-circuits before JWT parsing on the hot path, and to preserve the
+// precedence at server.MCPHandler where a service-supplied UserToken takes
+// priority over storage lookup.
+//
+// server.ChainMiddleware wraps last-first (the last slice item becomes the
+// outermost wrapper and executes first), so the returned slice is ordered
+// inner-to-outer: [RequireAuth, OAuthValidate, ServiceAuth].
+func buildAuthMiddlewares(authServer *oauth.AuthorizationServer, authConfig config.OAuthAuthConfig, serviceAuths []config.ServiceAuth) []server.MiddlewareFunc {
+	if authServer == nil && len(serviceAuths) == 0 {
+		return nil
+	}
+	mws := []server.MiddlewareFunc{
+		server.NewRequireAuthMiddleware(authServer != nil, authConfig.Issuer),
+	}
+	if authServer != nil {
+		mws = append(mws, oauth.NewValidateTokenMiddleware(authServer, authConfig.Issuer, authConfig.DangerouslyAcceptIssuerAudience))
+	}
+	if len(serviceAuths) > 0 {
+		mws = append(mws, server.NewServiceAuthMiddleware(serviceAuths))
+	}
+	return mws
 }
 
 func buildStdioSSEServer(serverName, baseURL string, sessionManager *client.StdioSessionManager) (*mcpserver.SSEServer, *mcpserver.MCPServer, error) {

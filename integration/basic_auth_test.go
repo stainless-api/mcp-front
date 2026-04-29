@@ -1,97 +1,84 @@
 package integration
 
 import (
-	"encoding/base64"
 	"net/http"
 	"testing"
-
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
-func TestBasicAuth(t *testing.T) {
-	cfg := buildTestConfig("http://localhost:8080", "mcp-front-basic-auth-test",
-		nil,
-		map[string]any{"postgres": testPostgresServer(withBasicAuth("admin", "ADMIN_PASSWORD"), withBasicAuth("user", "USER_PASSWORD"))},
+// TestAuthMatrix_ServiceAuthOnly exercises the per-credential matrix on a
+// deployment configured with serviceAuths (Bearer + Basic) and NO global OAuth.
+// Every 401 must carry WWW-Authenticate: Basic realm="mcp-front" (gate output
+// when oauthEnabled=false). 200s must come from the MCP handler.
+func TestAuthMatrix_ServiceAuthOnly(t *testing.T) {
+	cfg := buildTestConfig("http://localhost:8080", "mcp-front-auth-matrix-service-only",
+		nil, // no global OAuth
+		map[string]any{
+			"postgres": testPostgresServer(
+				withBearerTokens("svc-bearer-1"),
+				withBasicAuth("svc-user", "SVC_PASSWORD"),
+			),
+		},
 	)
 	startMCPFront(t, writeTestConfig(t, cfg),
-		"ADMIN_PASSWORD=adminpass123",
-		"USER_PASSWORD=userpass456",
+		"SVC_PASSWORD=svcpass789",
 	)
-
-	// Wait for startup
 	waitForMCPFront(t)
 
-	t.Run("valid credentials", func(t *testing.T) {
-		req, err := http.NewRequest("GET", "http://localhost:8080/postgres/sse", nil)
-		require.NoError(t, err)
-		req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("admin:adminpass123")))
-		req.Header.Set("Accept", "text/event-stream")
+	const basicChallenge = `Basic realm="mcp-front"`
+	cases := []authMatrixCase{
+		{
+			name:       "row 4 — bearer matching serviceAuths.Tokens",
+			authHeader: "Bearer svc-bearer-1",
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:          "row 5 — bearer not matching anything",
+			authHeader:    "Bearer not-a-known-token",
+			wantStatus:    http.StatusUnauthorized,
+			wantWWWAuthEq: basicChallenge,
+		},
+		{
+			name:       "row 6 — basic matching serviceAuths user/pass",
+			authHeader: basicHeader("svc-user", "svcpass789"),
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:          "row 7 — basic with wrong password",
+			authHeader:    basicHeader("svc-user", "wrongpass"),
+			wantStatus:    http.StatusUnauthorized,
+			wantWWWAuthEq: basicChallenge,
+		},
+		{
+			name:          "row 8 — basic with unknown user",
+			authHeader:    basicHeader("nobody", "anypass"),
+			wantStatus:    http.StatusUnauthorized,
+			wantWWWAuthEq: basicChallenge,
+		},
+		{
+			name:          "row 9 — malformed basic (bad base64)",
+			authHeader:    "Basic not_base64!!!",
+			wantStatus:    http.StatusUnauthorized,
+			wantWWWAuthEq: basicChallenge,
+		},
+		{
+			name:          "row 10 — malformed basic (decoded payload has no colon)",
+			authHeader:    "Basic c3Zjbm9jb2xvbg==", // base64("svcnocolon")
+			wantStatus:    http.StatusUnauthorized,
+			wantWWWAuthEq: basicChallenge,
+		},
+		{
+			name:          "row 11 — no Authorization header",
+			authHeader:    "",
+			wantStatus:    http.StatusUnauthorized,
+			wantWWWAuthEq: basicChallenge,
+		},
+		{
+			name:          "row 12 — empty Bearer (no token after scheme)",
+			authHeader:    "Bearer ",
+			wantStatus:    http.StatusUnauthorized,
+			wantWWWAuthEq: basicChallenge,
+		},
+	}
 
-		client := &http.Client{}
-		resp, err := client.Do(req)
-		require.NoError(t, err)
-		defer resp.Body.Close()
-
-		// Should get 200 OK with SSE stream when auth passes
-		assert.Equal(t, http.StatusOK, resp.StatusCode)
-		assert.Equal(t, "text/event-stream", resp.Header.Get("Content-Type"))
-	})
-
-	t.Run("invalid password", func(t *testing.T) {
-		req, err := http.NewRequest("GET", "http://localhost:8080/postgres/sse", nil)
-		require.NoError(t, err)
-		req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("admin:wrongpass")))
-
-		client := &http.Client{}
-		resp, err := client.Do(req)
-		require.NoError(t, err)
-		defer resp.Body.Close()
-
-		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
-	})
-
-	t.Run("unknown user", func(t *testing.T) {
-		req, err := http.NewRequest("GET", "http://localhost:8080/postgres/sse", nil)
-		require.NoError(t, err)
-		req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("unknown:adminpass123")))
-
-		client := &http.Client{}
-		resp, err := client.Do(req)
-		require.NoError(t, err)
-		defer resp.Body.Close()
-
-		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
-	})
-
-	t.Run("access MCP endpoint with basic auth", func(t *testing.T) {
-		// Test accessing a protected MCP endpoint
-		req, err := http.NewRequest("GET", "http://localhost:8080/postgres/sse", nil)
-		require.NoError(t, err)
-		req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("user:userpass456")))
-		req.Header.Set("Accept", "text/event-stream")
-
-		client := &http.Client{}
-		resp, err := client.Do(req)
-		require.NoError(t, err)
-		defer resp.Body.Close()
-
-		// Should get 200 OK with SSE stream when auth passes
-		assert.Equal(t, http.StatusOK, resp.StatusCode)
-		assert.Equal(t, "text/event-stream", resp.Header.Get("Content-Type"))
-	})
-
-	t.Run("bearer token with basic auth configured", func(t *testing.T) {
-		// Server expects basic auth, bearer tokens should fail
-		req, err := http.NewRequest("GET", "http://localhost:8080/postgres/sse", nil)
-		require.NoError(t, err)
-		req.Header.Set("Authorization", "Bearer sometoken")
-
-		client := &http.Client{}
-		resp, err := client.Do(req)
-		require.NoError(t, err)
-		defer resp.Body.Close()
-
-		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
-	})
+	runAuthMatrix(t, "http://localhost:8080/postgres/sse", cases)
 }

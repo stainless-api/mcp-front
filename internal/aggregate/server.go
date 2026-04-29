@@ -16,7 +16,6 @@ import (
 	"github.com/stainless-api/mcp-front/internal/config"
 	"github.com/stainless-api/mcp-front/internal/log"
 	"github.com/stainless-api/mcp-front/internal/oauth"
-	"github.com/stainless-api/mcp-front/internal/servicecontext"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -183,9 +182,6 @@ func (s *Server) Shutdown(ctx context.Context) error {
 
 func (s *Server) onRegisterSession(ctx context.Context, session mcpserver.ClientSession) {
 	userEmail, _ := oauth.GetUserFromContext(ctx)
-	if userEmail == "" {
-		userEmail, _ = servicecontext.GetUser(ctx)
-	}
 	if userEmail == "" {
 		userEmail = "anonymous"
 		log.LogInfoWithFields("aggregate", "No user identity in session context, using anonymous", map[string]any{

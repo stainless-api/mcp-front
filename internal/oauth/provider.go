@@ -9,8 +9,8 @@ import (
 	"strings"
 
 	"github.com/stainless-api/mcp-front/internal/crypto"
-	jsonwriter "github.com/stainless-api/mcp-front/internal/json"
 	"github.com/stainless-api/mcp-front/internal/log"
+	"github.com/stainless-api/mcp-front/internal/servicecontext"
 )
 
 const userContextKey contextKey = "user_email"
@@ -50,36 +50,38 @@ func GenerateJWTSecret(providedSecret string) ([]byte, error) {
 	return secret, nil
 }
 
+// NewValidateTokenMiddleware tries to authenticate the request as an OAuth
+// Bearer token. On success it sets the OAuth user-email context and continues.
+// On any failure (missing header, wrong scheme, invalid signature, expired,
+// wrong audience) it passes through unchanged — the downstream RequireAuth
+// gate produces the 401 with the RFC 9728 Bearer challenge.
 func NewValidateTokenMiddleware(authServer *AuthorizationServer, issuer string, acceptIssuerAudience bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ctx := r.Context()
 
-			serviceName := ExtractServiceNameFromPath(r.URL.Path, issuer)
-			metadataURI := ""
-			if serviceName != "" {
-				if uri, err := ServiceProtectedResourceMetadataURI(issuer, serviceName); err == nil {
-					metadataURI = uri
-				}
+			// If service auth already authenticated this request, skip JWT
+			// parsing — pure optimization, the gate would accept either way.
+			if _, ok := servicecontext.GetAuthInfo(ctx); ok {
+				next.ServeHTTP(w, r)
+				return
 			}
 
 			auth := r.Header.Get("Authorization")
 			if auth == "" {
-				jsonwriter.WriteUnauthorizedRFC9728(w, "Missing authorization header", metadataURI)
+				next.ServeHTTP(w, r)
 				return
 			}
-
 			parts := strings.Split(auth, " ")
 			if len(parts) != 2 || parts[0] != "Bearer" {
-				jsonwriter.WriteUnauthorizedRFC9728(w, "Invalid authorization header format", metadataURI)
+				next.ServeHTTP(w, r)
 				return
 			}
 
-			token := parts[1]
-
-			claims, err := authServer.ValidateAccessToken(token)
+			claims, err := authServer.ValidateAccessToken(parts[1])
 			if err != nil {
-				jsonwriter.WriteUnauthorizedRFC9728(w, "Invalid or expired token", metadataURI)
+				log.LogTraceWithFields("oauth", "Token validation failed", map[string]any{"error": err.Error()})
+				next.ServeHTTP(w, r)
 				return
 			}
 
@@ -89,17 +91,18 @@ func NewValidateTokenMiddleware(authServer *AuthorizationServer, issuer string, 
 					"audience": claims.Audience,
 					"error":    err.Error(),
 				})
-				jsonwriter.WriteUnauthorizedRFC9728(w, "Token audience does not match requested service", metadataURI)
+				next.ServeHTTP(w, r)
 				return
 			}
 
-			userEmail := claims.Identity.Email
-			if userEmail != "" {
-				ctx = context.WithValue(ctx, userContextKey, userEmail)
-				r = r.WithContext(ctx)
-			}
-
-			next.ServeHTTP(w, r)
+			// Mark the context as OAuth-authenticated regardless of whether the
+			// IDP populated an email — the gate's pass-through decision is "did
+			// authentication succeed", not "do we have a user identity". In
+			// practice mcp-front only issues tokens for identities that passed
+			// AllowedDomains/AllowedOrgs at the OAuth flow, so claims.Identity.Email
+			// is non-empty here, but we don't rely on that invariant for the gate.
+			ctx = context.WithValue(ctx, userContextKey, claims.Identity.Email)
+			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
 }

@@ -73,13 +73,7 @@ func NewMCPHandler(
 func (h *MCPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	// Get user from context - could be OAuth email or basic auth username
 	userEmail, _ := oauth.GetUserFromContext(ctx)
-	if userEmail == "" {
-		// Check for basic auth username
-		username, _ := servicecontext.GetUser(ctx)
-		userEmail = username
-	}
 
 	// Get user token if available for applying to config
 	// Don't block connection if missing - will check at tool invocation
