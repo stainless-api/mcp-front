@@ -575,6 +575,9 @@ func (s *ServiceAuth) UnmarshalJSON(data []byte) error {
 		if parsed.needsUserToken {
 			return fmt.Errorf("password cannot be a user token reference")
 		}
+		if parsed.value == "" {
+			return fmt.Errorf("basic auth password cannot be empty")
+		}
 
 		// Hash the password using bcrypt
 		log.LogTraceWithFields("config", "Hashing password for basic auth", map[string]any{
