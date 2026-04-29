@@ -50,12 +50,22 @@ func (c *MCPClientConfig) UnmarshalJSON(data []byte) error {
 	c.RequiresUserToken = raw.RequiresUserToken
 	c.UserAuthentication = raw.UserAuthentication
 	c.ServiceAuths = raw.ServiceAuths
-	if seen := make(map[string]int, len(c.ServiceAuths)); len(c.ServiceAuths) > 0 {
+	if len(c.ServiceAuths) > 0 {
+		seenNames := make(map[string]int, len(c.ServiceAuths))
+		seenUsernames := make(map[string]int)
 		for i, sa := range c.ServiceAuths {
-			if prev, dup := seen[sa.Name]; dup {
+			if prev, dup := seenNames[sa.Name]; dup {
 				return fmt.Errorf("serviceAuths[%d] and serviceAuths[%d] both resolve to identity name %q; names must be unique within a server's serviceAuths", prev, i, sa.Name)
 			}
-			seen[sa.Name] = i
+			seenNames[sa.Name] = i
+			// Basic auth is matched at runtime by Username; duplicates
+			// silently shadow each other regardless of `name`.
+			if sa.Type == ServiceAuthTypeBasic {
+				if prev, dup := seenUsernames[sa.Username]; dup {
+					return fmt.Errorf("basic auth username %q already used by serviceAuths[%d]; usernames must be unique within a server's serviceAuths", sa.Username, prev)
+				}
+				seenUsernames[sa.Username] = i
+			}
 		}
 	}
 	c.InlineConfig = raw.InlineConfig

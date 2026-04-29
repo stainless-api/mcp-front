@@ -609,6 +609,7 @@ func validateDiscoveryDurations(discovery map[string]any, path string, result *V
 // validateServiceAuths validates service authentication configuration
 func validateServiceAuths(serviceAuths []any, serverName string, requiresUserToken bool, result *ValidationResult) {
 	resolvedNames := make(map[string]int, len(serviceAuths))
+	basicUsernames := make(map[string]int)
 	for i, authInterface := range serviceAuths {
 		auth, ok := authInterface.(map[string]any)
 		if !ok {
@@ -631,11 +632,19 @@ func validateServiceAuths(serviceAuths []any, serverName string, requiresUserTok
 		nameStr, _ := auth["name"].(string)
 		switch authType {
 		case "basic":
-			if _, ok := auth["username"]; !ok {
+			username, _ := auth["username"].(string)
+			if username == "" {
 				result.Errors = append(result.Errors, ValidationError{
 					Path:    fmt.Sprintf("mcpServers.%s.serviceAuths[%d].username", serverName, i),
 					Message: "username is required for basic auth",
 				})
+			} else if prev, dup := basicUsernames[username]; dup {
+				result.Errors = append(result.Errors, ValidationError{
+					Path:    fmt.Sprintf("mcpServers.%s.serviceAuths[%d].username", serverName, i),
+					Message: fmt.Sprintf("basic auth username %q already used by serviceAuths[%d]; usernames must be unique within a server's serviceAuths", username, prev),
+				})
+			} else {
+				basicUsernames[username] = i
 			}
 			if _, ok := auth["password"]; !ok {
 				result.Errors = append(result.Errors, ValidationError{
@@ -646,10 +655,8 @@ func validateServiceAuths(serviceAuths []any, serverName string, requiresUserTok
 				// Validate password uses env var reference
 				validatePasswordReference(auth["password"], fmt.Sprintf("mcpServers.%s.serviceAuths[%d].password", serverName, i), result)
 			}
-			if nameStr == "" {
-				if u, _ := auth["username"].(string); u != "" {
-					nameStr = u
-				}
+			if nameStr == "" && username != "" {
+				nameStr = username
 			}
 		case "bearer":
 			tokens, ok := auth["tokens"].([]any)

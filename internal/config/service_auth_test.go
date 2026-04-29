@@ -238,6 +238,17 @@ func TestMCPClientConfig_ServiceAuth_Uniqueness(t *testing.T) {
 			}`,
 			wantErr: "",
 		},
+		{
+			name: "two basic with same username and distinct names",
+			input: `{
+				"transportType": "stdio", "command": "x",
+				"serviceAuths": [
+					{"type":"basic","username":"alice","password":"pw1","name":"alice-readonly"},
+					{"type":"basic","username":"alice","password":"pw2","name":"alice-admin"}
+				]
+			}`,
+			wantErr: `basic auth username "alice" already used by serviceAuths[0]`,
+		},
 	}
 
 	for _, tt := range tests {
