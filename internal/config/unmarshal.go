@@ -615,6 +615,11 @@ func (s *ServiceAuth) UnmarshalJSON(data []byte) error {
 		if len(s.Tokens) == 0 {
 			return fmt.Errorf("at least one token is required for bearer auth")
 		}
+		for i, tok := range s.Tokens {
+			if tok == "" {
+				return fmt.Errorf("bearer auth token at index %d cannot be empty", i)
+			}
+		}
 	default:
 		return fmt.Errorf("unknown service auth type: %s", s.Type)
 	}
