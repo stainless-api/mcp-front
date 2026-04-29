@@ -39,4 +39,3 @@ func TestWithAuthInfoAndGetAuthInfo(t *testing.T) {
 		assert.Equal(t, "token-2", retrieved.UserToken)
 	})
 }
-

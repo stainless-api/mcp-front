@@ -608,6 +608,7 @@ func validateDiscoveryDurations(discovery map[string]any, path string, result *V
 
 // validateServiceAuths validates service authentication configuration
 func validateServiceAuths(serviceAuths []any, serverName string, requiresUserToken bool, result *ValidationResult) {
+	resolvedNames := make(map[string]int, len(serviceAuths))
 	for i, authInterface := range serviceAuths {
 		auth, ok := authInterface.(map[string]any)
 		if !ok {
@@ -627,6 +628,7 @@ func validateServiceAuths(serviceAuths []any, serverName string, requiresUserTok
 			continue
 		}
 
+		nameStr, _ := auth["name"].(string)
 		switch authType {
 		case "basic":
 			if _, ok := auth["username"]; !ok {
@@ -644,6 +646,11 @@ func validateServiceAuths(serviceAuths []any, serverName string, requiresUserTok
 				// Validate password uses env var reference
 				validatePasswordReference(auth["password"], fmt.Sprintf("mcpServers.%s.serviceAuths[%d].password", serverName, i), result)
 			}
+			if nameStr == "" {
+				if u, _ := auth["username"].(string); u != "" {
+					nameStr = u
+				}
+			}
 		case "bearer":
 			tokens, ok := auth["tokens"].([]any)
 			if !ok {
@@ -657,11 +664,34 @@ func validateServiceAuths(serviceAuths []any, serverName string, requiresUserTok
 					Message: "at least one token is required for bearer auth",
 				})
 			}
+			if nameStr == "" {
+				result.Errors = append(result.Errors, ValidationError{
+					Path:    fmt.Sprintf("mcpServers.%s.serviceAuths[%d].name", serverName, i),
+					Message: "bearer auth requires a `name` (used as the per-server identity, e.g. \"ci-runner\")",
+				})
+			}
 		default:
 			result.Errors = append(result.Errors, ValidationError{
 				Path:    fmt.Sprintf("mcpServers.%s.serviceAuths[%d].type", serverName, i),
 				Message: fmt.Sprintf("unknown service auth type '%s' - supported types: basic, bearer", authType),
 			})
+		}
+
+		if nameStr != "" {
+			lower := strings.ToLower(nameStr)
+			if !validServerNameRe.MatchString(lower) {
+				result.Errors = append(result.Errors, ValidationError{
+					Path:    fmt.Sprintf("mcpServers.%s.serviceAuths[%d].name", serverName, i),
+					Message: fmt.Sprintf("service auth name %q is invalid (must match %s)", nameStr, validServerNameRe.String()),
+				})
+			} else if prev, dup := resolvedNames[lower]; dup {
+				result.Errors = append(result.Errors, ValidationError{
+					Path:    fmt.Sprintf("mcpServers.%s.serviceAuths[%d].name", serverName, i),
+					Message: fmt.Sprintf("identity name %q already used by serviceAuths[%d]; names must be unique within a server's serviceAuths", lower, prev),
+				})
+			} else {
+				resolvedNames[lower] = i
+			}
 		}
 
 		// If server requires user token, validate that service auth provides one

@@ -91,6 +91,7 @@
       "serviceAuths": [
         {
           "type": "bearer",
+          "name": "svc",
           "tokens": ["inline-test-token"]
         }
       ]

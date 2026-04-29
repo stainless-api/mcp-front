@@ -19,6 +19,7 @@ import (
 	jsonwriter "github.com/stainless-api/mcp-front/internal/json"
 	"github.com/stainless-api/mcp-front/internal/log"
 	"github.com/stainless-api/mcp-front/internal/oauth"
+	"github.com/stainless-api/mcp-front/internal/servicecontext"
 	"github.com/stainless-api/mcp-front/internal/session"
 	"github.com/stainless-api/mcp-front/internal/storage"
 )
@@ -637,6 +638,9 @@ func (h *AuthHandlers) verifyUpstreamOAuthState(signedState string) (*UpstreamOA
 }
 
 func (h *AuthHandlers) validateAccess(identity *idp.Identity) error {
+	if servicecontext.IsReservedDomain(identity.Domain) {
+		return fmt.Errorf("domain '%s' is reserved for service-to-service authentication and cannot be used by OAuth users", identity.Domain)
+	}
 	if len(h.authConfig.AllowedDomains) > 0 &&
 		!slices.Contains(h.authConfig.AllowedDomains, identity.Domain) {
 		return fmt.Errorf("domain '%s' is not allowed. Contact your administrator", identity.Domain)

@@ -402,7 +402,7 @@ func buildHTTPHandler(
 		}
 
 		mcpMiddlewares := []server.MiddlewareFunc{mcpLogger, corsMiddleware}
-		mcpMiddlewares = append(mcpMiddlewares, buildAuthMiddlewares(authServer, authConfig, serverConfig.ServiceAuths)...)
+		mcpMiddlewares = append(mcpMiddlewares, buildAuthMiddlewares(serverName, authServer, authConfig, serverConfig.ServiceAuths)...)
 		mcpMiddlewares = append(mcpMiddlewares, mcpRecover)
 
 		mux.Handle(route("/"+serverName+"/"), server.ChainMiddleware(handler, mcpMiddlewares...))
@@ -432,7 +432,7 @@ func buildHTTPHandler(
 		aggregates = append(aggregates, agg)
 
 		aggMiddlewares := []server.MiddlewareFunc{mcpLogger, corsMiddleware}
-		aggMiddlewares = append(aggMiddlewares, buildAuthMiddlewares(authServer, authConfig, serverConfig.ServiceAuths)...)
+		aggMiddlewares = append(aggMiddlewares, buildAuthMiddlewares(serverName, authServer, authConfig, serverConfig.ServiceAuths)...)
 		aggMiddlewares = append(aggMiddlewares, mcpRecover)
 
 		mux.Handle(route("/"+serverName+"/"), server.ChainMiddleware(agg.Handler(), aggMiddlewares...))
@@ -478,7 +478,7 @@ func buildInlineHandler(serverName string, serverConfig *config.MCPClientConfig)
 // server.ChainMiddleware wraps last-first (the last slice item becomes the
 // outermost wrapper and executes first), so the returned slice is ordered
 // inner-to-outer: [RequireAuth, OAuthValidate, ServiceAuth].
-func buildAuthMiddlewares(authServer *oauth.AuthorizationServer, authConfig config.OAuthAuthConfig, serviceAuths []config.ServiceAuth) []server.MiddlewareFunc {
+func buildAuthMiddlewares(serverName string, authServer *oauth.AuthorizationServer, authConfig config.OAuthAuthConfig, serviceAuths []config.ServiceAuth) []server.MiddlewareFunc {
 	if authServer == nil && len(serviceAuths) == 0 {
 		return nil
 	}
@@ -489,7 +489,7 @@ func buildAuthMiddlewares(authServer *oauth.AuthorizationServer, authConfig conf
 		mws = append(mws, oauth.NewValidateTokenMiddleware(authServer, authConfig.Issuer, authConfig.DangerouslyAcceptIssuerAudience))
 	}
 	if len(serviceAuths) > 0 {
-		mws = append(mws, server.NewServiceAuthMiddleware(serviceAuths))
+		mws = append(mws, server.NewServiceAuthMiddleware(serverName, serviceAuths))
 	}
 	return mws
 }

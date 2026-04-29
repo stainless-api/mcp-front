@@ -25,6 +25,7 @@
       "serviceAuths": [
         {
           "type": "bearer",
+          "name": "svc",
           "tokens": ["test-token", "demo-token"]
         }
       ]

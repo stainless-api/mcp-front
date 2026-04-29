@@ -12,6 +12,7 @@
       "serviceAuths": [
         {
           "type": "bearer",
+          "name": "svc",
           "tokens": ["streamable-test-token"]
         }
       ]

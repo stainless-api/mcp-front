@@ -22,13 +22,13 @@ func generateDefaultConfig(path string) error {
 			"addr":    ":8080",
 			"name":    "mcp-front",
 			"auth": map[string]any{
-				"kind":           "oauth",
-				"issuer":         "https://mcp.yourcompany.com",
+				"kind":                    "oauth",
+				"issuer":                  "https://mcp.yourcompany.com",
 				"allowedDomains":          []string{"yourcompany.com"},
 				"allowedOrigins":          []string{"https://claude.ai"},
 				"allowedRedirectUriHosts": []string{"https://claude.ai"},
 				"tokenTtl":                "24h",
-				"storage":        "memory",
+				"storage":                 "memory",
 				"idp": map[string]any{
 					"provider":     "google",
 					"clientId":     map[string]string{"$env": "GOOGLE_CLIENT_ID"},

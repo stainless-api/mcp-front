@@ -33,6 +33,7 @@ func TestValidateFile(t *testing.T) {
 						"command": "docker",
 						"serviceAuths": [{
 							"type": "bearer",
+							"name": "ci",
 							"tokens": ["token1"]
 						}]
 					}
@@ -487,10 +488,10 @@ func TestValidateFile_RedirectURIHostPolicy(t *testing.T) {
 	}
 
 	tests := []struct {
-		name        string
-		extraAuth   string
-		wantErrs    []string
-		wantWarns   []string
+		name      string
+		extraAuth string
+		wantErrs  []string
+		wantWarns []string
 	}{
 		{
 			name:      "missing both fields warns",

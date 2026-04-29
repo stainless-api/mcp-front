@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/stainless-api/mcp-front/internal/config"
+	"github.com/stainless-api/mcp-front/internal/oauth"
 	"github.com/stainless-api/mcp-front/internal/servicecontext"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -177,43 +178,55 @@ func TestServiceAuthMiddleware(t *testing.T) {
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte("password123"), bcrypt.DefaultCost)
 	require.NoError(t, err)
 
+	const serverName = "Postgres" // mixed case to verify lowercase canonicalization
 	serviceAuths := []config.ServiceAuth{
 		{
 			Type:      config.ServiceAuthTypeBearer,
+			Name:      "ci",
 			Tokens:    []string{"valid-token-1", "valid-token-2"},
 			UserToken: config.Secret("bearer-user-token"),
 		},
 		{
 			Type:           config.ServiceAuthTypeBasic,
+			Name:           "user",
 			Username:       "user",
 			HashedPassword: config.Secret(hashedPassword),
 			UserToken:      config.Secret("basic-user-token"),
 		},
 	}
 
+	const (
+		bearerIdentity = "postgres.ci@" + ServiceAuthDomain
+		basicIdentity  = "postgres.user@" + ServiceAuthDomain
+	)
+
 	tests := []struct {
 		name           string
 		authHeader     string
 		wantAuthInfo   bool
 		wantAuthInfoEq servicecontext.Info
+		wantOAuthEmail string
 	}{
 		{
 			name:           "valid bearer token",
 			authHeader:     "Bearer valid-token-1",
 			wantAuthInfo:   true,
-			wantAuthInfoEq: servicecontext.Info{ServiceName: "service", UserToken: "bearer-user-token"},
+			wantAuthInfoEq: servicecontext.Info{ServiceName: bearerIdentity, UserToken: "bearer-user-token"},
+			wantOAuthEmail: bearerIdentity,
 		},
 		{
 			name:           "another valid bearer token",
 			authHeader:     "Bearer valid-token-2",
 			wantAuthInfo:   true,
-			wantAuthInfoEq: servicecontext.Info{ServiceName: "service", UserToken: "bearer-user-token"},
+			wantAuthInfoEq: servicecontext.Info{ServiceName: bearerIdentity, UserToken: "bearer-user-token"},
+			wantOAuthEmail: bearerIdentity,
 		},
 		{
 			name:           "valid basic auth",
 			authHeader:     "Basic " + base64.StdEncoding.EncodeToString([]byte("user:password123")),
 			wantAuthInfo:   true,
-			wantAuthInfoEq: servicecontext.Info{ServiceName: "user", UserToken: "basic-user-token"},
+			wantAuthInfoEq: servicecontext.Info{ServiceName: basicIdentity, UserToken: "basic-user-token"},
+			wantOAuthEmail: basicIdentity,
 		},
 		{name: "invalid bearer token passes through", authHeader: "Bearer invalid-token"},
 		{name: "invalid basic password passes through", authHeader: "Basic " + base64.StdEncoding.EncodeToString([]byte("user:wrongpassword"))},
@@ -229,11 +242,13 @@ func TestServiceAuthMiddleware(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var gotAuthInfo servicecontext.Info
 			var gotHasAuthInfo bool
+			var gotOAuthEmail string
 			var handlerCalled bool
 
 			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				handlerCalled = true
 				gotAuthInfo, gotHasAuthInfo = servicecontext.GetAuthInfo(r.Context())
+				gotOAuthEmail, _ = oauth.GetUserFromContext(r.Context())
 				w.WriteHeader(http.StatusOK)
 			})
 
@@ -242,13 +257,16 @@ func TestServiceAuthMiddleware(t *testing.T) {
 				req.Header.Set("Authorization", tt.authHeader)
 			}
 			rr := httptest.NewRecorder()
-			NewServiceAuthMiddleware(serviceAuths)(handler).ServeHTTP(rr, req)
+			NewServiceAuthMiddleware(serverName, serviceAuths)(handler).ServeHTTP(rr, req)
 
 			assert.True(t, handlerCalled, "trier must always pass through to next handler")
 			assert.Equal(t, http.StatusOK, rr.Code, "trier must not write a status itself")
 			assert.Equal(t, tt.wantAuthInfo, gotHasAuthInfo)
 			if tt.wantAuthInfo {
 				assert.Equal(t, tt.wantAuthInfoEq, gotAuthInfo)
+				assert.Equal(t, tt.wantOAuthEmail, gotOAuthEmail, "should set oauth context to synthetic email")
+			} else {
+				assert.Empty(t, gotOAuthEmail, "no auth means no oauth context")
 			}
 			assert.Empty(t, rr.Header().Get("WWW-Authenticate"), "trier must not set WWW-Authenticate")
 		})
@@ -269,8 +287,9 @@ func TestServiceAuthMiddleware_BasicTimingEqualized(t *testing.T) {
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte("password123"), bcrypt.DefaultCost)
 	require.NoError(t, err)
 
-	mw := NewServiceAuthMiddleware([]config.ServiceAuth{{
+	mw := NewServiceAuthMiddleware("test-server", []config.ServiceAuth{{
 		Type:           config.ServiceAuthTypeBasic,
+		Name:           "alice",
 		Username:       "alice",
 		HashedPassword: config.Secret(hashedPassword),
 	}})
@@ -290,7 +309,7 @@ func TestServiceAuthMiddleware_BasicTimingEqualized(t *testing.T) {
 	const trials = 5
 	known := make([]time.Duration, trials)
 	unknown := make([]time.Duration, trials)
-	for i := 0; i < trials; i++ {
+	for i := range trials {
 		known[i] = timeRequest("Basic " + base64.StdEncoding.EncodeToString([]byte("alice:wrongpass")))
 		unknown[i] = timeRequest("Basic " + base64.StdEncoding.EncodeToString([]byte("nobody:wrongpass")))
 	}

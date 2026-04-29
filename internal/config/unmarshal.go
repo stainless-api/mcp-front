@@ -50,6 +50,14 @@ func (c *MCPClientConfig) UnmarshalJSON(data []byte) error {
 	c.RequiresUserToken = raw.RequiresUserToken
 	c.UserAuthentication = raw.UserAuthentication
 	c.ServiceAuths = raw.ServiceAuths
+	if seen := make(map[string]int, len(c.ServiceAuths)); len(c.ServiceAuths) > 0 {
+		for i, sa := range c.ServiceAuths {
+			if prev, dup := seen[sa.Name]; dup {
+				return fmt.Errorf("serviceAuths[%d] and serviceAuths[%d] both resolve to identity name %q; names must be unique within a server's serviceAuths", prev, i, sa.Name)
+			}
+			seen[sa.Name] = i
+		}
+	}
 	c.InlineConfig = raw.InlineConfig
 	if c.Type == ServerTypeAggregate {
 		c.Delimiter = raw.Delimiter
@@ -605,7 +613,6 @@ func (s *ServiceAuth) UnmarshalJSON(data []byte) error {
 		s.UserToken = Secret(parsed.value)
 	}
 
-	// Validate required fields based on type
 	switch s.Type {
 	case ServiceAuthTypeBasic:
 		if s.Username == "" {
@@ -613,6 +620,9 @@ func (s *ServiceAuth) UnmarshalJSON(data []byte) error {
 		}
 		if s.PasswordRaw == nil {
 			return fmt.Errorf("password is required for basic auth")
+		}
+		if s.Name == "" {
+			s.Name = s.Username
 		}
 	case ServiceAuthTypeBearer:
 		if len(s.Tokens) == 0 {
@@ -623,9 +633,17 @@ func (s *ServiceAuth) UnmarshalJSON(data []byte) error {
 				return fmt.Errorf("bearer auth token at index %d cannot be empty", i)
 			}
 		}
+		if s.Name == "" {
+			return fmt.Errorf("bearer auth requires a `name` (used as the per-server identity, e.g. \"ci-runner\")")
+		}
 	default:
 		return fmt.Errorf("unknown service auth type: %s", s.Type)
 	}
+
+	if !validServerNameRe.MatchString(s.Name) {
+		return fmt.Errorf("service auth name %q is invalid (must match %s)", s.Name, validServerNameRe.String())
+	}
+	s.Name = strings.ToLower(s.Name)
 
 	return nil
 }

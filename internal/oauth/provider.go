@@ -95,12 +95,17 @@ func NewValidateTokenMiddleware(authServer *AuthorizationServer, issuer string, 
 				return
 			}
 
-			// Mark the context as OAuth-authenticated regardless of whether the
-			// IDP populated an email — the gate's pass-through decision is "did
-			// authentication succeed", not "do we have a user identity". In
-			// practice mcp-front only issues tokens for identities that passed
-			// AllowedDomains/AllowedOrgs at the OAuth flow, so claims.Identity.Email
-			// is non-empty here, but we don't rely on that invariant for the gate.
+			// Defense in depth: reject any token whose identity claims the
+			// reserved service-auth domain (validateAccess catches this at
+			// callback time; this catches refreshed/pre-existing tokens).
+			if at := strings.LastIndexByte(claims.Identity.Email, '@'); at >= 0 && servicecontext.IsReservedDomain(claims.Identity.Email[at+1:]) {
+				log.LogErrorWithFields("oauth", "rejected token with reserved service-auth domain in identity", map[string]any{
+					"email": claims.Identity.Email,
+				})
+				next.ServeHTTP(w, r)
+				return
+			}
+
 			ctx = context.WithValue(ctx, userContextKey, claims.Identity.Email)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})

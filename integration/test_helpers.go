@@ -54,10 +54,18 @@ func testPostgresServer(opts ...serverOption) map[string]any {
 type serverOption func(map[string]any)
 
 func withBearerTokens(tokens ...string) serverOption {
+	return withNamedBearerTokens("svc", tokens...)
+}
+
+func withNamedBearerTokens(name string, tokens ...string) serverOption {
 	return func(s map[string]any) {
-		s["serviceAuths"] = []map[string]any{
-			{"type": "bearer", "tokens": tokens},
-		}
+		auths, _ := s["serviceAuths"].([]map[string]any)
+		auths = append(auths, map[string]any{
+			"type":   "bearer",
+			"name":   name,
+			"tokens": tokens,
+		})
+		s["serviceAuths"] = auths
 	}
 }
 

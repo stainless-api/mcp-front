@@ -234,11 +234,16 @@ Per-server authentication validated on incoming requests before proxying. Useful
   "serviceAuths": [
     {
       "type": "bearer",
+      "name": "dev",
       "tokens": ["dev-token-123", "dev-token-456"]
     }
   ]
 }
 ```
+
+The `name` field is the identity used in logs, session keys, and per-user
+limits. Required for bearer; optional for basic (defaults to `username`).
+Names must be unique within a server's `serviceAuths` across types.
 
 **Basic authentication:**
 

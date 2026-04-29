@@ -109,6 +109,10 @@ const (
 type ServiceAuth struct {
 	Type ServiceAuthType `json:"type"`
 
+	// Name is the per-server identity for this entry. Required for Bearer;
+	// defaults to Username for Basic.
+	Name string `json:"name,omitempty"`
+
 	// For basic auth
 	Username    string          `json:"username,omitempty"`
 	PasswordRaw json.RawMessage `json:"password,omitempty"`

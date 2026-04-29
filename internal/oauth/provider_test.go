@@ -2,10 +2,13 @@ package oauth
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/stainless-api/mcp-front/internal/idp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -124,6 +127,57 @@ func TestGetUserFromContext(t *testing.T) {
 		assert.False(t, ok)
 		assert.Empty(t, email)
 	})
+}
+
+// TestNewValidateTokenMiddleware_RejectsServiceAuthDomain mints a fully-valid
+// access token whose Identity.Email lives in the synthetic service-auth
+// domain, then asserts the trier passes through without setting the OAuth
+// context — defense in depth against any token that slipped past validateAccess.
+func TestNewValidateTokenMiddleware_RejectsServiceAuthDomain(t *testing.T) {
+	const issuer = "https://mcp.example.com"
+	authServer, err := NewAuthorizationServer(AuthorizationServerConfig{
+		JWTSecret: []byte(strings.Repeat("a", 32)),
+		Issuer:    issuer,
+	})
+	require.NoError(t, err)
+
+	mintToken := func(email string) string {
+		t.Helper()
+		pair, err := authServer.issueTokenPair(idp.Identity{Email: email}, "client", []string{"openid"}, []string{issuer + "/postgres"})
+		require.NoError(t, err)
+		return pair.AccessToken
+	}
+
+	cases := []struct {
+		name        string
+		email       string
+		wantContext bool
+	}{
+		{name: "real email passes", email: "alice@example.com", wantContext: true},
+		{name: "synthetic domain rejected", email: "ci@serviceauth.mcpfront.alt", wantContext: false},
+		{name: "synthetic subdomain rejected", email: "x@bearer.serviceauth.mcpfront.alt", wantContext: false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotEmail string
+			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotEmail, _ = GetUserFromContext(r.Context())
+				w.WriteHeader(http.StatusOK)
+			})
+			req := httptest.NewRequest("GET", "/postgres/sse", nil)
+			req.Header.Set("Authorization", "Bearer "+mintToken(tc.email))
+			rr := httptest.NewRecorder()
+			NewValidateTokenMiddleware(authServer, issuer, false)(handler).ServeHTTP(rr, req)
+
+			assert.Equal(t, http.StatusOK, rr.Code, "trier always passes through")
+			if tc.wantContext {
+				assert.Equal(t, tc.email, gotEmail)
+			} else {
+				assert.Empty(t, gotEmail)
+			}
+		})
+	}
 }
 
 func TestExtractServiceNameFromPath(t *testing.T) {

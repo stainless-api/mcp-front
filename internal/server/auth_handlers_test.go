@@ -780,6 +780,19 @@ func TestValidateAccess(t *testing.T) {
 			wantErr:        true,
 			errContains:    "domain 'other.com' is not allowed",
 		},
+		{
+			name:        "service_auth_domain_rejected_no_restrictions",
+			identity:    &idp.Identity{Domain: "serviceauth.mcpfront.alt", Organizations: []string{"any-org"}},
+			wantErr:     true,
+			errContains: "reserved for service-to-service authentication",
+		},
+		{
+			name:           "service_auth_domain_rejected_even_when_explicitly_allowed",
+			allowedDomains: []string{"serviceauth.mcpfront.alt"},
+			identity:       &idp.Identity{Domain: "serviceauth.mcpfront.alt"},
+			wantErr:        true,
+			errContains:    "reserved for service-to-service authentication",
+		},
 	}
 
 	for _, tt := range tests {

@@ -22,6 +22,7 @@
       "serviceAuths": [
         {
           "type": "bearer",
+          "name": "dev",
           "tokens": ["dev-token-postgres-1", "dev-token-postgres-2"]
         }
       ]
@@ -36,6 +37,7 @@
       "serviceAuths": [
         {
           "type": "bearer",
+          "name": "dev",
           "tokens": ["dev-token-notion-1"]
         }
       ]
@@ -51,6 +53,7 @@
       "serviceAuths": [
         {
           "type": "bearer",
+          "name": "dev",
           "tokens": ["dev-token-git-1", "dev-token-git-2", "dev-token-git-3"]
         }
       ]

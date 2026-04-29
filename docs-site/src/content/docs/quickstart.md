@@ -24,6 +24,7 @@ Create `config.json`:
       "serviceAuths": [
         {
           "type": "bearer",
+          "name": "dev",
           "tokens": ["dev-token-123"]
         }
       ]

@@ -140,7 +140,7 @@ func TestAuthMatrix_Both_AggregateRoute(t *testing.T) {
 					"cacheTtl": "60s",
 				},
 				"serviceAuths": []map[string]any{
-					{"type": "bearer", "tokens": []string{"svc-bearer-1"}},
+					{"type": "bearer", "name": "svc", "tokens": []string{"svc-bearer-1"}},
 					{"type": "basic", "username": "svc-user", "password": map[string]string{"$env": "SVC_PASSWORD"}},
 				},
 			},
