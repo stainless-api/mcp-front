@@ -52,7 +52,7 @@ func (c *MCPClientConfig) UnmarshalJSON(data []byte) error {
 	c.ServiceAuths = raw.ServiceAuths
 	if len(c.ServiceAuths) > 0 {
 		seenNames := make(map[string]int, len(c.ServiceAuths))
-		seenUsernames := make(map[string]int)
+		seenUsernames := make(map[string]int, len(c.ServiceAuths))
 		for i, sa := range c.ServiceAuths {
 			if prev, dup := seenNames[sa.Name]; dup {
 				return fmt.Errorf("serviceAuths[%d] and serviceAuths[%d] both resolve to identity name %q; names must be unique within a server's serviceAuths", prev, i, sa.Name)

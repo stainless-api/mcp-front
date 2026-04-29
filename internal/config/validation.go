@@ -609,7 +609,7 @@ func validateDiscoveryDurations(discovery map[string]any, path string, result *V
 // validateServiceAuths validates service authentication configuration
 func validateServiceAuths(serviceAuths []any, serverName string, requiresUserToken bool, result *ValidationResult) {
 	resolvedNames := make(map[string]int, len(serviceAuths))
-	basicUsernames := make(map[string]int)
+	basicUsernames := make(map[string]int, len(serviceAuths))
 	for i, authInterface := range serviceAuths {
 		auth, ok := authInterface.(map[string]any)
 		if !ok {
