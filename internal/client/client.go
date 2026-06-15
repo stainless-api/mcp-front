@@ -1,10 +1,14 @@
 package client
 
 import (
+	"bufio"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"strings"
 	"time"
 
@@ -110,9 +114,11 @@ func DefaultTransportCreator(conf *config.MCPClientConfig) (MCPClientInterface, 
 			if len(conf.Headers) > 0 {
 				options = append(options, transport.WithHTTPHeaders(conf.Headers))
 			}
+			httpClient := &http.Client{Transport: gzipGuardTransport{base: http.DefaultTransport}}
 			if conf.Timeout > 0 {
-				options = append(options, transport.WithHTTPTimeout(conf.Timeout))
+				httpClient.Timeout = conf.Timeout
 			}
+			options = append(options, transport.WithHTTPBasicClient(httpClient))
 			mcpClient, err := client.NewStreamableHttpClient(conf.URL, options...)
 			if err != nil {
 				return nil, err
@@ -132,6 +138,142 @@ func DefaultTransportCreator(conf *config.MCPClientConfig) (MCPClientInterface, 
 	}
 
 	return nil, errors.New("invalid client type: must have either command or url")
+}
+
+// gzipGuardTransport is an http.RoundTripper that guarantees gzip bytes never
+// reach the JSON decoder in mcp-go's streamable HTTP client. Some hosted
+// MCP backends intermittently deliver bodies that are still gzip-compressed
+// when decoded — either Go's transparent decompression was skipped or the
+// backend double-encoded; the trigger is unknown. If a response still carries
+// Content-Encoding: gzip, or an application/json body starts with the gzip
+// magic bytes, the body is wrapped in a gzip reader (repeatedly, for
+// double-encoded bodies) and a WARN is logged with the response details so
+// production occurrences identify the true cause. SSE responses pass through
+// untouched.
+type gzipGuardTransport struct {
+	base http.RoundTripper
+}
+
+// maxGzipDepth bounds nested decompression of double-encoded bodies.
+const maxGzipDepth = 5
+
+// gzipPeekBufferSize is the bufio.Reader buffer used to sniff the two-byte
+// gzip magic header. This RoundTripper wraps every streamable response, so the
+// default 4KB buffer would be allocated per response; 16 bytes is bufio's
+// minimum and large body reads bypass the buffer, so throughput is unaffected.
+const gzipPeekBufferSize = 16
+
+func (t gzipGuardTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	base := t.base
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	resp, err := base.RoundTrip(req)
+	if err != nil || resp == nil || resp.Body == nil {
+		return resp, err
+	}
+
+	contentType := strings.ToLower(resp.Header.Get("Content-Type"))
+	if strings.HasPrefix(contentType, "text/event-stream") {
+		return resp, nil
+	}
+
+	contentEncoding := resp.Header.Get("Content-Encoding")
+	headerGzip := strings.EqualFold(contentEncoding, "gzip")
+	sniffJSON := strings.Contains(contentType, "application/json")
+	if !headerGzip && !sniffJSON {
+		return resp, nil
+	}
+
+	br := bufio.NewReaderSize(resp.Body, gzipPeekBufferSize)
+	body := &gzipGuardBody{r: br, closers: []io.Closer{resp.Body}}
+	magic := hasGzipMagic(br)
+
+	trigger := ""
+	if headerGzip {
+		trigger = "header"
+	} else if magic {
+		trigger = "magic-bytes"
+	}
+	if trigger == "" {
+		resp.Body = body
+		return resp, nil
+	}
+
+	fields := map[string]any{
+		"host":            req.URL.Host,
+		"method":          req.Method,
+		"acceptEncoding":  req.Header.Get("Accept-Encoding"),
+		"status":          resp.StatusCode,
+		"proto":           resp.Proto,
+		"contentEncoding": contentEncoding,
+		"contentType":     resp.Header.Get("Content-Type"),
+		"contentLength":   resp.Header.Get("Content-Length"),
+		"trigger":         trigger,
+	}
+
+	if !magic {
+		log.LogWarnWithFields("client", "Response claims gzip encoding but body lacks gzip magic bytes, passing through", fields)
+		resp.Body = body
+		return resp, nil
+	}
+
+	depth := 0
+	for depth < maxGzipDepth && hasGzipMagic(br) {
+		gz, gzErr := gzip.NewReader(br)
+		if gzErr != nil {
+			fields["error"] = gzErr.Error()
+			fields["depth"] = depth
+			log.LogWarnWithFields("client", "Failed to decompress gzip response body", fields)
+			break
+		}
+		body.closers = append(body.closers, gz)
+		br = bufio.NewReaderSize(gz, gzipPeekBufferSize)
+		depth++
+	}
+	body.r = br
+
+	if depth == 0 {
+		resp.Body = body
+		return resp, nil
+	}
+
+	fields["depth"] = depth
+	log.LogWarnWithFields("client", "Decompressed gzip response body that would have reached the JSON decoder", fields)
+
+	resp.Body = body
+	resp.Header.Del("Content-Encoding")
+	resp.Header.Del("Content-Length")
+	resp.ContentLength = -1
+	resp.Uncompressed = true
+	return resp, nil
+}
+
+func hasGzipMagic(br *bufio.Reader) bool {
+	b, err := br.Peek(2)
+	return err == nil && b[0] == 0x1f && b[1] == 0x8b
+}
+
+// gzipGuardBody chains the buffered/decompressed reader with every closer in
+// the decompression stack. Close releases gzip readers innermost-first, then
+// the original body, so the HTTP connection can be reused.
+type gzipGuardBody struct {
+	r       io.Reader
+	closers []io.Closer
+}
+
+func (b *gzipGuardBody) Read(p []byte) (int, error) {
+	return b.r.Read(p)
+}
+
+func (b *gzipGuardBody) Close() error {
+	var firstErr error
+	for i := len(b.closers) - 1; i >= 0; i-- {
+		if err := b.closers[i].Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }
 
 // startPingTask runs a goroutine that pings the MCP server every 30 seconds.
