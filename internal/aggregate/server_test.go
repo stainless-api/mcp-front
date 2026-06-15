@@ -3,6 +3,7 @@ package aggregate
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -333,6 +334,31 @@ func TestToolRouting(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "query", calledWithName)
 	assert.Len(t, result.Content, 1)
+}
+
+func TestToolHandlerDropsInboundHeaders(t *testing.T) {
+	var forwardedHeader http.Header
+	pgMock := &mockTransport{
+		tools: []mcp.Tool{{Name: "query"}},
+		callToolFn: func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			forwardedHeader = req.Header
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{mcp.NewTextContent("result")},
+			}, nil
+		},
+	}
+
+	srv := newTestServer(t, map[string]*mockTransport{"postgres": pgMock})
+
+	handler := srv.makeToolHandler("user@test.com", "postgres")
+	request := mcp.CallToolRequest{
+		Params: mcp.CallToolParams{Name: "postgres.query"},
+	}
+	request.Header = http.Header{"Accept-Encoding": []string{"gzip, deflate"}, "Cookie": []string{"session=abc"}}
+
+	_, err := handler(context.Background(), request)
+	require.NoError(t, err)
+	assert.Nil(t, forwardedHeader)
 }
 
 func TestPerUserConnectionIsolation(t *testing.T) {

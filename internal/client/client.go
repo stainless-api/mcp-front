@@ -134,6 +134,21 @@ func DefaultTransportCreator(conf *config.MCPClientConfig) (MCPClientInterface, 
 	return nil, errors.New("invalid client type: must have either command or url")
 }
 
+// stripInboundHeaders wraps a backend tool call to drop the Header field
+// before forwarding. mcp-go's server stamps every inbound HTTP request's
+// headers onto the parsed request structs (PR #480), and its streamable
+// client sends request.Header verbatim to the backend (PR #546) — so a proxy
+// that passes the request through forwards the end client's headers
+// (Accept-Encoding, cookies, auth) to the backend. An explicit
+// Accept-Encoding disables Go's transparent gzip decompression, corrupting
+// JSON responses from backends that honor it with compression.
+func stripInboundHeaders(backend MCPClientInterface) server.ToolHandlerFunc {
+	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		request.Header = nil
+		return backend.CallTool(ctx, request)
+	}
+}
+
 // startPingTask runs a goroutine that pings the MCP server every 30 seconds.
 // The goroutine lifecycle is tied to the provided context:
 // - For stdio clients: context is cancelled when the request ends, stopping pings
@@ -219,6 +234,25 @@ func (c *Client) addToolsToServer(
 		})
 	}
 
+	// The handler is identical for every tool, so build it once. It strips the
+	// inbound client's HTTP headers before forwarding and, when required, wraps
+	// that with the user-token check.
+	callTool := stripInboundHeaders(c.client)
+	var handler server.ToolHandlerFunc
+	if requiresToken && tokenStore != nil {
+		handler = c.wrapToolHandler(
+			callTool,
+			requiresToken,
+			tokenStore,
+			userEmail,
+			serverName,
+			setupBaseURL,
+			userAuth,
+		)
+	} else {
+		handler = callTool
+	}
+
 	for {
 		tools, err := c.client.ListTools(ctx, toolsRequest)
 		if err != nil {
@@ -241,21 +275,6 @@ func (c *Client) addToolsToServer(
 					"tool":        tool.Name,
 					"description": tool.Description,
 				})
-				// Wrap the tool handler to check for user tokens if required
-				var handler server.ToolHandlerFunc
-				if requiresToken && tokenStore != nil {
-					handler = c.wrapToolHandler(
-						c.client.CallTool,
-						requiresToken,
-						tokenStore,
-						userEmail,
-						serverName,
-						setupBaseURL,
-						userAuth,
-					)
-				} else {
-					handler = c.client.CallTool
-				}
 
 				if sessionTools != nil {
 					sessionTools[tool.Name] = server.ServerTool{
@@ -297,6 +316,12 @@ func (c *Client) addPromptsToServer(ctx context.Context, mcpServer *server.MCPSe
 
 	totalPrompts := 0
 	promptsRequest := mcp.ListPromptsRequest{}
+	// The handler is identical for every prompt; build it once. It strips the
+	// inbound client's HTTP headers before forwarding to the backend.
+	getPrompt := func(ctx context.Context, request mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+		request.Header = nil
+		return c.client.GetPrompt(ctx, request)
+	}
 	for {
 		prompts, err := c.client.ListPrompts(ctx, promptsRequest)
 		if err != nil {
@@ -313,7 +338,7 @@ func (c *Client) addPromptsToServer(ctx context.Context, mcpServer *server.MCPSe
 		totalPrompts += len(prompts.Prompts)
 		for _, prompt := range prompts.Prompts {
 			log.Logf("<%s> Adding prompt %s", c.name, prompt.Name)
-			mcpServer.AddPrompt(prompt, c.client.GetPrompt)
+			mcpServer.AddPrompt(prompt, getPrompt)
 		}
 		if prompts.NextCursor == "" {
 			break
@@ -336,6 +361,16 @@ func (c *Client) addResourcesToServer(ctx context.Context, mcpServer *server.MCP
 
 	totalResources := 0
 	resourcesRequest := mcp.ListResourcesRequest{}
+	// The handler is identical for every resource; build it once. It strips the
+	// inbound client's HTTP headers before forwarding to the backend.
+	readResource := func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+		request.Header = nil
+		result, e := c.client.ReadResource(ctx, request)
+		if e != nil {
+			return nil, e
+		}
+		return result.Contents, nil
+	}
 	for {
 		resources, err := c.client.ListResources(ctx, resourcesRequest)
 		if err != nil {
@@ -352,13 +387,7 @@ func (c *Client) addResourcesToServer(ctx context.Context, mcpServer *server.MCP
 		totalResources += len(resources.Resources)
 		for _, resource := range resources.Resources {
 			log.Logf("<%s> Adding resource %s", c.name, resource.Name)
-			mcpServer.AddResource(resource, func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
-				readResource, e := c.client.ReadResource(ctx, request)
-				if e != nil {
-					return nil, e
-				}
-				return readResource.Contents, nil
-			})
+			mcpServer.AddResource(resource, readResource)
 		}
 		if resources.NextCursor == "" {
 			break
@@ -377,6 +406,16 @@ func (c *Client) addResourcesToServer(ctx context.Context, mcpServer *server.MCP
 
 func (c *Client) addResourceTemplatesToServer(ctx context.Context, mcpServer *server.MCPServer) error {
 	resourceTemplatesRequest := mcp.ListResourceTemplatesRequest{}
+	// The handler is identical for every resource template; build it once. It
+	// strips the inbound client's HTTP headers before forwarding to the backend.
+	readResource := func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+		request.Header = nil
+		result, e := c.client.ReadResource(ctx, request)
+		if e != nil {
+			return nil, e
+		}
+		return result.Contents, nil
+	}
 	for {
 		resourceTemplates, err := c.client.ListResourceTemplates(ctx, resourceTemplatesRequest)
 		if err != nil {
@@ -388,13 +427,7 @@ func (c *Client) addResourceTemplatesToServer(ctx context.Context, mcpServer *se
 		log.Logf("<%s> Successfully listed %d resource templates", c.name, len(resourceTemplates.ResourceTemplates))
 		for _, resourceTemplate := range resourceTemplates.ResourceTemplates {
 			log.Logf("<%s> Adding resource template %s", c.name, resourceTemplate.Name)
-			mcpServer.AddResourceTemplate(resourceTemplate, func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
-				readResource, e := c.client.ReadResource(ctx, request)
-				if e != nil {
-					return nil, e
-				}
-				return readResource.Contents, nil
-			})
+			mcpServer.AddResourceTemplate(resourceTemplate, readResource)
 		}
 		if resourceTemplates.NextCursor == "" {
 			break

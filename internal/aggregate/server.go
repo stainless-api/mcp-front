@@ -381,6 +381,10 @@ func (s *Server) makeToolHandler(userEmail, backendName string) mcpserver.ToolHa
 		c.lastAccessed.Store(&now)
 
 		request.Params.Name = originalName
+		// Drop the inbound client's HTTP headers that mcp-go stamped onto the
+		// request; the backend client would otherwise send them verbatim,
+		// leaking Accept-Encoding/auth headers to the backend.
+		request.Header = nil
 		result, err := c.client.CallTool(ctx, request)
 		if err != nil {
 			// An error return means transport failure (broken pipe, connection
